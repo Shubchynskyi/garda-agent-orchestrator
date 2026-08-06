@@ -308,6 +308,7 @@ export interface ReviewerLaunchInputHandoffArtifactOptions extends ReviewerLaunc
     copyPasteReviewerLaunchPromptSha256: string;
     preparedLaunchEventSha256: string;
     preparedLaunchEventTaskSequence: number | null;
+    reviewLaneArtifactEvidence: Readonly<Record<string, string>>;
     localTrustBoundary: string;
 }
 
@@ -576,6 +577,7 @@ export function buildReviewerLaunchInputHandoffArtifact(
         routing_event_sha256: options.routingEventSha256,
         routing_event_task_sequence: options.routingEventTaskSequence,
         launch_binding_sha256: options.launchBindingSha256,
+        ...options.reviewLaneArtifactEvidence,
         prepared_launch_event_sha256: options.preparedLaunchEventSha256,
         prepared_launch_event_task_sequence: options.preparedLaunchEventTaskSequence,
         ...(options.rolePromptPath

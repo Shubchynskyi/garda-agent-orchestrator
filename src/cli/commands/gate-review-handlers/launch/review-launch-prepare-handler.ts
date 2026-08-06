@@ -44,6 +44,11 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import {
+    assertArtifactReviewLaneEvidence,
+    assertCanonicalReviewTypeId,
+    resolveAuthenticatedReviewLaneContract
+} from '../review-lane-contract';
+import {
     isCompletedReviewerLaunchAttemptConsumed,
     isReviewerLaunchAttemptSupersededByAuthenticatedRestart
 } from './reviewer-handoff-support';
@@ -182,8 +187,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'prepare-reviewer-launch', 'review_phase');
@@ -235,6 +239,12 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         requireStrictBindingMetadata: !!options.reviewContextPath,
         repoRoot
     });
+    const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+        preflight: preflightPayload,
+        reviewContext: parsedReviewContext,
+        reviewType
+    });
+    const reviewLaneArtifactEvidence = reviewLaneContract.artifactEvidence;
     assertReviewTreeStateFresh({
         repoRoot,
         reviewContext: parsedReviewContext,
@@ -303,6 +313,13 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const laneReservationPath = getReviewerLaunchLaneReservationPath(canonicalLaunchArtifactPath);
     const laneReservationExists = fs.existsSync(laneReservationPath);
     const laneReservation = readJsonObjectIfPresent(laneReservationPath);
+    if (laneReservation) {
+        assertArtifactReviewLaneEvidence(
+            laneReservation,
+            reviewLaneContract,
+            'Reviewer launch lane reservation'
+        );
+    }
     if (laneReservationExists && !laneReservation) {
         throw new Error(
             `Reviewer launch lane reservation must contain valid JSON object metadata: ` +
@@ -375,6 +392,13 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         }
     }
     const existingArtifact = readJsonObjectIfPresent(launchArtifactPath);
+    if (existingArtifact) {
+        assertArtifactReviewLaneEvidence(
+            existingArtifact,
+            reviewLaneContract,
+            'Reviewer launch artifact'
+        );
+    }
     if (fs.existsSync(launchArtifactPath) && !existingArtifact) {
         throw new Error(
             `Reviewer launch artifact must contain valid JSON object metadata: ${normalizePath(launchArtifactPath)}.`
@@ -609,6 +633,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
                 evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
                 copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
+                ...reviewLaneArtifactEvidence,
                 launch_tool: providerLaunch.launchTool,
                 launch_prepared_at_utc: launchPreparedAtUtc,
                 attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
@@ -630,7 +655,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         output_template_sha256: handoffBindings.outputTemplateSha256,
         evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
-        launch_binding_sha256: launchBindingSha256
+        launch_binding_sha256: launchBindingSha256,
+        ...reviewLaneArtifactEvidence
     }));
     let supersededLaunchArtifact: SupersededReviewerLaunchArtifactSnapshot | null = null;
     if (existingArtifact) {
@@ -868,6 +894,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             copyPasteReviewerLaunchPromptSha256,
             preparedLaunchEventSha256,
             preparedLaunchEventTaskSequence,
+            reviewLaneArtifactEvidence,
             localTrustBoundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY
         });
         const expectedLaunchInputArtifactSha256 = stringSha256(`${JSON.stringify(expectedReviewerLaunchInputArtifact, null, 2)}\n`);
@@ -1243,7 +1270,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         'prepared_launch_event_task_sequence',
         'reviewer_launch_input_artifact_sha256',
         'reviewer_launch_input_pinned_event_sha256',
-        'reviewer_launch_input_pinned_event_task_sequence'
+        'reviewer_launch_input_pinned_event_task_sequence',
+        ...Object.keys(reviewLaneArtifactEvidence)
     ];
     const handoffArtifactNames = handoffBindings.rolePromptPath
         ? 'role_prompt_path, prompt_template_path, reviewer_prompt_path, output_template_path, and evidence_manifest_path'
@@ -1285,6 +1313,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
         launch_binding_sha256: launchBindingSha256,
+        ...reviewLaneArtifactEvidence,
         launch_prepared_at_utc: launchPreparedAtUtc,
         provider: providerLaunch.provider,
         launch_tool: providerLaunch.launchTool,
@@ -1328,6 +1357,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         review_context_sha256: contextSha256,
         routing_event_sha256: routingEventProvenance.event_sha256,
         launch_binding_sha256: launchBindingSha256,
+        ...reviewLaneArtifactEvidence,
         reserved_at_utc: launchPreparedAtUtc,
         generated_by: 'garda prepare-reviewer-launch'
     });
@@ -1382,6 +1412,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         copyPasteReviewerLaunchPromptSha256,
         preparedLaunchEventSha256,
         preparedLaunchEventTaskSequence,
+        reviewLaneArtifactEvidence,
         localTrustBoundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY
     });
     writeReviewArtifactJson(launchInputArtifactPath, reviewerLaunchInputArtifact);

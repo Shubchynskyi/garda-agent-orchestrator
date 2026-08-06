@@ -24,6 +24,7 @@ import { isPlannedReviewerIdentity } from '../../../../gate-runtime/review/revie
 import { writeFileAtomically } from '../../../../core/filesystem';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import {
+    getReviewerLaunchLaneReservationPath,
     withReviewerLaunchLaneTransaction
 } from './reviewer-launch-lane-transaction';
 import {
@@ -32,6 +33,11 @@ import {
 import {
     validateReviewerLaunchArtifact
 } from './review-launch-completed-artifact';
+import {
+    assertArtifactReviewLaneEvidence,
+    assertCanonicalReviewTypeId,
+    resolveAuthenticatedReviewLaneContract
+} from '../review-lane-contract';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -174,8 +180,7 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'complete-reviewer-launch', 'review_phase');
@@ -250,6 +255,11 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         throw new Error(`Reviewer launch completion requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
     }
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+        preflight: readJsonFile(preflightPath, 'Preflight artifact'),
+        reviewContext: parsedReviewContext,
+        reviewType
+    });
     assertReviewTreeStateFresh({
         repoRoot,
         reviewContext: parsedReviewContext,
@@ -271,6 +281,20 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const originalArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    assertArtifactReviewLaneEvidence(preparedArtifact, reviewLaneContract, 'Reviewer launch artifact');
+    assertArtifactReviewLaneEvidence(
+        readJsonFile(launchInputArtifactPath, 'Reviewer launch input artifact'),
+        reviewLaneContract,
+        'Reviewer launch input artifact'
+    );
+    assertArtifactReviewLaneEvidence(
+        readJsonFile(
+            getReviewerLaunchLaneReservationPath(launchArtifactPath),
+            'Reviewer launch lane reservation'
+        ),
+        reviewLaneContract,
+        'Reviewer launch lane reservation'
+    );
     const artifactEvidenceType = getStringField(
         preparedArtifact,
         'evidence_type',

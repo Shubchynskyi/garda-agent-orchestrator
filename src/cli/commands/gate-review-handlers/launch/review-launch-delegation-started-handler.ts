@@ -32,6 +32,7 @@ import {
     buildRecordReviewerLaunchFailedCommand
 } from './reviewer-handoff-support';
 import {
+    getReviewerLaunchLaneReservationPath,
     withReviewerLaunchLaneTransaction
 } from './reviewer-launch-lane-transaction';
 import {
@@ -39,6 +40,11 @@ import {
     isValidUtcIso8601Timestamp,
     PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
 } from './review-launch-artifact-fields';
+import {
+    assertArtifactReviewLaneEvidence,
+    assertCanonicalReviewTypeId,
+    resolveAuthenticatedReviewLaneContract
+} from '../review-lane-contract';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -176,8 +182,7 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-reviewer-delegation-started', 'review_phase');
@@ -281,6 +286,11 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         throw new Error(`Reviewer delegation start requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
     }
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+        preflight: readJsonFile(preflightPath, 'Preflight artifact'),
+        reviewContext: parsedReviewContext,
+        reviewType
+    });
     assertReviewTreeStateFresh({
         repoRoot,
         reviewContext: parsedReviewContext,
@@ -302,6 +312,20 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const originalArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    assertArtifactReviewLaneEvidence(preparedArtifact, reviewLaneContract, 'Reviewer launch artifact');
+    assertArtifactReviewLaneEvidence(
+        readJsonFile(launchInputArtifactPath, 'Reviewer launch input artifact'),
+        reviewLaneContract,
+        'Reviewer launch input artifact'
+    );
+    assertArtifactReviewLaneEvidence(
+        readJsonFile(
+            getReviewerLaunchLaneReservationPath(launchArtifactPath),
+            'Reviewer launch lane reservation'
+        ),
+        reviewLaneContract,
+        'Reviewer launch lane reservation'
+    );
     const recoveringPersistedDelegationStart =
         getStringField(preparedArtifact, 'evidence_type', 'evidenceType', 'artifact_type', 'artifactType')
             === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE

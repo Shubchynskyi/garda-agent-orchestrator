@@ -56,7 +56,6 @@ import {
 import {
     resolveReviewerPromptArtifactBinding
 } from '../../../../gates/review/review-prompt-artifact';
-import { REVIEW_CONTRACTS } from '../../../../gates/required-reviews/required-reviews-check';
 import {
     cleanupReviewTempSourceArtifact
 } from '../../../gate-cli/gates-artifacts';
@@ -101,6 +100,11 @@ import {
 import {
     withReviewerLaunchLaneTransaction
 } from '../launch/reviewer-launch-lane-transaction';
+import {
+    assertArtifactReviewLaneEvidence,
+    assertCanonicalReviewTypeId,
+    resolveAuthenticatedReviewLaneContract
+} from '../review-lane-contract';
 import {
     assertReviewReceiptRoutingMatchesContext
 } from './review-receipt-validation';
@@ -1569,6 +1573,11 @@ async function recordReviewReceiptFromArtifacts(options: {
         requireStrictBindingMetadata: options.requireStrictBindingMetadata,
         repoRoot: options.repoRoot
     });
+    const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+        preflight,
+        reviewContext: parsedReviewContext,
+        reviewType: options.reviewType
+    });
     const reviewArtifactContent = options.reviewArtifactContent
         ?? fs.readFileSync(options.artifactPath, 'utf8');
     const historicalStaleReviewResultReason = options.historicalStaleReviewResultReason || null;
@@ -1715,14 +1724,12 @@ async function recordReviewReceiptFromArtifacts(options: {
         delegationStartedAtUtc: getDelegationStartedAtUtc(reviewerProvenance)
     });
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
-    const expectedPassVerdict = REVIEW_CONTRACTS.find(
-        ([candidate]) => candidate === options.reviewType
-    )?.[1] || null;
-    const legacyVerdictToken = strictFindingsOnlyOutput && expectedPassVerdict
+    const expectedPassVerdict = reviewLaneContract.passVerdict;
+    const legacyVerdictToken = strictFindingsOnlyOutput
         ? extractReviewVerdictToken(
             reviewArtifactContent,
             expectedPassVerdict,
-            expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED'),
+            reviewLaneContract.failVerdict,
             options.reviewType
         )
         : null;
@@ -1842,6 +1849,12 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerProvenance,
         trustLevel: REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL
     });
+    Object.assign(receipt, reviewLaneContract.artifactEvidence);
+    assertArtifactReviewLaneEvidence(
+        receipt as unknown as Record<string, unknown>,
+        reviewLaneContract,
+        'Review receipt'
+    );
     (receipt as unknown as Record<string, unknown>).review_result_recorded_at_utc =
         (receipt as unknown as Record<string, unknown>).recorded_at_utc ?? new Date().toISOString();
     (receipt as unknown as Record<string, unknown>).review_output_path = options.rawReviewOutputPath
@@ -1992,8 +2005,7 @@ async function handleRecordReviewResultUnlocked(
     const { options: rawOptions } = parseOptions(gateArgv, recordReviewResultOptionDefinitions(), { allowPositionals: false });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-result', 'review_phase');
@@ -2014,26 +2026,8 @@ async function handleRecordReviewResultUnlocked(
     );
     let reviewContent = reviewOutput.reviewContent;
     let reviewMaterializationFidelity = 'exact';
-    const expectedPassVerdict = REVIEW_CONTRACTS.find(([candidate]) => candidate === reviewType)?.[1] || null;
-    if (!expectedPassVerdict) {
-        throw new Error(`Unsupported review type '${reviewType}' for record-review-result.`);
-    }
-    const expectedFailVerdict = expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED');
-    const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
-    const detectedLegacyVerdictToken = extractReviewVerdictToken(
-        reviewContent,
-        expectedPassVerdict,
-        expectedFailVerdict,
-        reviewType
-    );
-    let verdictToken = detectedLegacyVerdictToken;
-    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = dependencies.parseReviewerIdentity(
-        options,
-        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
-    );
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     dependencies.assertReviewContextContractOrThrow({
         taskId,
@@ -2046,6 +2040,26 @@ async function handleRecordReviewResultUnlocked(
         requireStrictBindingMetadata: !!options.reviewContextPath,
         repoRoot
     });
+    const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+        preflight: preflightPayload,
+        reviewContext: parsedReviewContext,
+        reviewType
+    });
+    const expectedPassVerdict = reviewLaneContract.passVerdict;
+    const expectedFailVerdict = reviewLaneContract.failVerdict;
+    const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
+    const detectedLegacyVerdictToken = extractReviewVerdictToken(
+        reviewContent,
+        expectedPassVerdict,
+        expectedFailVerdict,
+        reviewType
+    );
+    let verdictToken = detectedLegacyVerdictToken;
+    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = dependencies.parseReviewerIdentity(
+        options,
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
+    );
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const reviewContextSha256 = fileSha256(contextPath) || '';
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
     let findingsReport: ReviewFindingsReport | null = null;
@@ -2300,8 +2314,7 @@ async function handleRecordReviewReceiptUnlocked(
     const { options: rawOptions } = parseOptions(gateArgv, recordReviewReceiptOptionDefinitions(), { allowPositionals: false });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-receipt', 'review_phase');
@@ -2355,10 +2368,7 @@ async function handleRecordReviewReceiptWithDependencies(
     });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!REVIEW_CONTRACTS.some(([candidate]) => candidate === reviewType)) {
-        throw new Error(`Unsupported review type '${reviewType || 'missing'}' for record-review-receipt.`);
-    }
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
         repoRoot,
@@ -2391,10 +2401,7 @@ async function handleRecordReviewResultWithDependencies(
     });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!REVIEW_CONTRACTS.some(([candidate]) => candidate === reviewType)) {
-        throw new Error(`Unsupported review type '${reviewType || 'missing'}' for record-review-result.`);
-    }
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
         repoRoot,

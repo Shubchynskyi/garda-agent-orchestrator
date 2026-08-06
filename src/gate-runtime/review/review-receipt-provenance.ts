@@ -15,6 +15,11 @@ export interface ReviewReceipt {
     review_context_reuse_sha256?: string | null;
     review_coverage_contract_sha256?: string | null;
     review_rule_context_sha256?: string | null;
+    review_lane_binding_sha256?: string | null;
+    review_lane_definition_sha256?: string | null;
+    effective_review_snapshot_sha256?: string | null;
+    review_catalog_sha256?: string | null;
+    review_verdict_contract_sha256?: string | null;
     review_artifact_sha256: string | null;
     reviewer_execution_mode: string | null;
     reviewer_identity: string | null;

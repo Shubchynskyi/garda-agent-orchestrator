@@ -415,6 +415,13 @@ function validateReviewLaneSelectionConsistency(
         reviewCapabilities as unknown as ReviewCapabilities,
         true
     );
+    for (const reviewType of Object.keys(recomputed.merged)) {
+        if (!(REVIEW_CAPABILITY_KEYS as readonly string[]).includes(reviewType)) {
+            // Custom catalog lanes remain compatibility-inactive in task mode;
+            // their task/scope selection is resolved and frozen by preflight.
+            recomputed.merged[reviewType] = false;
+        }
+    }
     const expectedEffectiveReviewPolicy = normalizeEffectiveReviewPolicyForSnapshot(recomputed.merged);
     const reviewKeys = new Set([
         ...Object.keys(expectedEffectiveReviewPolicy),
