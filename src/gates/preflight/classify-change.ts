@@ -11,6 +11,7 @@ import type {
 } from '../../gate-runtime/budget-preflight';
 import type { ReviewCapabilities } from '../../core/review-capabilities';
 import type { TaskProfilePolicySnapshotSummary } from '../../policy/task-profile-policy-snapshot';
+import type { EffectiveReviewSnapshot } from '../../policy/effective-review-snapshot';
 import { testPathPrefix } from '../shared/helpers';
 import {
     type ClassifyChangeOptions,
@@ -208,6 +209,7 @@ export interface ClassifyChangeResult {
     profile_selection?: unknown;
     profile_guardrails?: unknown;
     profile_policy_snapshot?: TaskProfilePolicySnapshotSummary;
+    effective_review_snapshot?: EffectiveReviewSnapshot;
     budget_forecast?: BudgetForecast;
     depth_escalation?: DepthEscalationRecord;
     risk_aware_depth?: RiskAwareDepthResult;

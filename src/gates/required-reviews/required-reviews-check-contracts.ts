@@ -2,10 +2,24 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildReviewVerdictTokenSet } from '../../gate-runtime/review-context';
+import { resolveBundleName } from '../../core/constants';
+import { readReviewCatalogConfigFile } from '../../core/review-catalog';
+import { resolveProfileReviewCatalogPolicy } from '../../policy/profile-review-catalog-policy';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../policy/task-profile-policy-snapshot';
+import {
+    assertEffectiveReviewSnapshotCurrent,
+    collectKnownReviewSkillIds,
+    getEffectiveReviewSnapshotViolations,
+    type EffectiveReviewSnapshot
+} from '../../policy/effective-review-snapshot';
+import { readSkillsHeadlinesIfPresent } from '../../runtime/skill-headlines-store';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
 import { fileSha256 } from '../shared/helpers';
 
-export const REVIEW_CONTRACTS = [
+const BUILT_IN_REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
     ['db', 'DB REVIEW PASSED'],
     ['security', 'SECURITY REVIEW PASSED'],
@@ -15,7 +29,80 @@ export const REVIEW_CONTRACTS = [
     ['performance', 'PERFORMANCE REVIEW PASSED'],
     ['infra', 'INFRA REVIEW PASSED'],
     ['dependency', 'DEPENDENCY REVIEW PASSED']
-];
+] as const;
+
+const REVIEW_ID_PATTERN = /^[a-z][a-z0-9-]*$/u;
+
+function buildCustomReviewContracts(
+    reviewTypes: readonly EffectiveReviewSnapshot['lanes'][number]['definition'][]
+): Array<[string, string]> {
+    return reviewTypes
+        .filter((definition) => !definition.built_in && REVIEW_ID_PATTERN.test(definition.id))
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((definition): [string, string] => [definition.id, definition.verdict_tokens.pass]);
+}
+
+export function readConfiguredReviewContracts(bundleRoot: string): Array<[string, string]> {
+    const knownReviewSkillIds = collectKnownReviewSkillIds(
+        readSkillsHeadlinesIfPresent(bundleRoot)?.payload.skills
+    );
+    const catalog = readReviewCatalogConfigFile(
+        path.join(bundleRoot, 'live', 'config', 'review-catalog.json'),
+        { knownSkillIds: knownReviewSkillIds }
+    );
+    return buildCustomReviewContracts(catalog.review_types);
+}
+
+function initializeConfiguredReviewContracts(): Array<[string, string]> {
+    const candidates = [
+        path.join(process.cwd(), resolveBundleName()),
+        process.cwd()
+    ];
+    for (const bundleRoot of candidates) {
+        if (!fs.existsSync(path.join(bundleRoot, 'live', 'config', 'review-catalog.json'))) {
+            continue;
+        }
+        try {
+            return readConfiguredReviewContracts(bundleRoot);
+        } catch {
+            // The authenticated preflight validator reports malformed or stale
+            // catalog state. Keep unrelated CLI commands available until then.
+            return [];
+        }
+    }
+    return [];
+}
+
+// Preserve the array identity because existing review-gate consumers capture this
+// export during module initialization. Synchronizing its contents lets those
+// consumers enforce catalog-backed lanes without changing built-in contracts.
+export const REVIEW_CONTRACTS: Array<[string, string]> = BUILT_IN_REVIEW_CONTRACTS
+    .map(([reviewId, passToken]): [string, string] => [reviewId, passToken])
+    .concat(initializeConfiguredReviewContracts());
+
+function synchronizeReviewContracts(
+    requiredReviews: Readonly<Record<string, boolean>>,
+    snapshotLanes: EffectiveReviewSnapshot['lanes'] = []
+): Array<[string, string]> {
+    const builtInIds = new Set<string>(BUILT_IN_REVIEW_CONTRACTS.map(([reviewId]) => reviewId));
+    const configuredPassTokens = new Map(REVIEW_CONTRACTS);
+    for (const lane of snapshotLanes) {
+        configuredPassTokens.set(lane.id, lane.definition.verdict_tokens.pass);
+    }
+    const customContracts = Object.keys(requiredReviews)
+        .filter((reviewId) => !builtInIds.has(reviewId) && REVIEW_ID_PATTERN.test(reviewId))
+        .sort()
+        .map((reviewId): [string, string] => [
+            reviewId,
+            configuredPassTokens.get(reviewId) || `${reviewId.toUpperCase().replace(/-/g, ' ')} REVIEW PASSED`
+        ]);
+    const effectiveContracts: Array<[string, string]> = [
+        ...BUILT_IN_REVIEW_CONTRACTS.map(([reviewId, passToken]): [string, string] => [reviewId, passToken]),
+        ...customContracts
+    ];
+    REVIEW_CONTRACTS.splice(0, REVIEW_CONTRACTS.length, ...effectiveContracts);
+    return REVIEW_CONTRACTS;
+}
 
 export function resolveExpectedReviewVerdicts(
     requiredReviews: Record<string, boolean>,
@@ -26,7 +113,7 @@ export function resolveExpectedReviewVerdicts(
     const skipSet = new Set((skipReviews || []).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
     const resolved: Record<string, string> = {};
 
-    for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
+    for (const [reviewKey, passToken] of synchronizeReviewContracts(requiredReviews)) {
         const explicitVerdict = String(providedVerdicts[reviewKey] || '').trim();
         if (explicitVerdict) {
             resolved[reviewKey] = normalizeExplicitReviewVerdict(reviewKey, explicitVerdict, passToken);
@@ -137,6 +224,83 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
         }
     }
 
+    const effectiveReviewSnapshot = preflight.effective_review_snapshot;
+    if (effectiveReviewSnapshot === undefined) {
+        errors.push('Preflight field `effective_review_snapshot` is required for downstream review routing.');
+    } else {
+        const snapshotViolations = getEffectiveReviewSnapshotViolations(effectiveReviewSnapshot);
+        errors.push(...snapshotViolations);
+        if (snapshotViolations.length === 0) {
+            const snapshot = effectiveReviewSnapshot as EffectiveReviewSnapshot;
+            const snapshotRequiredReviews = snapshot.required_reviews;
+            const preflightReviewIds = Object.keys(requiredReviews || {}).sort();
+            const snapshotReviewIds = Object.keys(snapshotRequiredReviews).sort();
+            if (JSON.stringify(preflightReviewIds) !== JSON.stringify(snapshotReviewIds)) {
+                errors.push(
+                    'Preflight field `required_reviews` must contain exactly the review ids from ' +
+                    '`effective_review_snapshot.required_reviews`.'
+                );
+            }
+            synchronizeReviewContracts(snapshotRequiredReviews, snapshot.lanes);
+            for (const [reviewId, required] of Object.entries(snapshotRequiredReviews)) {
+                requiredFlags[reviewId] = required;
+                if (requiredReviews?.[reviewId] !== required) {
+                    errors.push(
+                        `Preflight required_reviews.${reviewId} does not match effective_review_snapshot.required_reviews.${reviewId}.`
+                    );
+                }
+            }
+            const profileSnapshotSha256 = String(
+                preflight.profile_policy_snapshot?.snapshot_hash || ''
+            ).trim().toLowerCase();
+            try {
+                const bundleRoot = path.dirname(path.dirname(path.dirname(path.resolve(preflightPath))));
+                const knownReviewSkillIds = collectKnownReviewSkillIds(
+                    readSkillsHeadlinesIfPresent(bundleRoot)?.payload.skills
+                );
+                const currentCatalog = readReviewCatalogConfigFile(
+                    path.join(bundleRoot, 'live', 'config', 'review-catalog.json'),
+                    { knownSkillIds: knownReviewSkillIds }
+                );
+                assertEffectiveReviewSnapshotCurrent(
+                    snapshot,
+                    currentCatalog,
+                    profileSnapshotSha256
+                );
+                const taskModePath = path.join(
+                    path.dirname(path.resolve(preflightPath)),
+                    `${resolvedTaskId}-task-mode.json`
+                );
+                const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8'));
+                const frozenProfileSnapshot = taskMode.profile_policy_snapshot;
+                const currentProfilePolicy = resolveProfileReviewCatalogPolicy(
+                    frozenProfileSnapshot.source.effective_profile,
+                    frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+                    frozenProfileSnapshot.review_lane_selection.review_capabilities,
+                    currentCatalog
+                );
+                const liveProfileSnapshot = buildTaskProfilePolicySnapshot(
+                    bundleRoot,
+                    frozenProfileSnapshot.source.task_profile,
+                    {
+                        reviewExecutionPolicyMode: frozenProfileSnapshot.review_execution_policy.mode,
+                        reviewExecutionPolicyConfigured: frozenProfileSnapshot.review_execution_policy.configured,
+                        lockTimestampUtc: frozenProfileSnapshot.lock_timestamp_utc
+                    }
+                );
+                assertReviewProfileInputsCurrent(frozenProfileSnapshot, liveProfileSnapshot, currentCatalog);
+                assertEffectiveReviewSnapshotCurrent(
+                    snapshot,
+                    currentCatalog,
+                    String(frozenProfileSnapshot.snapshot_hash || '').trim().toLowerCase(),
+                    currentProfilePolicy
+                );
+            } catch (error: unknown) {
+                errors.push(error instanceof Error ? error.message : String(error));
+            }
+        }
+    }
+
     return {
         preflight,
         resolved_task_id: resolvedTaskId,
@@ -147,3 +311,32 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
     };
 }
 
+function assertReviewProfileInputsCurrent(
+    frozenSnapshot: TaskProfilePolicySnapshot,
+    liveSnapshot: TaskProfilePolicySnapshot,
+    currentCatalog: Parameters<typeof resolveProfileReviewCatalogPolicy>[3]
+): void {
+    const profileInputKeys = ['profiles', 'review_capabilities', 'token_economy', 'skill_packs', 'paths'];
+    const changedInputs = profileInputKeys.filter(
+        (key) => frozenSnapshot.config_hashes[key] !== liveSnapshot.config_hashes[key]
+    );
+    const frozenPolicy = resolveProfileReviewCatalogPolicy(
+        frozenSnapshot.source.effective_profile,
+        frozenSnapshot.review_lane_selection.profile_review_policy,
+        frozenSnapshot.review_lane_selection.review_capabilities,
+        currentCatalog
+    );
+    const livePolicy = resolveProfileReviewCatalogPolicy(
+        liveSnapshot.source.effective_profile,
+        liveSnapshot.review_lane_selection.profile_review_policy,
+        liveSnapshot.review_lane_selection.review_capabilities,
+        currentCatalog
+    );
+    if (changedInputs.length > 0 || livePolicy.policy_sha256 !== frozenPolicy.policy_sha256) {
+        const inputDetails = changedInputs.length > 0 ? changedInputs.join(', ') : 'review lane policy';
+        throw new Error(
+            `Task profile policy inputs changed after preflight (${inputDetails}). ` +
+            'Re-enter task mode and generate a fresh preflight before review routing.'
+        );
+    }
+}

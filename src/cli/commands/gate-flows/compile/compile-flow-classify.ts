@@ -21,7 +21,14 @@ import {
 } from '../../../../schemas/task-plan';
 import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/shared/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
+import { readReviewCatalogConfigFile } from '../../../../core/review-catalog';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
+import {
+    buildEffectiveReviewSnapshot,
+    collectKnownReviewSkillIds,
+    resolveEffectiveReviewTaskIntent
+} from '../../../../policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../policy/profile-review-catalog-policy';
 import {
     resolveTaskProfileReviewTriggerPolicy,
     resolveTaskProfileSelectionFromSnapshot,
@@ -67,6 +74,7 @@ import {
     getWorkflowConfigWorkViolations
 } from '../../../../gates/workflow-config/workflow-config-work';
 import { readTaskQueueMetadata } from '../../../../gates/task-audit/task-audit-summary-collectors';
+import { readSkillsHeadlinesIfPresent } from '../../../../runtime/skill-headlines-store';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from '../../../../gates/rule-pack/rule-pack';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { normalizeOptionalPath, removeArtifactIfExists, resolvePathForWrite, writeTextArtifact } from '../../../gate-cli/gates-artifacts';
@@ -1000,6 +1008,64 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 };
             }
         }
+        if (resolvedTaskId && taskModeEvidenceForOptionalSkills?.profile_policy_snapshot) {
+            const taskProfileSnapshot = taskModeEvidenceForOptionalSkills.profile_policy_snapshot;
+            const knownReviewSkillIds = collectKnownReviewSkillIds(
+                readSkillsHeadlinesIfPresent(orchestratorRoot)?.payload.skills
+            );
+            const catalog = readReviewCatalogConfigFile(
+                path.join(orchestratorRoot, 'live', 'config', 'review-catalog.json'),
+                { knownSkillIds: knownReviewSkillIds }
+            );
+            const profileCatalogPolicy = resolveProfileReviewCatalogPolicy(
+                taskProfileSnapshot.source.effective_profile,
+                taskProfileSnapshot.review_lane_selection.profile_review_policy,
+                taskProfileSnapshot.review_lane_selection.review_capabilities,
+                catalog
+            );
+            const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+                catalog,
+                profilePolicy: profileCatalogPolicy,
+                profileSnapshotSha256: taskProfileSnapshot.snapshot_hash,
+                legacyRequiredReviews: result.required_reviews,
+                scopeCategory: result.scope_category,
+                taskIntent: resolveEffectiveReviewTaskIntent(options.taskIntent, currentTaskSummary),
+                changedFiles: result.changed_files,
+                taskTriggers: Object.fromEntries(
+                    Object.entries(result.triggers)
+                        .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')
+                ),
+                optionalSkillIds: optionalSkillSelectionPreview?.payload.selected_installed_skills
+                    .map((skill) => skill.id) || [],
+                zeroDiffBaselineOnly: result.zero_diff_guard.status === 'BASELINE_ONLY'
+            });
+            result.effective_review_snapshot = effectiveReviewSnapshot;
+            result.required_reviews = { ...effectiveReviewSnapshot.required_reviews };
+            result.profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
+                result.profile_guardrails,
+                result.required_reviews
+            );
+            if (result.budget_forecast && result.risk_aware_depth) {
+                const requiredReviewBudgetInput = {
+                    taskId: resolvedTaskId,
+                    requestedDepth: result.risk_aware_depth.requested_depth,
+                    effectiveDepth: result.risk_aware_depth.effective_depth,
+                    pathMode: result.mode,
+                    changedFilesCount: Math.min(
+                        workspaceSnapshot.changed_files_count,
+                        getReviewTriggerEffectiveMetric(result, 'changed_files_count')
+                    ),
+                    changedLinesTotal: getReviewTriggerEffectiveMetric(result, 'changed_lines_total'),
+                    requiredReviews: result.required_reviews
+                };
+                result.depth_escalation = resolveDepthEscalation(requiredReviewBudgetInput);
+                result.budget_forecast = buildBudgetForecast({
+                    ...requiredReviewBudgetInput,
+                    tokenEconomyEnabled: effectiveTaskPolicy?.token_economy.enabled ?? true,
+                    tokenEconomyEnabledDepths: effectiveTaskPolicy?.token_economy.enabled_depths ?? [1, 2]
+                });
+            }
+        }
         const preflightArtifactText = `${JSON.stringify(result, null, 2)}\n`;
         const preflightSha256 = createHash('sha256').update(preflightArtifactText, 'utf8').digest('hex');
         writeTextArtifact(outputPath, preflightArtifactText);
@@ -1086,6 +1152,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     profile_selection: result.profile_selection ?? null,
                     profile_guardrails: result.profile_guardrails ?? null,
                     profile_policy_snapshot: result.profile_policy_snapshot ?? null,
+                    effective_review_snapshot: result.effective_review_snapshot ?? null,
                     optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: result.budget_forecast || null,
