@@ -885,6 +885,57 @@ describe('runInit', () => {
         }
     });
 
+    it('materializes review catalog and preserves custom definitions on reinit', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const catalogPath = path.join(bundleRoot, 'live', 'config', 'review-catalog.json');
+            assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), {
+                version: 1,
+                custom_review_types: []
+            });
+
+            const customCatalog = {
+                version: 1,
+                custom_review_types: [{
+                    id: 'architecture-boundary',
+                    display_label: 'Architecture boundary review',
+                    enabled_by_default: false,
+                    skill_id: 'security-review',
+                    trigger: {
+                        mode: 'signals',
+                        signal_ids: ['scope:architecture']
+                    },
+                    coverage_category_ids: ['maintainability'],
+                    reviewer_role: {
+                        role_id: 'architecture-specialist',
+                        focus_tags: ['boundaries']
+                    }
+                }]
+            };
+            fs.writeFileSync(catalogPath, JSON.stringify(customCatalog, null, 2), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), customCatalog);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('preserves optional skill selection policy values and custom fields on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
