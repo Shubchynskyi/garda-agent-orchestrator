@@ -70,7 +70,12 @@ function formatCatalogLaneSummary(policy: ProfileReviewCatalogPolicyOutput): str
     const inactive = policy.lanes
         .filter((lane) => !lane.active)
         .map((lane) => `${lane.id}(${lane.state}:${lane.inactive_reason})`);
-    const laneSummary = `active=[${active.join(', ') || 'none'}]; inactive=[${inactive.join(', ') || 'none'}]`;
+    const laneSummary = [
+        `activity_basis=${policy.activity_basis}`,
+        `task_effective_selection=${policy.task_effective_selection}`,
+        `profile_active=[${active.join(', ') || 'none'}]`,
+        `profile_inactive=[${inactive.join(', ') || 'none'}]`
+    ].join('; ');
     return policy.validation_issues?.length
         ? `validation=[${policy.validation_issues.join(' | ')}]; ${laneSummary}`
         : laneSummary;

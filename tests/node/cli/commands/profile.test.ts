@@ -379,6 +379,8 @@ test('profile current exposes catalog lane states and activation reasons', () =>
     writeCustomReviewConfig(bundleRoot, true);
     const parsed = captureJsonProfileCommand(['current', '--bundle-root', bundleRoot, '--json']);
     const catalogPolicy = parsed.review_catalog_policy as {
+        activity_basis: string;
+        task_effective_selection: string;
         catalog_sha256: string;
         policy_sha256: string;
         lanes: Array<Record<string, unknown>>;
@@ -388,8 +390,20 @@ test('profile current exposes catalog lane states and activation reasons', () =>
     assert.equal(customLane.state, 'disabled');
     assert.equal(customLane.active, false);
     assert.equal(customLane.inactive_reason, 'profile_disabled');
+    assert.equal(catalogPolicy.activity_basis, 'profile_policy_and_capability');
+    assert.equal(catalogPolicy.task_effective_selection, 'resolved_during_preflight');
     assert.match(catalogPolicy.catalog_sha256, /^[a-f0-9]{64}$/u);
     assert.match(catalogPolicy.policy_sha256, /^[a-f0-9]{64}$/u);
+});
+
+test('profile current rejects conflating profile eligibility with task-effective review selection', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const { lines } = captureConsole(() => handleProfile(['current', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.match(output, /activity_basis=profile_policy_and_capability/u);
+    assert.match(output, /task_effective_selection=resolved_during_preflight/u);
+    assert.match(output, /profile_inactive=/u);
 });
 
 test('profile use switches the active profile', () => {

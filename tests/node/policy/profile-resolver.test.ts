@@ -1743,6 +1743,11 @@ test('resolveEffectivePolicy: scopeCategory code enforces safety floors even wit
         assert.equal(policy.review_policy.db, true, 'db must be enforced for code scope');
         assert.equal(policy.review_policy.refactor, true, 'refactor must be enforced for code scope');
         assert.equal(policy.safety_floors_applied.length, 4);
+        assert.equal(policy.review_catalog_policy?.activity_basis, 'profile_policy_and_capability');
+        assert.equal(policy.review_catalog_policy?.task_effective_selection, 'resolved_during_preflight');
+        const codeLane = policy.review_catalog_policy?.lanes.find(({ id }) => id === 'code');
+        assert.equal(codeLane?.state, 'disabled');
+        assert.equal(codeLane?.active, false, 'catalog activity describes profile eligibility, not task selection');
         assert.ok(policy.guardrail_diagnostics !== null);
         assert.equal(policy.guardrail_diagnostics!.guardrails_active, true);
     } finally {

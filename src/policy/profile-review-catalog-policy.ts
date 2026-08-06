@@ -28,6 +28,8 @@ export interface ProfileReviewCatalogLane {
 export interface ResolvedProfileReviewCatalogPolicy {
     schema_version: 1;
     profile_name: string;
+    activity_basis: 'profile_policy_and_capability';
+    task_effective_selection: 'resolved_during_preflight';
     catalog_sha256: string;
     policy_sha256: string;
     lanes: readonly ProfileReviewCatalogLane[];
@@ -134,6 +136,8 @@ export function analyzeProfileReviewCatalogPolicy(
     const payload: Omit<ResolvedProfileReviewCatalogPolicy, 'policy_sha256'> = {
         schema_version: 1,
         profile_name: profileName,
+        activity_basis: 'profile_policy_and_capability',
+        task_effective_selection: 'resolved_during_preflight',
         catalog_sha256: catalog.catalog_sha256,
         lanes
     };
