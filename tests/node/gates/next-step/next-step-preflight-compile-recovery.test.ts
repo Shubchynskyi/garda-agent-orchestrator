@@ -1215,6 +1215,49 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(text.includes('docker info'), text);
     });
 
+    it('routes protected manifest compile failure to a fresh orchestrator-work task-mode entry', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'FAILED',
+            outcome: 'FAIL',
+            error:
+                'Trusted protected control-plane manifest was already drifted before task start: src/app.ts. ' +
+                `Restart task mode with: node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" ` +
+                '--orchestrator-work --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: fileSha256(preflightPath)
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_FAILED', 'FAIL');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected task-mode restart/iu);
+        assert.ok(result.commands[0].command.includes('gate enter-task-mode'));
+        assert.ok(result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(result.commands[0].command.includes('--upgrade-existing-task-mode'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'PASS');
+        appendEvent(repoRoot, TASK_ID, 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PASS');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        const recoveredResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(recoveredResult.next_gate, 'compile-gate', recoveredResult.reason);
+        assert.match(recoveredResult.reason, /predates the latest task-mode restart/iu);
+        assert.ok(recoveredResult.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!recoveredResult.commands[0].command.includes('gate enter-task-mode'));
+    });
+
     it('refreshes explicit preflight when later rework adds a source file after review evidence exists', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);

@@ -101,6 +101,7 @@ test('resolveNextStepCompileGateRoute returns preflight refresh for compile scop
         ready: false,
         reason: 'Compile gate failed because the preflight scope is stale.',
         recoveryGate: 'classify-change',
+        restartTaskModeCommand: 'node bin/garda.js gate enter-task-mode --orchestrator-work',
         refreshPreflightCommand: 'node bin/garda.js gate classify-change --changed-file src/gates/next-step/next-step.ts',
         compileCommand: 'node bin/garda.js gate compile-gate --task-id "T-1"'
     });
@@ -116,6 +117,7 @@ test('resolveNextStepCompileGateRoute returns null only when compile gate passed
         compileGatePassed: true,
         ready: true,
         reason: 'ready',
+        restartTaskModeCommand: 'restart',
         refreshPreflightCommand: 'refresh',
         compileCommand: 'compile'
     }), null);

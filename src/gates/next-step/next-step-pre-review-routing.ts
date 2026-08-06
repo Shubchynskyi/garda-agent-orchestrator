@@ -40,7 +40,8 @@ export interface NextStepPostPreflightRulePackRoutingOptions extends NextStepRea
 
 export interface NextStepCompileGateRoutingOptions extends NextStepReadinessState {
     compileGatePassed: boolean;
-    recoveryGate?: 'classify-change';
+    recoveryGate?: 'classify-change' | 'enter-task-mode';
+    restartTaskModeCommand: string;
     refreshPreflightCommand: string;
     compileCommand: string;
 }
@@ -296,6 +297,18 @@ export function resolveNextStepCompileGateRoute(
             reason: options.reason,
             commands: [
                 buildCommand('Refresh preflight', options.refreshPreflightCommand)
+            ]
+        };
+    }
+
+    if (options.recoveryGate === 'enter-task-mode') {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'enter-task-mode',
+            title: 'Restart protected task mode before compile.',
+            reason: options.reason,
+            commands: [
+                buildCommand('Restart task mode with orchestrator work', options.restartTaskModeCommand)
             ]
         };
     }

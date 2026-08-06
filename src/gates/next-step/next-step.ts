@@ -3413,6 +3413,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 ready: compileReadiness.ready,
                 reason: compileReadiness.reason,
                 recoveryGate: compileReadiness.recoveryGate,
+                restartTaskModeCommand: buildOrchestratorWorkRestartCommand(
+                    repoRoot,
+                    cliPrefix,
+                    taskId,
+                    taskMode
+                ),
                 refreshPreflightCommand: buildAuthenticatedScopeClassifyChangeCommand({
                     repoRoot,
                     cliPrefix,
