@@ -35,6 +35,7 @@ export type CommandHelpName =
     | 'ui'
     | 'off'
     | 'on'
+    | 'uninstall'
     | 'status'
     | 'doctor'
     | 'debug'
@@ -303,6 +304,23 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             'Moves user-owned root alternatives into runtime/switch/on and restores Garda-owned files from runtime/switch/off.',
             'Removes the managed .agentignore block created by off mode.',
             'Conflicts fail closed without overwriting user files; run --dry-run first when checking a workspace.'
+        ])
+    }),
+    uninstall: Object.freeze({
+        summary: 'Remove the deployed orchestrator while preserving TASK.md by default.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} uninstall [--target-root PATH] [--no-prompt] [--dry-run] [--skip-backups] [--keep-primary-entrypoint yes|no] [--keep-task-file yes|no] [--keep-runtime-artifacts yes|no] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} uninstall --target-root "."`,
+            `${PRIMARY_CLI_NAME} uninstall --target-root "." --no-prompt`,
+            `${PRIMARY_CLI_NAME} uninstall --target-root "." --no-prompt --keep-task-file no`
+        ]),
+        hints: Object.freeze([
+            'TASK.md is preserved by default, including in --no-prompt mode.',
+            '--keep-task-file no is the explicit destructive override that removes the managed queue.',
+            'Without --skip-backups, explicit TASK.md removal reports TaskFileRecoveryPath for the exact pre-removal copy.',
+            'Combining --keep-task-file no with --skip-backups intentionally removes the managed queue without a recovery copy.'
         ])
     }),
     status: Object.freeze({
@@ -645,7 +663,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  update git    Apply update from a git repo or local git clone.',
             '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  backup        Create a manual rollback backup snapshot.',
-            '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  uninstall     Remove the deployed orchestrator bundle and managed files; preserve TASK.md by default (--keep-task-file no removes it).',
             '  cleanup       Remove stale runtime artifacts and manage review-artifact storage policy.',
             '  repair        Inspect and rebuild runtime indexes, protected manifests, and stale lock state.',
             '  gc            Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox (alias: clean).',

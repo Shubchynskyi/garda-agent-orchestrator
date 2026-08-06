@@ -47,11 +47,27 @@ import {
     tryParseBooleanText
 } from '../../../../src/cli/commands/cli-helpers';
 import { dispatchCliCommand } from '../../../../src/cli/commands/command-dispatch';
+import { handleUninstall } from '../../../../src/cli/commands/workspace/workspace-maintenance-command';
 import { DEFAULT_SOURCE_OF_TRUTH } from '../../../../src/core/constants';
 import { buildDefaultRetentionPolicy, RETENTION_POLICY_DEFAULTS } from '../../../../src/lifecycle/cleanup';
+import { MANAGED_END, MANAGED_START } from '../../../../src/materialization/content-builders';
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function captureConsoleOutput(action: () => void): string {
+    const captured: string[] = [];
+    const originalLog = console.log;
+    try {
+        console.log = (...args: unknown[]): void => {
+            captured.push(args.map((arg) => String(arg)).join(' '));
+        };
+        action();
+    } finally {
+        console.log = originalLog;
+    }
+    return stripAnsi(captured.join('\n'));
 }
 
 test('parseOptions parses string flags', () => {
@@ -898,6 +914,8 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('--source-path'));
     assert.ok(text.includes('--snapshot-path'));
     assert.ok(text.includes('rollback'));
+    assert.ok(text.includes('preserve TASK.md by default'));
+    assert.ok(text.includes('--keep-task-file no'));
     assert.ok(text.includes('help <command>'));
     assert.ok(text.includes('gate help <gate-name>'));
 });
@@ -908,6 +926,56 @@ test('buildCommandHelpText renders command-specific stats help', () => {
     assert.ok(text.includes('stats'));
     assert.ok(text.includes('--task-id "<task-id>"'));
     assert.ok(text.includes('garda stats --json'));
+});
+
+test('buildCommandHelpText explains uninstall task-file preservation and recovery policy', () => {
+    const text = stripAnsi(buildCommandHelpText('uninstall'));
+    assert.ok(text.includes('TASK.md is preserved by default, including in --no-prompt mode.'));
+    assert.ok(text.includes('--keep-task-file no is the explicit destructive override'));
+    assert.ok(text.includes('TaskFileRecoveryPath for the exact pre-removal copy'));
+    assert.ok(text.includes('without a recovery copy'));
+});
+
+test('handleUninstall formats explicit TASK.md removal recovery and no-backup warnings', () => {
+    const packageJson = { version: '1.0.8', name: 'garda-agent-orchestrator' };
+    for (const skipBackups of [false, true]) {
+        const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-uninstall-cli-output-'));
+        const bundleRoot = path.join(targetRoot, 'garda-agent-orchestrator');
+        const taskPath = path.join(targetRoot, 'TASK.md');
+        try {
+            fs.mkdirSync(bundleRoot, { recursive: true });
+            fs.writeFileSync(
+                taskPath,
+                `${MANAGED_START}\n# Managed operator queue\n${MANAGED_END}\n`,
+                'utf8'
+            );
+            const argv = [
+                '--target-root', targetRoot,
+                '--no-prompt',
+                '--keep-primary-entrypoint', 'no',
+                '--keep-task-file', 'no',
+                '--keep-runtime-artifacts', 'no'
+            ];
+            if (skipBackups) argv.push('--skip-backups');
+
+            const text = captureConsoleOutput(() => handleUninstall(argv, packageJson));
+            assert.ok(text.includes('TaskFileDecision: REMOVE_EXPLICIT'));
+            if (skipBackups) {
+                assert.ok(text.includes('TaskFileRecoveryPath: <none>'));
+                assert.ok(text.includes('No backup files were created during uninstall.'));
+                assert.ok(text.includes('without a recovery copy'));
+            } else {
+                assert.match(
+                    text,
+                    /TaskFileRecoveryPath: .*garda-agent-orchestrator-uninstall-backups.*TASK\.md/
+                );
+                assert.ok(text.includes('Explicit TASK.md removal completed. Recovery copy:'));
+                assert.ok(text.includes('Backup files were created.'));
+            }
+        } finally {
+            fs.rmSync(targetRoot, { recursive: true, force: true });
+        }
+    }
 });
 
 test('buildCommandHelpText explains agent-init confirmation flags without changing tokens', () => {
@@ -1198,6 +1266,7 @@ test('runCliMain prints command help for the user-facing invocation matrix', asy
         { command: 'task', expectedUsage: 'garda task' },
         { command: 'status', expectedUsage: 'garda status' },
         { command: 'doctor', expectedUsage: 'garda doctor' },
+        { command: 'uninstall', expectedUsage: 'garda uninstall' },
         { command: 'cleanup', expectedUsage: 'garda cleanup' },
         { command: 'gc', expectedUsage: 'garda gc' },
         { command: 'profile', expectedUsage: 'garda profile' },

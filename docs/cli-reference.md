@@ -670,12 +670,16 @@ Remove the orchestrator from a project.
 
 ```text
 garda uninstall --target-root "."
+garda uninstall --target-root "." --no-prompt
+garda uninstall --target-root "." --dry-run --no-prompt --keep-task-file no
 garda uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
-garda uninstall --target-root "." --dry-run --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts no
 ```
 
 Notes:
 - Uninstall removes managed blocks, bridge files, and the deployed bundle while preserving unrelated user content.
+- `TASK.md` is preserved by default, including with `--no-prompt`, so the operator queue survives uninstall and later setup/reinstall.
+- `--keep-task-file no` is the explicit destructive override for removing the managed task queue. Without `--skip-backups`, output includes `TaskFileRecoveryPath` for the exact pre-removal copy.
+- Combining `--keep-task-file no` with `--skip-backups` intentionally removes the managed queue without a recovery copy and emits a warning.
 - Before destructive work, uninstall creates an internal journal snapshot and attempts automatic restore if the uninstall flow fails mid-run.
 - `--skip-backups` skips the user-facing recovery backup copies; use it only when you intentionally accept losing those recovery artifacts.
 - `--keep-runtime-artifacts yes` preserves runtime reports, rollback snapshots, and task-event history under `garda-agent-orchestrator/runtime/`, along with user-owned `live/docs/project-memory/**`.
