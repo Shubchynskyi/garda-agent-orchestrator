@@ -14,9 +14,14 @@ import {
     validateZeroDiffForReviewGate
 } from '../../../../src/gates/required-reviews/required-reviews-check';
 import {
-    hasRequiredSpecializedReviews,
     testReviewArtifacts
 } from '../../../../src/cli/commands/gate-flows/review/review-flow-support';
+import { runRequiredReviewsCheckCommand } from '../../../../src/cli/commands/gates';
+import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
 import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath
@@ -177,8 +182,83 @@ function buildMissingFocusedValidationReport(options: {
 
 describe('gates/required-reviews-check core helpers', () => {
     it('rejects a forged tiny-change override when a custom review lane is required', () => {
-        assert.equal(hasRequiredSpecializedReviews({ code: true }), false);
-        assert.equal(hasRequiredSpecializedReviews({ code: true, api: false, 'architecture-boundary': true }), true);
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'required-review-custom-override-'));
+        try {
+            const taskId = 'T-custom-review-override';
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const configDir = path.join(orchestratorRoot, 'live', 'config');
+            const reviewsDir = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const catalogConfig = {
+                version: 1,
+                custom_review_types: [{
+                    id: 'architecture-boundary',
+                    display_label: 'Architecture boundary review',
+                    enabled_by_default: false,
+                    skill_id: 'code-review',
+                    trigger: { mode: 'manual' },
+                    coverage_category_ids: ['maintainability'],
+                    reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['boundaries'] }
+                }]
+            };
+            fs.writeFileSync(
+                path.join(configDir, 'review-catalog.json'),
+                `${JSON.stringify(catalogConfig, null, 2)}\n`,
+                'utf8'
+            );
+
+            const catalog = normalizeReviewCatalog(catalogConfig);
+            const capabilities = Object.fromEntries(
+                catalog.review_types.map(({ id }) => [id, true])
+            ) as ReviewCapabilitiesConfigMap;
+            const profilePolicy = resolveProfileReviewCatalogPolicy(
+                'balanced',
+                { code: true, 'architecture-boundary': true },
+                capabilities,
+                catalog
+            );
+            const profileSnapshotSha256 = 'a'.repeat(64);
+            const snapshot = buildEffectiveReviewSnapshot({
+                catalog,
+                profilePolicy,
+                profileSnapshotSha256,
+                legacyRequiredReviews: Object.fromEntries(
+                    catalog.review_types.map(({ id }) => [id, id === 'code'])
+                ),
+                scopeCategory: 'code',
+                taskIntent: 'Exercise the custom review override guard',
+                changedFiles: ['src/app.ts'],
+                taskTriggers: {}
+            });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeJson(preflightPath, {
+                task_id: taskId,
+                mode: 'FULL_PATH',
+                metrics: { changed_lines_total: 1 },
+                changed_files: ['src/app.ts'],
+                required_reviews: snapshot.required_reviews,
+                profile_policy_snapshot: { snapshot_hash: profileSnapshotSha256 },
+                effective_review_snapshot: snapshot
+            });
+
+            const result = runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                skipReviews: 'code',
+                skipReason: 'Regression coverage for a required custom review lane.',
+                emitMetrics: false
+            });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.ok(result.outputLines.some((line) => line.includes(
+                'Code review override is not allowed for this change scope.'
+            )), result.outputLines.join('\n'));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     describe('parseSkipReviews', () => {
