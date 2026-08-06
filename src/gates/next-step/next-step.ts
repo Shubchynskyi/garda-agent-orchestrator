@@ -61,9 +61,7 @@ import {
     sameRepairChildScopes,
     validateRepairChildChangedFiles
 } from '../full-suite/full-suite-repair-child-scope';
-import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
-import { resolveReviewCoverageCategoryIdsFromPreflight } from '../review-context/review-context-lane';
-import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
+import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
 import {
     readRecoverableFullSuiteValidationRunMarker,
     resolveFullSuiteValidationRunMarkerPath
@@ -1893,6 +1891,14 @@ function buildReuseCandidates(text: string, affectedReviewLanes: string[]): stri
 
 export function buildReviewReuseCandidatesForDiagnostics(text: string, affectedReviewLanes: string[]): string[] {
     return buildReuseCandidates(text, affectedReviewLanes);
+}
+
+export function buildFocusedRecoveryCoverageContractSha256(options: {
+    reviewType: string;
+    preflight: Record<string, unknown>;
+    repoRoot: string;
+}): string {
+    return buildAuthoritativeReviewCoverageContract(options).contract.contract_sha256;
 }
 
 function getCurrentWorkspaceRefreshChangedFiles(
@@ -3761,18 +3767,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 })
                 : null;
             const focusedRecoveryCoverageContractSha256 = state.failureKind === 'missing-focused-validation-evidence'
-                ? buildReviewCoverageContract({
+                ? buildFocusedRecoveryCoverageContractSha256({
                     reviewType,
-                    changedFiles: resolveReviewCoverageChangedFiles({
-                        reviewType,
-                        preflight: preflight as Record<string, unknown>,
-                        repoRoot
-                    }),
-                    categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(
-                        preflight as Record<string, unknown>,
-                        reviewType
-                    )
-                }).contract_sha256
+                    preflight: preflight as Record<string, unknown>,
+                    repoRoot
+                })
                 : null;
             const focusedIntermediateEvidence = state.failureKind === 'missing-focused-validation-evidence'
                 ? readPostReviewFocusedIntermediateEvidence({

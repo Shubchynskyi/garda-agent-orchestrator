@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveBundleName } from '../../core/constants';
 import { stringSha256 } from '../../gate-runtime/hash';
 import { buildReviewContextSections, type ReviewContextSectionsResult } from '../../gate-runtime/review-context';
 import { withReviewArtifactLock } from '../../gate-runtime/review-artifacts';
@@ -40,14 +39,13 @@ import {
 import { buildDomainScopeFingerprints } from '../scope/domain-scope-fingerprints';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from '../review/reviewer-routing';
 import { getTaskModeEvidence } from '../task-mode/task-mode';
-import { hasSkillEntrypoint } from '../../core/review-capabilities';
 import {
     buildReviewContextHandoffArtifactPaths,
     buildReviewContextHandoffArtifacts,
     buildReviewEvidenceManifest,
-    writeReviewContextArtifactFiles,
-    type ReviewSkillBinding
+    writeReviewContextArtifactFiles
 } from './review-context-artifacts';
+import { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 import { buildTaskCriteria } from './review-context-task-criteria';
 import { buildTaskScopeMarkdown } from './review-context-task-scope-markdown';
 import {
@@ -101,39 +99,7 @@ export interface BuildReviewContextOptions {
     ruleFileContentCache?: Map<string, string> | null;
 }
 
-export function resolveCatalogReviewSkillBinding(
-    skillIds: readonly string[],
-    repoRoot: string
-): ReviewSkillBinding {
-    const candidates = [...skillIds];
-    const skillId = candidates.find((candidate) => {
-        const candidateRoot = path.join(path.resolve(repoRoot), resolveBundleName(), 'live', 'skills', candidate);
-        return hasSkillEntrypoint(candidateRoot);
-    }) || candidates[0] || '';
-    const skillRoot = path.join(path.resolve(repoRoot), resolveBundleName(), 'live', 'skills', skillId);
-    const skillMdPath = path.join(skillRoot, 'SKILL.md');
-    const skillJsonPath = path.join(skillRoot, 'skill.json');
-    const skillPath = fs.existsSync(skillMdPath) && fs.statSync(skillMdPath).isFile()
-        ? skillMdPath
-        : skillJsonPath;
-    const skillExists = fs.existsSync(skillPath) && fs.statSync(skillPath).isFile();
-    if (skillExists) {
-        assertArtifactRealpathInsideRepo(repoRoot, skillPath, 'ReviewSkillPath');
-    } else {
-        throw new Error(
-            `Review context cannot be built because immutable lane skill candidates are missing an entrypoint: ` +
-            `${candidates.join(', ') || 'none'}.`
-        );
-    }
-    return {
-        skill_id: skillId,
-        skill_path: normalizePath(skillPath),
-        skill_sha256: skillExists ? fileSha256(skillPath) : null,
-        skill_directory_path: normalizePath(skillRoot),
-        skill_entrypoint_exists: skillExists,
-        candidate_skill_ids: candidates
-    };
-}
+export { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 
 /**
  * Resolve the output path for review context.

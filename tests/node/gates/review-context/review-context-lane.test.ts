@@ -17,9 +17,16 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../../src/gates/review-context/review-context-contract';
+import { buildAuthoritativeReviewCoverageContract } from '../../../../src/gates/review-context/review-context-coverage';
 import { buildScopedDiff } from '../../../../src/gates/preflight/build-scoped-diff';
 import { resolveCatalogReviewSkillBinding } from '../../../../src/gates/review-context/build-review-context';
 import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
+import { buildFocusedRecoveryCoverageContractSha256 } from '../../../../src/gates/next-step/next-step';
+import { getReusedReviewCoverageContractViolations } from '../../../../src/gates/review-reuse/review-reuse-materialization';
+import { buildReviewCoverageAuditSummary } from '../../../../src/gates/task-audit/task-audit-summary-review-coverage';
+import {
+    emitGeneratedReviewContextPreparationTelemetry
+} from '../../../../src/cli/commands/gate-flows/review-context/review-context-telemetry';
 import {
     buildReviewContext,
     runGit,
@@ -109,6 +116,37 @@ describe('catalog-backed review context lane binding', () => {
         });
         assert.ok(coverage.obligations.some((entry) => entry.id === 'CATEGORY-MAINTAINABILITY'));
         assert.equal(coverage.obligations.some((entry) => entry.id === 'CATEGORY-ASSIGNED-REVIEW-CONTRACT'), false);
+
+        const optionalPreflight = buildCustomPreflight('auto');
+        const optionalBinding = resolveReviewContextLaneBinding(optionalPreflight, 'architecture-boundary');
+        const optionalDiffExpectations = buildReviewContextPreflightDiffExpectations(
+            optionalPreflight,
+            'architecture-boundary'
+        );
+        assert.equal(optionalBinding.selection, 'optional');
+        assert.equal((optionalPreflight.required_reviews as Record<string, boolean>)['architecture-boundary'], false);
+        assert.equal(optionalDiffExpectations.expectedRequiredReview, true);
+        assert.equal(optionalDiffExpectations.expectedScopedDiff, true);
+
+        const authoritativeCoverage = buildAuthoritativeReviewCoverageContract({
+            reviewType: 'architecture-boundary',
+            preflight: optionalPreflight,
+            repoRoot: process.cwd()
+        });
+        assert.ok(authoritativeCoverage.contract.obligations.some(
+            (entry) => entry.id === 'CATEGORY-MAINTAINABILITY'
+        ));
+        assert.equal(buildFocusedRecoveryCoverageContractSha256({
+            reviewType: 'architecture-boundary',
+            preflight: optionalPreflight,
+            repoRoot: process.cwd()
+        }), authoritativeCoverage.contract.contract_sha256);
+        assert.deepEqual(getReusedReviewCoverageContractViolations({
+            reviewType: 'architecture-boundary',
+            preflight: optionalPreflight,
+            repoRoot: process.cwd(),
+            coverageContract: authoritativeCoverage.contract
+        }), []);
     });
 
     it('rejects unknown, inactive, malformed-category, and missing-skill lanes before launch', () => {
@@ -175,12 +213,46 @@ describe('catalog-backed review context lane binding', () => {
             const selectedSkill = resolveCatalogReviewSkillBinding(['architecture-review'], repoRoot);
             assert.equal(selectedSkill.skill_id, 'architecture-review');
             assert.equal(selectedSkill.skill_entrypoint_exists, true);
+
+            const escapedSkillRoot = path.join(repoRoot, 'outside-review');
+            fs.mkdirSync(escapedSkillRoot, { recursive: true });
+            fs.writeFileSync(path.join(escapedSkillRoot, 'SKILL.md'), '# Escaped review\n', 'utf8');
+            assert.throws(
+                () => resolveCatalogReviewSkillBinding(['../../../outside-review'], repoRoot),
+                /single catalog path component without traversal/u
+            );
+            assert.throws(
+                () => resolveCatalogReviewSkillBinding(['architecture-review', '..\\outside-review'], repoRoot),
+                /single catalog path component without traversal/u
+            );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
+
+        const linkedRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-linked-root-'));
+        const externalSkillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-external-skills-'));
+        try {
+            const liveRoot = path.join(linkedRepoRoot, 'garda-agent-orchestrator', 'live');
+            const externalSkillRoot = path.join(externalSkillsRoot, 'architecture-review');
+            fs.mkdirSync(liveRoot, { recursive: true });
+            fs.mkdirSync(externalSkillRoot, { recursive: true });
+            fs.writeFileSync(path.join(externalSkillRoot, 'SKILL.md'), '# External review\n', 'utf8');
+            fs.symlinkSync(
+                externalSkillsRoot,
+                path.join(liveRoot, 'skills'),
+                process.platform === 'win32' ? 'junction' : 'dir'
+            );
+            assert.throws(
+                () => resolveCatalogReviewSkillBinding(['architecture-review'], linkedRepoRoot),
+                /ReviewSkillCatalogRoot must resolve inside repo root/u
+            );
+        } finally {
+            fs.rmSync(linkedRepoRoot, { recursive: true, force: true });
+            fs.rmSync(externalSkillsRoot, { recursive: true, force: true });
+        }
     });
 
-    it('builds an end-to-end custom lane context and rejects the disabled lane before artifact generation', () => {
+    it('rejects replaced custom skill path and hash while propagating the valid custom lane lifecycle', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-custom-review-context-build-'));
         const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
         const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
@@ -278,7 +350,8 @@ describe('catalog-backed review context lane binding', () => {
                 contextPath: outputPath,
                 reviewContext: forgedContext,
                 expectedReviewType: 'architecture-boundary',
-                expectedPreflightPayload: activePreflight
+                expectedPreflightPayload: activePreflight,
+                repoRoot
             });
             assert.ok(forgedViolations.some(
                 (violation) => violation.includes('custom selected_skill is not bound')
@@ -286,6 +359,86 @@ describe('catalog-backed review context lane binding', () => {
             assert.ok(forgedViolations.some(
                 (violation) => violation.includes('custom selected_skill candidates do not match')
             ));
+
+            const forgedArtifactBinding = JSON.parse(JSON.stringify(result)) as Record<string, unknown>;
+            const forgedArtifactRuleContext = forgedArtifactBinding.rule_context as {
+                selected_skill: Record<string, unknown>;
+            };
+            const forgedArtifactHandoff = forgedArtifactBinding.reviewer_handoff as {
+                role_prompt: { selected_skill: Record<string, unknown> };
+            };
+            for (const selectedSkill of [
+                forgedArtifactRuleContext.selected_skill,
+                forgedArtifactHandoff.role_prompt.selected_skill
+            ]) {
+                selectedSkill.skill_path = path.join(repoRoot, 'forged', 'SKILL.md');
+                selectedSkill.skill_directory_path = path.join(repoRoot, 'forged');
+                selectedSkill.skill_sha256 = 'b'.repeat(64);
+            }
+            const forgedArtifactViolations = getReviewContextContractViolations({
+                contextPath: outputPath,
+                reviewContext: forgedArtifactBinding,
+                expectedReviewType: 'architecture-boundary',
+                expectedPreflightPayload: activePreflight,
+                repoRoot
+            });
+            assert.ok(forgedArtifactViolations.some(
+                (violation) => violation.includes('custom selected_skill path or content hash does not match')
+            ));
+
+            await emitGeneratedReviewContextPreparationTelemetry({
+                repoRoot,
+                taskId: 'T-729-4A-fixture',
+                reviewType: 'architecture-boundary',
+                depth: 3,
+                preflightPath: activePreflightPath,
+                outputPath,
+                ruleContextArtifactPath: result.rule_context.artifact_path,
+                selectedSkill: result.rule_context.selected_skill
+            });
+            const telemetryEvents = fs.readFileSync(
+                path.join(orchestratorRoot, 'runtime', 'task-events', 'T-729-4A-fixture.jsonl'),
+                'utf8'
+            ).trim().split(/\r?\n/u).map((line) => JSON.parse(line) as Record<string, unknown>);
+            assert.ok(telemetryEvents.some((event) => (
+                event.event_type === 'SKILL_SELECTED'
+                && (event.details as Record<string, unknown>)?.skill_id === 'architecture-review'
+            )));
+            assert.ok(telemetryEvents.some((event) => (
+                event.event_type === 'SKILL_REFERENCE_LOADED'
+                && (event.details as Record<string, unknown>)?.trigger_reason === 'review_skill'
+                && (event.details as Record<string, unknown>)?.skill_id === 'architecture-review'
+            )));
+
+            const auditCoverage = buildAuthoritativeReviewCoverageContract({
+                reviewType: 'architecture-boundary',
+                preflight: activePreflight,
+                repoRoot
+            }).contract;
+            fs.writeFileSync(path.join(
+                reviewsRoot,
+                'T-729-4A-fixture-architecture-boundary-receipt.json'
+            ), JSON.stringify({
+                review_coverage: {
+                    status: 'PASS',
+                    required: auditCoverage.required,
+                    contract_sha256: auditCoverage.contract_sha256,
+                    obligation_count: auditCoverage.obligation_count,
+                    completed_obligation_count: auditCoverage.obligation_count,
+                    omitted_obligation_ids: [],
+                    duplicate_obligation_ids: [],
+                    unknown_obligation_ids: [],
+                    finding_ids: [],
+                    violations: []
+                }
+            }, null, 2), 'utf8');
+            const auditSummary = buildReviewCoverageAuditSummary({
+                reviewsRoot,
+                taskId: 'T-729-4A-fixture',
+                requiredReviews: { 'architecture-boundary': true }
+            });
+            assert.equal(auditSummary.status, 'COMPLETE');
+            assert.equal(auditSummary.entries[0]?.contract_sha256, auditCoverage.contract_sha256);
 
             const inactivePreflight = buildCustomPreflight(false);
             const inactivePath = path.join(reviewsRoot, 'T-729-4A-fixture-inactive-preflight.json');

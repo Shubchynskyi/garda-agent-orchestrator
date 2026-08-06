@@ -9,6 +9,7 @@ import {
     resolveReviewContextLaneBinding,
     type ReviewContextLaneBinding
 } from './review-context-lane';
+import { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
 const CODE_SCOPE_CATEGORIES = new Set(['code', 'mixed']);
@@ -352,7 +353,8 @@ export function buildReviewContextPreflightDiffExpectations(
         ? preflight.metrics
         : {};
     const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
-    const expectedRequiredReview = requiredReviews[normalizedReviewType] === true;
+    const customReviewLane = isCustomReviewLaneInSnapshot(preflight, normalizedReviewType);
+    const expectedRequiredReview = requiredReviews[normalizedReviewType] === true || customReviewLane;
     const expectedChangedFiles = normalizePathList(preflight?.changed_files);
     const expectedScopeCategory = normalizeOptionalString(preflight?.scope_category)?.toLowerCase() || null;
     return {
@@ -831,6 +833,30 @@ export function getReviewContextContractViolations(
                 `Review context '${normalizedContextPath}' custom selected_skill artifact is missing ` +
                 `an authenticated entrypoint hash for '${expectedReviewType}'.`
             );
+        }
+        if (!options.repoRoot) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill cannot be authenticated ` +
+                `without the current repo root for '${expectedReviewType}'.`
+            );
+        } else {
+            try {
+                const expectedSelectedSkill = resolveCatalogReviewSkillBinding(
+                    expectedLaneBinding.skill_ids,
+                    options.repoRoot
+                );
+                if (JSON.stringify(ruleSelectedSkill) !== JSON.stringify(expectedSelectedSkill)) {
+                    violations.push(
+                        `Review context '${normalizedContextPath}' custom selected_skill path or content hash does not match ` +
+                        `the current catalog skill entrypoint for '${expectedReviewType}'.`
+                    );
+                }
+            } catch (error) {
+                violations.push(
+                    `Review context '${normalizedContextPath}' custom selected_skill cannot be authenticated ` +
+                    `for '${expectedReviewType}': ${String(error)}`
+                );
+            }
         }
     }
 

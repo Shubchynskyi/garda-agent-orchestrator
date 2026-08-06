@@ -36,8 +36,7 @@ import {
     validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
-import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
-import { resolveReviewCoverageCategoryIdsFromPreflight } from '../review-context/review-context-lane';
+import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
 import {
     type JsonReviewFindingsArtifactValidation
 } from '../review/review-findings-artifact-verdict';
@@ -103,6 +102,24 @@ interface ReusedReviewFindingsValidationEvidence {
     rawOutputSha256: string | null;
     policyResolution: LockedReviewFindingPolicyResolution;
     dispositionEvidence: ReusedReviewFindingsDispositionEvidence;
+}
+
+export function getReusedReviewCoverageContractViolations(options: {
+    reviewType: string;
+    preflight: Record<string, unknown>;
+    repoRoot: string;
+    coverageContract: unknown;
+}): string[] {
+    const authoritativeCoverage = buildAuthoritativeReviewCoverageContract({
+        reviewType: options.reviewType,
+        preflight: options.preflight,
+        repoRoot: options.repoRoot
+    });
+    return getReviewCoverageContractViolations(options.coverageContract, {
+        reviewType: options.reviewType,
+        changedFiles: authoritativeCoverage.changedFiles,
+        categoryIds: authoritativeCoverage.categoryIds
+    });
 }
 
 interface ReusedReviewFindingsDispositionEvidence {
@@ -325,22 +342,12 @@ async function materializeReusedReviewEvidenceUnderContextLock(
         };
     }
     if (currentReviewContextSchemaVersion >= 3) {
-        const authoritativeCoverageChangedFiles = resolveReviewCoverageChangedFiles({
+        const coverageContractViolations = getReusedReviewCoverageContractViolations({
             reviewType: options.reviewType,
             preflight: options.preflightPayload,
-            repoRoot: options.repoRoot
+            repoRoot: options.repoRoot,
+            coverageContract: currentReviewContext.coverage_contract
         });
-        const coverageContractViolations = getReviewCoverageContractViolations(
-            currentReviewContext.coverage_contract,
-            {
-                reviewType: options.reviewType,
-                changedFiles: authoritativeCoverageChangedFiles,
-                categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(
-                    options.preflightPayload,
-                    options.reviewType
-                )
-            }
-        );
         if (coverageContractViolations.length > 0) {
             return {
                 materialized: false,

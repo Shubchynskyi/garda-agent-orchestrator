@@ -6,8 +6,7 @@ import {
     getReviewCoverageContractViolations,
     getReviewCoverageValidationSummaryContractViolations
 } from '../review/review-coverage-ledger';
-import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
-import { resolveReviewCoverageCategoryIdsFromPreflight } from '../review-context/review-context-lane';
+import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
 
 export interface ReviewCoverageAuditEntry {
     review_type: string;
@@ -112,13 +111,13 @@ export function buildReviewCoverageAuditSummary(options: {
         const contract = context?.coverage_contract && typeof context.coverage_contract === 'object' && !Array.isArray(context.coverage_contract)
             ? context.coverage_contract as Record<string, unknown>
             : null;
-        const authoritativeCoverageChangedFiles = preflight
-            ? resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
-            : [];
-        const authoritativeContract = buildReviewCoverageContract({
+        const authoritativeCoverage = preflight
+            ? buildAuthoritativeReviewCoverageContract({ reviewType, preflight, repoRoot })
+            : null;
+        const authoritativeCoverageChangedFiles = authoritativeCoverage?.changedFiles || [];
+        const authoritativeContract = authoritativeCoverage?.contract || buildReviewCoverageContract({
             reviewType,
-            changedFiles: authoritativeCoverageChangedFiles,
-            categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(preflight, reviewType)
+            changedFiles: []
         });
         const coverage = receipt?.review_coverage && typeof receipt.review_coverage === 'object' && !Array.isArray(receipt.review_coverage)
             ? receipt.review_coverage as Record<string, unknown>
@@ -142,7 +141,7 @@ export function buildReviewCoverageAuditSummary(options: {
             violations.push(...getReviewCoverageContractViolations(contract, {
                 reviewType,
                 changedFiles: authoritativeCoverageChangedFiles,
-                categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(preflight, reviewType)
+                categoryIds: authoritativeCoverage?.categoryIds
             }));
         }
         if (!context || !Number.isInteger(contextSchemaVersion) || contextSchemaVersion < 3) {
