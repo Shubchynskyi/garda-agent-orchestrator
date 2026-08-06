@@ -17,11 +17,19 @@ import { writeFileAtomically } from '../../../../core/filesystem';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import {
+    getReviewerLaunchLaneReservationPath,
     withReviewerLaunchLaneTransaction
 } from './reviewer-launch-lane-transaction';
 import {
+    findMatchingReviewerDelegationStartedEvent,
     isValidUtcIso8601Timestamp
 } from './review-launch-artifact-fields';
+import {
+    assertArtifactReviewLaneEvidence,
+    assertArtifactReviewLaneEvidenceMatchesAuthority,
+    assertCanonicalReviewTypeId,
+    resolveAuthenticatedReviewLaneContract
+} from '../review-lane-contract';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -174,6 +182,7 @@ export interface ReviewerLaunchFailedHandlerDependencies {
     readJsonFile: typeof import('../index').readJsonFile;
     resolveCanonicalPreflightArtifactPath: typeof import('../index').resolveCanonicalPreflightArtifactPath;
     resolveReviewerLaunchArtifactPathForWrite: typeof import('../index').resolveReviewerLaunchArtifactPathForWrite;
+    resolveReviewerLaunchInputArtifactPath: typeof import('../index').resolveReviewerLaunchInputArtifactPath;
 }
 
 export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHandlerDependencies) {
@@ -182,7 +191,8 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
         parseReviewerIdentity,
         readJsonFile,
         resolveCanonicalPreflightArtifactPath,
-        resolveReviewerLaunchArtifactPathForWrite
+        resolveReviewerLaunchArtifactPathForWrite,
+        resolveReviewerLaunchInputArtifactPath
     } = deps;
 
     return async function handleRecordReviewerLaunchFailed(gateArgv: string[]): Promise<void> {
@@ -201,8 +211,7 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
         const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
         const options = rawOptions as ParsedOptionsRecord;
         const taskId = assertValidTaskId(options.taskId);
-        const reviewType = String(options.reviewType || '').trim().toLowerCase();
-        if (!reviewType) throw new Error('ReviewType is required.');
+        const reviewType = assertCanonicalReviewTypeId(options.reviewType);
         const failureReason = String(options.failureReason || '').trim();
         if (failureReason.length < 12) {
             throw new Error('FailureReason must explain the provider/controller launch failure in at least 12 characters.');
@@ -244,11 +253,44 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
             reviewType,
             artifactPathValue: options.reviewerLaunchArtifactPath
         });
+        const launchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(launchArtifactPath);
         if (!fs.existsSync(launchArtifactPath) || !fs.statSync(launchArtifactPath).isFile()) {
             throw new Error(`Reviewer launch artifact not found: ${normalizePath(launchArtifactPath)}.`);
         }
         const originalArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
         const artifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+        const launchInputArtifact = readJsonFile(
+            launchInputArtifactPath,
+            'Reviewer launch input artifact'
+        );
+        const laneReservation = readJsonFile(
+            getReviewerLaunchLaneReservationPath(launchArtifactPath),
+            'Reviewer launch lane reservation'
+        );
+        let reviewLaneContract: ReturnType<typeof resolveAuthenticatedReviewLaneContract> | null = null;
+        try {
+            reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+                preflight: readJsonFile(preflightPath, 'Preflight artifact'),
+                reviewContext: readJsonFile(contextPath, 'Review context artifact'),
+                reviewType
+            });
+        } catch {
+            // A started attempt can outlive the canonical context that prepared it. Its provider-owned
+            // start event authenticates the immutable launch artifact before attempt-bound fallback.
+        }
+        if (reviewLaneContract) {
+            assertArtifactReviewLaneEvidence(artifact, reviewLaneContract, 'Reviewer launch artifact');
+            assertArtifactReviewLaneEvidence(
+                launchInputArtifact,
+                reviewLaneContract,
+                'Reviewer launch input artifact'
+            );
+            assertArtifactReviewLaneEvidence(
+                laneReservation,
+                reviewLaneContract,
+                'Reviewer launch lane reservation'
+            );
+        }
         const attestationState = getStringField(artifact, 'attestation_state', 'attestationState');
         const recoveringPersistedFailure = attestationState === 'launch_failed';
         if (attestationState !== 'delegation_started' && !recoveringPersistedFailure) {
@@ -368,6 +410,57 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 launchFailedAtUtc,
                 failureReason
             });
+        if (!reviewLaneContract) {
+            const currentArtifactSha256 = fileSha256(launchArtifactPath) || '';
+            if (recoveringPersistedFailure && !failedEventMatchesArtifact(currentArtifactSha256)) {
+                throw new Error(
+                    `Reviewer launch failure cannot authenticate the recoverable failed attempt for '${reviewType}'.`
+                );
+            }
+            const startedEvent = findMatchingReviewerDelegationStartedEvent(
+                readDependencyTimelineEvents(timelinePath),
+                {
+                    taskId,
+                    reviewType,
+                    reviewerExecutionMode: 'delegated_subagent',
+                    reviewerIdentity,
+                    reviewContextSha256: launchContextSha256,
+                    routingEventSha256,
+                    reviewerLaunchAttemptId,
+                    launchBindingSha256: getStringField(
+                        artifact,
+                        'launch_binding_sha256',
+                        'launchBindingSha256'
+                    ),
+                    preparedLaunchEventSha256: getStringField(
+                        artifact,
+                        'prepared_launch_event_sha256',
+                        'preparedLaunchEventSha256'
+                    ),
+                    reviewerLaunchArtifactSha256: recoveringPersistedFailure
+                        ? null
+                        : currentArtifactSha256,
+                    providerInvocationId: invocationId,
+                    delegationStartedAtUtc,
+                    minSequenceExclusive: 0
+                }
+            );
+            if (!startedEvent) {
+                throw new Error(
+                    `Reviewer launch failure cannot authenticate the immutable started attempt for '${reviewType}'.`
+                );
+            }
+            assertArtifactReviewLaneEvidenceMatchesAuthority(
+                artifact,
+                launchInputArtifact,
+                'Reviewer launch input artifact'
+            );
+            assertArtifactReviewLaneEvidenceMatchesAuthority(
+                artifact,
+                laneReservation,
+                'Reviewer launch lane reservation'
+            );
+        }
         const existingFailedEventForAttempt = readDependencyTimelineEvents(timelinePath).find((event) => (
             event.event_type === 'REVIEWER_LAUNCH_FAILED'
             && getEventStringField(

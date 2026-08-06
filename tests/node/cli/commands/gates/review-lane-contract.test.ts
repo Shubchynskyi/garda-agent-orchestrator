@@ -123,6 +123,24 @@ function writeJsonObject(filePath: string, value: Record<string, unknown>): void
     fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function assertCliFailure(
+    result: { exitCode: number; logs: string[]; errors: string[] },
+    expectedDiagnostic: RegExp,
+    label: string
+): void {
+    const output = [...result.logs, ...result.errors].join('\n');
+    assert.notEqual(result.exitCode, 0, `${label} unexpectedly succeeded`);
+    assert.match(output, expectedDiagnostic, `${label} failed for the wrong reason:\n${output}`);
+}
+
+function writeCaseDriftedLaneEvidence(filePath: string): string {
+    const original = fs.readFileSync(filePath, 'utf8');
+    const artifact = JSON.parse(original) as Record<string, unknown>;
+    artifact.review_catalog_sha256 = String(artifact.review_catalog_sha256).toUpperCase();
+    writeJsonObject(filePath, artifact);
+    return original;
+}
+
 async function seedCustomReviewCliFixture(
     t: TestContext,
     taskId: string,
@@ -360,6 +378,19 @@ describe('authenticated review lane contract', () => {
             }, contract, 'Review receipt'),
             /review_verdict_contract_sha256/u
         );
+        for (const caseDriftedValue of [
+            contract.verdictTokensSha256.toUpperCase(),
+            ` ${contract.verdictTokensSha256}`,
+            `${contract.verdictTokensSha256}\n`
+        ]) {
+            assert.throws(
+                () => assertArtifactReviewLaneEvidence({
+                    ...contract.artifactEvidence,
+                    review_verdict_contract_sha256: caseDriftedValue
+                }, contract, 'Review receipt'),
+                /review_verdict_contract_sha256/u
+            );
+        }
     });
 
     it('launches and records real custom delegated PASS and FAIL results through the public CLI', async (t) => {
@@ -462,7 +493,117 @@ describe('authenticated review lane contract', () => {
             for (const field of CUSTOM_LANE_EVIDENCE_FIELDS) {
                 assert.equal(receipt[field], laneContract.artifactEvidence[field]);
             }
+            if (outcome === 'pass') {
+                const directReceipt = await runCliWithCapturedOutput([
+                    'gate', 'record-review-receipt', '--task-id', taskId,
+                    '--review-type', reviewType, '--preflight-path', preflightPath,
+                    '--review-context-path', reviewContextPath, '--repo-root', repoRoot,
+                    '--reviewer-execution-mode', 'delegated_subagent',
+                    '--reviewer-identity', reviewerIdentity
+                ], { cwd: repoRoot });
+                assert.equal(directReceipt.exitCode, 0, directReceipt.errors.join('\n'));
+                assert.ok(directReceipt.logs.some((line) => line.includes(
+                    `REVIEW_RECORDED: ${reviewType}`
+                )));
+                const directReceiptArtifact = readJsonObject(
+                    path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`)
+                );
+                for (const field of CUSTOM_LANE_EVIDENCE_FIELDS) {
+                    assert.equal(directReceiptArtifact[field], laneContract.artifactEvidence[field]);
+                }
+            }
         }
+    });
+
+    it('authenticates custom lane evidence while recording and retrying a failed launch', async (t) => {
+        const fixture = await seedCustomReviewCliFixture(
+            t,
+            'T-729-4B-custom-launch-failed',
+            'launch-failed'
+        );
+        const {
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerIdentity,
+            preflightPath,
+            reviewContextPath,
+            launchArtifactPath
+        } = fixture;
+        const prepare = await runCliWithCapturedOutput([
+            'gate', 'prepare-reviewer-launch', '--task-id', taskId,
+            '--review-type', reviewType, '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+        const preparedArtifact = readJsonObject(launchArtifactPath);
+        const launchInputArtifactPath = String(preparedArtifact.reviewer_launch_input_artifact_path);
+        const launchInputArgs = [
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', launchInputArtifactPath,
+            '--launch-input-sha256', fileSha256(launchInputArtifactPath)
+        ];
+        const providerInvocationId = `${taskId}-invocation`;
+        const started = await runCliWithCapturedOutput([
+            'gate', 'record-reviewer-delegation-started', '--task-id', taskId,
+            '--review-type', reviewType, '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', providerInvocationId,
+            '--attestation-source', 'test_provider_controller',
+            ...launchInputArgs,
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+        assert.equal(started.exitCode, 0, started.errors.join('\n'));
+
+        const failureArgs = [
+            'gate', 'record-reviewer-launch-failed', '--task-id', taskId,
+            '--review-type', reviewType, '--review-context-path', reviewContextPath,
+            '--repo-root', repoRoot, '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', providerInvocationId,
+            '--failure-reason', 'Provider transport failed before review output'
+        ];
+        const reservationPath = `${launchArtifactPath}.lane-reservation.json`;
+        for (const [label, artifactPath] of [
+            ['Reviewer launch artifact', launchArtifactPath],
+            ['Reviewer launch input artifact', launchInputArtifactPath],
+            ['Reviewer launch lane reservation', reservationPath]
+        ] as const) {
+            const original = writeCaseDriftedLaneEvidence(artifactPath);
+            const rejected = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+            assertCliFailure(
+                rejected,
+                new RegExp(`${label} review lane evidence is invalid: review_catalog_sha256`, 'u'),
+                `record-reviewer-launch-failed ${label}`
+            );
+            fs.writeFileSync(artifactPath, original, 'utf8');
+        }
+
+        const laneContract = resolveAuthenticatedReviewLaneContract({
+            preflight: readJsonObject(preflightPath),
+            reviewContext: readJsonObject(reviewContextPath),
+            reviewType
+        });
+        const supersededContext = readJsonObject(reviewContextPath);
+        delete supersededContext.review_lane;
+        fs.writeFileSync(reviewContextPath, `${JSON.stringify(supersededContext, null, 2)}\n`, 'utf8');
+
+        const failed = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assert.equal(failed.exitCode, 0, failed.errors.join('\n'));
+        const failedArtifact = readJsonObject(launchArtifactPath);
+        assert.equal(failedArtifact.attestation_state, 'launch_failed');
+        for (const field of CUSTOM_LANE_EVIDENCE_FIELDS) {
+            assert.equal(failedArtifact[field], laneContract.artifactEvidence[field]);
+        }
+
+        const retriedFailure = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assert.equal(retriedFailure.exitCode, 0, retriedFailure.errors.join('\n'));
+        assert.equal(readJsonObject(launchArtifactPath).attestation_state, 'launch_failed');
     });
 
     it('fails closed through public CLI boundaries for forged custom-lane and reviewer evidence', async (t) => {
@@ -489,17 +630,17 @@ describe('authenticated review lane contract', () => {
             '--reviewer-launch-artifact-path', launchArtifactPath
         ];
 
-        for (const invalidReviewType of [
-            'Architecture-Boundary',
-            '../architecture-boundary',
-            'architecture_boundary',
-            'live-config-only'
-        ]) {
+        for (const [invalidReviewType, expectedDiagnostic] of [
+            ['Architecture-Boundary', /canonical stable id/u],
+            ['../architecture-boundary', /canonical stable id/u],
+            ['architecture_boundary', /canonical stable id/u],
+            ['live-config-only', /Review context artifact not found/u]
+        ] as const) {
             const invalidPrepare = await runCliWithCapturedOutput(
                 prepareArgs(invalidReviewType),
                 { cwd: repoRoot }
             );
-            assert.notEqual(invalidPrepare.exitCode, 0, invalidReviewType);
+            assertCliFailure(invalidPrepare, expectedDiagnostic, invalidReviewType);
             assert.equal(fs.existsSync(launchArtifactPath), false);
         }
 
@@ -510,7 +651,7 @@ describe('authenticated review lane contract', () => {
             '--reviewer-identity', 'self:implementation-agent',
             '--reviewer-fallback-reason', 'reuse implementation agent'
         ], { cwd: repoRoot });
-        assert.notEqual(sameAgentRouting.exitCode, 0);
+        assertCliFailure(sameAgentRouting, /delegated_subagent/u, 'same-agent routing');
 
         const originalContext = fs.readFileSync(reviewContextPath, 'utf8');
         const forgedContext = JSON.parse(originalContext) as {
@@ -522,7 +663,11 @@ describe('authenticated review lane contract', () => {
             prepareArgs(reviewType),
             { cwd: repoRoot }
         );
-        assert.notEqual(forgedContextPrepare.exitCode, 0);
+        assertCliFailure(
+            forgedContextPrepare,
+            /does not match the immutable effective review snapshot/u,
+            'forged review context'
+        );
         fs.writeFileSync(reviewContextPath, originalContext, 'utf8');
 
         const prepare = await runCliWithCapturedOutput(prepareArgs(reviewType), { cwd: repoRoot });
@@ -551,18 +696,31 @@ describe('authenticated review lane contract', () => {
 
         fs.writeFileSync(reviewContextPath, `${originalContext.trim()}\n\n`, 'utf8');
         const staleContextStart = await runCliWithCapturedOutput(startArgs, { cwd: repoRoot });
-        assert.notEqual(staleContextStart.exitCode, 0);
+        assertCliFailure(
+            staleContextStart,
+            /review_context_sha256 must match the current review context/u,
+            'stale review context'
+        );
         fs.writeFileSync(reviewContextPath, originalContext, 'utf8');
-
-        const tamperedLaunchArtifact = JSON.parse(originalLaunchArtifact) as Record<string, unknown>;
-        tamperedLaunchArtifact.review_catalog_sha256 = '0'.repeat(64);
-        writeJsonObject(launchArtifactPath, tamperedLaunchArtifact);
-        const tamperedArtifactStart = await runCliWithCapturedOutput(startArgs, { cwd: repoRoot });
-        assert.notEqual(tamperedArtifactStart.exitCode, 0);
-        fs.writeFileSync(launchArtifactPath, originalLaunchArtifact, 'utf8');
 
         const reservationPath = `${launchArtifactPath}.lane-reservation.json`;
         const originalReservation = fs.readFileSync(reservationPath, 'utf8');
+        const originalLaunchInputArtifact = fs.readFileSync(launchInputArtifactPath, 'utf8');
+        for (const [label, artifactPath, original] of [
+            ['Reviewer launch artifact', launchArtifactPath, originalLaunchArtifact],
+            ['Reviewer launch input artifact', launchInputArtifactPath, originalLaunchInputArtifact],
+            ['Reviewer launch lane reservation', reservationPath, originalReservation]
+        ] as const) {
+            writeCaseDriftedLaneEvidence(artifactPath);
+            const rejectedStart = await runCliWithCapturedOutput(startArgs, { cwd: repoRoot });
+            assertCliFailure(
+                rejectedStart,
+                new RegExp(`${label} review lane evidence is invalid: review_catalog_sha256`, 'u'),
+                `delegation start ${label}`
+            );
+            fs.writeFileSync(artifactPath, original, 'utf8');
+        }
+
         const collidingReservation = JSON.parse(originalReservation) as Record<string, unknown>;
         collidingReservation.reviewer_launch_artifact_path = path.join(
             orchestratorRoot,
@@ -578,7 +736,11 @@ describe('authenticated review lane contract', () => {
             prepareArgs(reviewType),
             { cwd: repoRoot }
         );
-        assert.notEqual(collisionPrepare.exitCode, 0);
+        assertCliFailure(
+            collisionPrepare,
+            /already reserved at/u,
+            'lane reservation collision'
+        );
         fs.writeFileSync(reservationPath, originalReservation, 'utf8');
 
         const unresolvedIdentityStart = await runCliWithCapturedOutput([
@@ -586,11 +748,15 @@ describe('authenticated review lane contract', () => {
             `agent:pending:${taskId}-${reviewType}`,
             ...startArgs.slice(startArgs.indexOf('--reviewer-identity') + 2)
         ], { cwd: repoRoot });
-        assert.notEqual(unresolvedIdentityStart.exitCode, 0);
+        assertCliFailure(
+            unresolvedIdentityStart,
+            /resolved agent-scoped reviewer identity/u,
+            'unresolved reviewer identity'
+        );
 
         const started = await runCliWithCapturedOutput(startArgs, { cwd: repoRoot });
         assert.equal(started.exitCode, 0, started.errors.join('\n'));
-        const completed = await runCliWithCapturedOutput([
+        const completeArgs = [
             'gate', 'complete-reviewer-launch', '--task-id', taskId,
             '--review-type', reviewType, '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
@@ -600,7 +766,23 @@ describe('authenticated review lane contract', () => {
             '--attestation-source', 'test_provider_controller',
             ...launchInputArgs,
             '--fork-context', 'false', '--record-invocation'
-        ], { cwd: repoRoot });
+        ];
+        const startedLaunchArtifact = fs.readFileSync(launchArtifactPath, 'utf8');
+        for (const [label, artifactPath, original] of [
+            ['Reviewer launch artifact', launchArtifactPath, startedLaunchArtifact],
+            ['Reviewer launch input artifact', launchInputArtifactPath, originalLaunchInputArtifact],
+            ['Reviewer launch lane reservation', reservationPath, originalReservation]
+        ] as const) {
+            writeCaseDriftedLaneEvidence(artifactPath);
+            const rejectedCompletion = await runCliWithCapturedOutput(completeArgs, { cwd: repoRoot });
+            assertCliFailure(
+                rejectedCompletion,
+                new RegExp(`${label} review lane evidence is invalid: review_catalog_sha256`, 'u'),
+                `launch completion ${label}`
+            );
+            fs.writeFileSync(artifactPath, original, 'utf8');
+        }
+        const completed = await runCliWithCapturedOutput(completeArgs, { cwd: repoRoot });
         assert.equal(completed.exitCode, 0, completed.errors.join('\n'));
 
         const report = buildNoFindingsJsonReviewReport(reviewContextPath, taskId, reviewType) as
@@ -623,7 +805,11 @@ describe('authenticated review lane contract', () => {
             '--reviewer-identity', reviewerIdentity
         ];
         const freeFormVerdictResult = await runCliWithCapturedOutput(resultArgs, { cwd: repoRoot });
-        assert.notEqual(freeFormVerdictResult.exitCode, 0);
+        assertCliFailure(
+            freeFormVerdictResult,
+            /verdict/iu,
+            'free-form reviewer verdict'
+        );
 
         writeJsonObject(reviewOutputPath, report);
         const validResult = await runCliWithCapturedOutput(resultArgs, { cwd: repoRoot });
@@ -633,6 +819,10 @@ describe('authenticated review lane contract', () => {
             prepareArgs(reviewType),
             { cwd: repoRoot }
         );
-        assert.notEqual(reusedReviewer.exitCode, 0);
+        assertCliFailure(
+            reusedReviewer,
+            /already launched|already .* for/u,
+            'reused reviewer launch'
+        );
     });
 });

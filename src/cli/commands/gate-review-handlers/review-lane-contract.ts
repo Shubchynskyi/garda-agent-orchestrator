@@ -6,6 +6,13 @@ import {
 
 const REVIEW_TYPE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const MAX_REVIEW_TYPE_ID_LENGTH = 48;
+const REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS = [
+    'review_lane_binding_sha256',
+    'review_lane_definition_sha256',
+    'effective_review_snapshot_sha256',
+    'review_catalog_sha256',
+    'review_verdict_contract_sha256'
+] as const;
 
 export interface ReviewLaneArtifactEvidence extends Record<string, string> {
     review_lane_binding_sha256: string;
@@ -100,12 +107,40 @@ export function assertArtifactReviewLaneEvidence(
     const violations: string[] = [];
     for (const [field, expectedValue] of Object.entries(contract.artifactEvidence)) {
         const actualValue = typeof artifact[field] === 'string'
-            ? String(artifact[field]).trim().toLowerCase()
+            ? String(artifact[field])
             : '';
         if (actualValue !== expectedValue) {
             violations.push(`${field} must match the immutable custom review lane binding`);
         }
     }
+    if (violations.length > 0) {
+        throw new Error(`${label} review lane evidence is invalid: ${violations.join('; ')}.`);
+    }
+}
+
+export function assertArtifactReviewLaneEvidenceMatchesAuthority(
+    authorityArtifact: Record<string, unknown>,
+    artifact: Record<string, unknown>,
+    label: string
+): void {
+    const hasCustomEvidence = REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS.some((field) => (
+        typeof authorityArtifact[field] === 'string'
+        && String(authorityArtifact[field]).length > 0
+    ));
+    if (!hasCustomEvidence) {
+        return;
+    }
+    const violations = REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS.flatMap((field) => {
+        const expectedValue = typeof authorityArtifact[field] === 'string'
+            ? String(authorityArtifact[field])
+            : '';
+        const actualValue = typeof artifact[field] === 'string'
+            ? String(artifact[field])
+            : '';
+        return actualValue === expectedValue
+            ? []
+            : [`${field} must match the immutable started custom review lane binding`];
+    });
     if (violations.length > 0) {
         throw new Error(`${label} review lane evidence is invalid: ${violations.join('; ')}.`);
     }
