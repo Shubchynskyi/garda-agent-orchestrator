@@ -89,6 +89,58 @@ export const KNOWN_REVIEW_ARTIFACT_SUFFIXES: readonly string[] = Object.freeze([
     '-db.md'
 ]);
 
+const REVIEW_TYPE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
+const REVIEW_ARTIFACT_SUFFIX_CACHE_LIMIT = 64;
+const reviewArtifactSuffixCache = new Map<string, readonly string[]>();
+
+export function buildKnownReviewArtifactSuffixes(
+    reviewTypeIds: readonly string[]
+): readonly string[] {
+    const normalizedReviewTypeIds = [...new Set(reviewTypeIds
+        .map((reviewType) => String(reviewType || '').trim().toLowerCase())
+        .filter((reviewType) => REVIEW_TYPE_ID_PATTERN.test(reviewType)))]
+        .sort((left, right) => left.localeCompare(right));
+    const cacheKey = normalizedReviewTypeIds.join('\u0000');
+    const cached = reviewArtifactSuffixCache.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const suffixes = new Set<string>(KNOWN_REVIEW_ARTIFACT_SUFFIXES);
+    for (const reviewType of normalizedReviewTypeIds) {
+        for (const suffix of [
+            `-${reviewType}-review-context.json`,
+            `-${reviewType}-review-context.md`,
+            `-${reviewType}-receipt.json`,
+            `-${reviewType}-review-output.md`,
+            `-${reviewType}-role-prompt.md`,
+            `-${reviewType}-prompt-template.md`,
+            `-${reviewType}-output-template.md`,
+            `-${reviewType}-evidence-manifest.json`,
+            `-${reviewType}-findings-validation.json`,
+            `-${reviewType}-findings-disposition.json`,
+            `-${reviewType}-findings-follow-ups.json`,
+            `-${reviewType}-remediation-baseline.json`,
+            `-${reviewType}-scoped.json`,
+            `-${reviewType}-scoped.diff`,
+            `-${reviewType}.md`
+        ]) {
+            suffixes.add(suffix);
+        }
+    }
+    const built = Object.freeze([...suffixes].sort((left, right) => (
+        right.length - left.length || left.localeCompare(right)
+    )));
+    if (reviewArtifactSuffixCache.size >= REVIEW_ARTIFACT_SUFFIX_CACHE_LIMIT) {
+        const oldestKey = reviewArtifactSuffixCache.keys().next().value;
+        if (typeof oldestKey === 'string') {
+            reviewArtifactSuffixCache.delete(oldestKey);
+        }
+    }
+    reviewArtifactSuffixCache.set(cacheKey, built);
+    return built;
+}
+
 export function assertCanonicalTaskId(value: unknown): string {
     if (!value || !String(value).trim()) {
         throw new Error('TaskId must not be empty.');

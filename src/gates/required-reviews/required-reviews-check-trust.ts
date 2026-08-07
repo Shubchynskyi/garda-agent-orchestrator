@@ -15,6 +15,10 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
 import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { resolveReviewContextRoutingIdentity } from '../review-context/review-context-routing';
 import { resolveReviewerPromptArtifactBinding } from '../review/review-prompt-artifact';
@@ -329,6 +333,18 @@ export function validateReviewArtifactGateEligibility(options: {
                     const receipt = receiptSnapshot.receipt;
                     const evidenceFields = normalizeReviewReceiptEvidenceFields(receipt as unknown as Record<string, unknown>);
                     validatedReceipt = receipt;
+                    if (preflightPayload && isCustomReviewLaneInSnapshot(preflightPayload, reviewKey)) {
+                        try {
+                            errors.push(...getReviewLaneArtifactEvidenceViolations({
+                                artifact: receipt as unknown as Record<string, unknown>,
+                                preflight: preflightPayload,
+                                reviewType: reviewKey,
+                                label: `Review receipt for '${reviewKey}'`
+                            }));
+                        } catch (error: unknown) {
+                            errors.push(error instanceof Error ? error.message : String(error));
+                        }
+                    }
                     const currentArtifactHash = receiptSnapshot.artifactSha256 ?? fileSha256(artifactPath);
                     currentArtifactSha256 = currentArtifactHash;
                     if (receipt.task_id !== resolvedTaskId) {

@@ -12,6 +12,13 @@ import {
 } from '../../policy/effective-review-snapshot';
 
 const STABLE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
+export const REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS = Object.freeze([
+    'review_lane_binding_sha256',
+    'review_lane_definition_sha256',
+    'effective_review_snapshot_sha256',
+    'review_catalog_sha256',
+    'review_verdict_contract_sha256'
+] as const);
 
 export interface ReviewContextLaneBinding {
     schema_version: 1;
@@ -29,6 +36,11 @@ export interface ReviewContextLaneBinding {
     verdict_tokens: ReviewVerdictTokens;
     binding_sha256: string;
 }
+
+export type ReviewLaneArtifactEvidence = Record<
+    (typeof REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS)[number],
+    string
+>;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -151,6 +163,42 @@ export function resolveReviewContextLaneBinding(
         throw new Error(`Review context lane binding is invalid. ${violations.join(' ')}`);
     }
     return buildLaneBinding(snapshot, lane);
+}
+
+export function buildReviewLaneArtifactEvidence(
+    binding: ReviewContextLaneBinding
+): ReviewLaneArtifactEvidence | Record<string, never> {
+    if (binding.built_in) {
+        return {};
+    }
+    return {
+        review_lane_binding_sha256: binding.binding_sha256,
+        review_lane_definition_sha256: binding.lane_definition_sha256,
+        effective_review_snapshot_sha256: binding.effective_review_snapshot_sha256,
+        review_catalog_sha256: binding.catalog_sha256,
+        review_verdict_contract_sha256: stringSha256(JSON.stringify(binding.verdict_tokens)) || ''
+    };
+}
+
+export function getReviewLaneArtifactEvidenceViolations(options: {
+    artifact: Record<string, unknown>;
+    preflight: Record<string, unknown>;
+    reviewType: string;
+    label: string;
+}): string[] {
+    const binding = resolveReviewContextLaneBinding(options.preflight, options.reviewType);
+    if (binding.built_in) {
+        return [];
+    }
+    const expected = buildReviewLaneArtifactEvidence(binding);
+    return Object.entries(expected).flatMap(([field, expectedValue]) => {
+        const actualValue = typeof options.artifact[field] === 'string'
+            ? String(options.artifact[field])
+            : '';
+        return actualValue === expectedValue
+            ? []
+            : [`${options.label} ${field} must match the immutable custom review lane binding.`];
+    });
 }
 
 export function resolveReviewCoverageCategoryIdsFromPreflight(

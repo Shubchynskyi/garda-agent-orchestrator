@@ -40,6 +40,7 @@ import { isTrivialReview } from './completion-verdict-findings';
 import {
     createEmptyReviewSkillEvidenceResult,
     getRequiredReviewKeys,
+    type ReviewSkillCandidatesByType,
     type ReviewSkillEvidenceResult
 } from './completion-review-skill-contracts';
 
@@ -106,7 +107,8 @@ export function validateReviewSkillEvidence(
     allowLegacyReviewContextIdentityFallback = false,
     executionProviderSource: string | null = null,
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
-    repoRoot: string | null = null
+    repoRoot: string | null = null,
+    reviewSkillCandidatesByType: ReviewSkillCandidatesByType | null = null
 ): ReviewSkillEvidenceResult {
     const result = createEmptyReviewSkillEvidenceResult();
     if (!codeChanged) return result;
@@ -151,7 +153,10 @@ export function validateReviewSkillEvidence(
     const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
 
     for (const key of requiredKeys) {
-        const candidateSkillIds = getReviewSkillCandidates(key);
+        const snapshotCandidates = reviewSkillCandidatesByType?.[key] || [];
+        const candidateSkillIds = snapshotCandidates.length > 0
+            ? [...new Set(snapshotCandidates.map((candidate) => String(candidate).trim().toLowerCase()).filter(Boolean))]
+            : getReviewSkillCandidates(key);
         const reviewPhaseSequenceForKey = getReviewPhaseSequenceForKey(key);
         reviewPhaseSequenceByKey.set(key, reviewPhaseSequenceForKey);
         const selectionEvent = findLatestTimelineEvent(events, (entry) => (

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isPlainRecord } from '../../core/records';
+import { resolveEffectiveReviewLaneSetOrLegacy } from '../../policy/effective-review-lane-set';
 export { isPlainRecord };
 
 export const REVIEW_TRUST_COMPATIBILITY_TYPES = [
@@ -17,15 +18,33 @@ export const REVIEW_TRUST_COMPATIBILITY_TYPES = [
 
 const REVIEW_TRUST_COMPATIBILITY_TYPE_SET = new Set<string>(REVIEW_TRUST_COMPATIBILITY_TYPES);
 
-export function normalizeKnownReviewType(value: unknown): string | null {
-    const normalized = String(value || '').trim().toLowerCase();
-    return REVIEW_TRUST_COMPATIBILITY_TYPE_SET.has(normalized) ? normalized : null;
+export function collectEffectiveReviewTypeIds(
+    currentPreflight?: Record<string, unknown> | null
+): string[] {
+    if (!currentPreflight) {
+        return [...REVIEW_TRUST_COMPATIBILITY_TYPES];
+    }
+    return [...resolveEffectiveReviewLaneSetOrLegacy(currentPreflight).all_review_ids];
 }
 
-export function collectKnownRequiredReviewTypes(requiredReviews: Record<string, boolean>): string[] {
+export function normalizeKnownReviewType(
+    value: unknown,
+    currentPreflight?: Record<string, unknown> | null
+): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    const knownTypes = currentPreflight
+        ? new Set(collectEffectiveReviewTypeIds(currentPreflight))
+        : REVIEW_TRUST_COMPATIBILITY_TYPE_SET;
+    return knownTypes.has(normalized) ? normalized : null;
+}
+
+export function collectKnownRequiredReviewTypes(
+    requiredReviews: Record<string, boolean>,
+    currentPreflight?: Record<string, unknown> | null
+): string[] {
     const reviewTypes = new Set<string>();
     for (const [reviewType, required] of Object.entries(requiredReviews || {})) {
-        const normalizedReviewType = normalizeKnownReviewType(reviewType);
+        const normalizedReviewType = normalizeKnownReviewType(reviewType, currentPreflight);
         if (required === true && normalizedReviewType) {
             reviewTypes.add(normalizedReviewType);
         }
@@ -33,9 +52,12 @@ export function collectKnownRequiredReviewTypes(requiredReviews: Record<string, 
     return [...reviewTypes].sort();
 }
 
-export function collectUnsafeRequiredReviewTypeIssues(requiredReviews: Record<string, boolean>): string[] {
+export function collectUnsafeRequiredReviewTypeIssues(
+    requiredReviews: Record<string, boolean>,
+    currentPreflight?: Record<string, unknown> | null
+): string[] {
     return Object.entries(requiredReviews || {})
-        .filter(([reviewType, required]) => required === true && !normalizeKnownReviewType(reviewType))
+        .filter(([reviewType, required]) => required === true && !normalizeKnownReviewType(reviewType, currentPreflight))
         .map(([reviewType]) => `unsafe or unknown required review type ignored: ${JSON.stringify(reviewType)}`)
         .sort();
 }

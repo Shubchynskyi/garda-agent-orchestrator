@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as zlib from 'node:zlib';
 import { acquireFilesystemLock, releaseFilesystemLock } from '../../../src/gate-runtime/task-events';
 
 import {
@@ -22,6 +23,10 @@ import {
     groupByTask,
     type ReviewsIndex
 } from '../../../src/gate-runtime/reviews-index';
+import { normalizeReviewCatalog } from '../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../src/core/review-capabilities';
+import { buildEffectiveReviewSnapshot } from '../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../src/policy/profile-review-catalog-policy';
 
 function makeTmpDir(prefix: string): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -37,6 +42,40 @@ function writeArtifact(reviewsDir: string, fileName: string, content: string = '
     const filePath = path.join(reviewsDir, fileName);
     fs.writeFileSync(filePath, content, 'utf8');
     return filePath;
+}
+
+function buildCustomReviewSnapshot(reviewTypeId: string) {
+    const catalog = normalizeReviewCatalog({
+        version: 1,
+        custom_review_types: [{
+            id: reviewTypeId,
+            display_label: 'Architecture review',
+            enabled_by_default: false,
+            skill_id: 'architecture-review',
+            trigger: { mode: 'manual' },
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['maintainability'] }
+        }]
+    }, { knownSkillIds: ['architecture-review'] });
+    const capabilities = Object.fromEntries(
+        catalog.review_types.map((definition) => [definition.id, true])
+    ) as ReviewCapabilitiesConfigMap;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        'balanced',
+        { [reviewTypeId]: true },
+        capabilities,
+        catalog
+    );
+    return buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: 'a'.repeat(64),
+        legacyRequiredReviews: { code: true },
+        scopeCategory: 'code',
+        taskIntent: 'Change architecture boundary',
+        changedFiles: ['src/architecture.ts'],
+        taskTriggers: {}
+    });
 }
 
 function getBuiltReviewsIndexModulePath(): string {
@@ -100,7 +139,7 @@ describe('reviews-index', () => {
     describe('rebuildIndex', () => {
         it('returns empty entries for empty directory', () => {
             const index = rebuildIndex(reviewsDir);
-            assert.equal(index.version, 2);
+            assert.equal(index.version, 4);
             assert.equal(index.entries.length, 0);
             assert.ok(index.directoryMtimeMs > 0);
             assert.ok(index.generatedAtMs > 0);
@@ -120,6 +159,270 @@ describe('reviews-index', () => {
             assert.equal(taskModeEntry.artifactType, 'task-mode.json');
             assert.ok(taskModeEntry.mtimeMs > 0);
             assert.ok(taskModeEntry.sizeBytes > 0);
+        });
+
+        it('indexes only snapshot-authorized custom review artifacts with hyphenated ids', () => {
+            const snapshot = buildCustomReviewSnapshot('architecture-boundary');
+            writeArtifact(reviewsDir, 'T-729-4C-preflight.json', JSON.stringify({
+                task_id: 'T-729-4C',
+                required_reviews: snapshot.required_reviews,
+                effective_review_snapshot: snapshot
+            }));
+            writeArtifact(reviewsDir, 'T-729-4C-architecture-boundary-review-context.json');
+            const generatedLaneArtifacts = [
+                'T-729-4C-architecture-boundary-review-context.md',
+                'T-729-4C-architecture-boundary-role-prompt.md',
+                'T-729-4C-architecture-boundary-prompt-template.md',
+                'T-729-4C-architecture-boundary-output-template.md',
+                'T-729-4C-architecture-boundary-evidence-manifest.json',
+                'T-729-4C-architecture-boundary-findings-validation.json',
+                'T-729-4C-architecture-boundary-findings-disposition.json',
+                'T-729-4C-architecture-boundary-findings-follow-ups.json',
+                'T-729-4C-architecture-boundary-remediation-baseline.json'
+            ];
+            for (const fileName of generatedLaneArtifacts) {
+                writeArtifact(reviewsDir, fileName);
+            }
+            writeArtifact(
+                reviewsDir,
+                `T-729-4C-architecture-boundary-artifact-${'b'.repeat(64)}.md`,
+                '# Review\n'
+            );
+            writeArtifact(reviewsDir, 'T-729-4C-rogue-lane-review-context.json');
+
+            const index = rebuildIndex(reviewsDir);
+
+            assert.equal(
+                index.entries.find((entry) => entry.fileName.endsWith('architecture-boundary-review-context.json'))?.taskId,
+                'T-729-4C'
+            );
+            assert.equal(
+                index.entries.find((entry) => entry.fileName.includes('architecture-boundary-artifact-'))?.taskId,
+                'T-729-4C'
+            );
+            for (const fileName of generatedLaneArtifacts) {
+                assert.equal(
+                    index.entries.find((entry) => entry.fileName === fileName)?.taskId,
+                    'T-729-4C'
+                );
+            }
+            assert.equal(
+                index.entries.some((entry) => entry.fileName.includes('rogue-lane')),
+                false
+            );
+        });
+
+        it('omits an unbound artifact whose name has multiple authorized task interpretations', () => {
+            const foreignSnapshot = buildCustomReviewSnapshot('architecture-code');
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: foreignSnapshot.required_reviews,
+                effective_review_snapshot: foreignSnapshot
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-preflight.json', JSON.stringify({
+                task_id: 'T-1-architecture',
+                required_reviews: { code: true }
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-code.md', '# Built-in code review\n');
+
+            const index = rebuildIndex(reviewsDir);
+
+            assert.equal(
+                index.entries.some((candidate) => candidate.fileName === 'T-1-architecture-code.md'),
+                false
+            );
+        });
+
+        it('does not infer ownership for an unbound legacy/custom collision', () => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-code');
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: customSnapshot.required_reviews,
+                effective_review_snapshot: customSnapshot
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-code.md', '# Legacy built-in code review\n');
+
+            const index = rebuildIndex(reviewsDir);
+
+            assert.equal(
+                index.entries.some((candidate) => candidate.fileName === 'T-1-architecture-code.md'),
+                false
+            );
+        });
+
+        it('uses an artifact task binding to disambiguate an overlapping custom lane', () => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-code');
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: customSnapshot.required_reviews,
+                effective_review_snapshot: customSnapshot
+            }));
+            writeArtifact(
+                reviewsDir,
+                'T-1-architecture-code.md',
+                JSON.stringify({ task_id: 'T-1', review_type: 'architecture-code' })
+            );
+
+            const entry = rebuildIndex(reviewsDir).entries.find(
+                (candidate) => candidate.fileName === 'T-1-architecture-code.md'
+            );
+
+            assert.ok(entry);
+            assert.equal(entry.taskId, 'T-1');
+            assert.equal(entry.artifactType, 'architecture-code.md');
+        });
+
+        it('uses the task-bound review context to own overlapping generated Markdown artifacts', () => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-code');
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: customSnapshot.required_reviews,
+                effective_review_snapshot: customSnapshot
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-preflight.json', JSON.stringify({
+                task_id: 'T-1-architecture',
+                required_reviews: { code: true }
+            }));
+            writeArtifact(
+                reviewsDir,
+                'T-1-architecture-code-review-context.json',
+                JSON.stringify({ task_id: 'T-1', review_type: 'architecture-code' })
+            );
+            const generatedMarkdownArtifacts = [
+                'T-1-architecture-code-review-context.md',
+                'T-1-architecture-code-role-prompt.md',
+                'T-1-architecture-code-prompt-template.md',
+                'T-1-architecture-code-output-template.md'
+            ];
+            for (const fileName of generatedMarkdownArtifacts) {
+                writeArtifact(reviewsDir, fileName, '# Generated handoff\n');
+            }
+
+            const index = rebuildIndex(reviewsDir);
+
+            for (const fileName of generatedMarkdownArtifacts) {
+                const entry = index.entries.find((candidate) => candidate.fileName === fileName);
+                assert.ok(entry);
+                assert.equal(entry.taskId, 'T-1');
+                assert.equal(entry.artifactType, fileName.slice('T-1-'.length));
+            }
+        });
+
+        it('does not follow review artifact links outside the reviews root', (t) => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-code');
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: customSnapshot.required_reviews,
+                effective_review_snapshot: customSnapshot
+            }));
+            const outsideArtifactPath = path.join(tmpDir, 'outside-review.json');
+            fs.writeFileSync(outsideArtifactPath, JSON.stringify({
+                task_id: 'T-1',
+                review_type: 'architecture-code'
+            }));
+            const linkedArtifactName = 'T-1-architecture-code.md';
+            try {
+                fs.symlinkSync(outsideArtifactPath, path.join(reviewsDir, linkedArtifactName), 'file');
+            } catch (error: unknown) {
+                const code = (error as NodeJS.ErrnoException).code;
+                if (code === 'EPERM' || code === 'EACCES' || code === 'ENOTSUP') {
+                    t.skip(`filesystem links unavailable: ${code}`);
+                    return;
+                }
+                throw error;
+            }
+
+            const index = rebuildIndex(reviewsDir);
+
+            assert.equal(index.entries.some((entry) => entry.fileName === linkedArtifactName), false);
+        });
+
+        it('uses a receipt task binding for an overlapping hashed custom lane', () => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-code');
+            const sha256 = 'd'.repeat(64);
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: customSnapshot.required_reviews,
+                effective_review_snapshot: customSnapshot
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-preflight.json', JSON.stringify({
+                task_id: 'T-1-architecture',
+                required_reviews: { code: true }
+            }));
+            const fileName = `T-1-architecture-code-receipt-${sha256}.json`;
+            writeArtifact(reviewsDir, fileName, JSON.stringify({
+                task_id: 'T-1',
+                review_type: 'architecture-code'
+            }));
+
+            const entry = rebuildIndex(reviewsDir).entries.find(
+                (candidate) => candidate.fileName === fileName
+            );
+
+            assert.ok(entry);
+            assert.equal(entry.taskId, 'T-1');
+            assert.equal(entry.artifactType, `architecture-code-receipt-${sha256}.json`);
+        });
+
+        it('indexes compressed hashed custom evidence but rejects malformed extension separators', () => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-boundary');
+            const sha256 = 'e'.repeat(64);
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: customSnapshot.required_reviews,
+                effective_review_snapshot: customSnapshot
+            }));
+            const compressedFileName = `T-1-architecture-boundary-receipt-${sha256}.json.gz`;
+            fs.writeFileSync(
+                path.join(reviewsDir, compressedFileName),
+                zlib.gzipSync(JSON.stringify({
+                    task_id: 'T-1',
+                    review_type: 'architecture-boundary'
+                }))
+            );
+            const malformedFileName = `T-1-architecture-boundary-receipt-${sha256}xjson`;
+            writeArtifact(reviewsDir, malformedFileName, JSON.stringify({
+                task_id: 'T-1',
+                review_type: 'architecture-boundary'
+            }));
+
+            const index = rebuildIndex(reviewsDir);
+
+            assert.ok(index.entries.some((entry) => entry.fileName === compressedFileName));
+            assert.equal(index.entries.some((entry) => entry.fileName === malformedFileName), false);
+        });
+
+        it('keeps custom lane authority and task bindings after retention gzip compression', () => {
+            const customSnapshot = buildCustomReviewSnapshot('architecture-code');
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-1-preflight.json.gz'),
+                zlib.gzipSync(JSON.stringify({
+                    task_id: 'T-1',
+                    required_reviews: customSnapshot.required_reviews,
+                    effective_review_snapshot: customSnapshot
+                }))
+            );
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-1-architecture-code.md.gz'),
+                zlib.gzipSync(JSON.stringify({ task_id: 'T-1', review_type: 'architecture-code' }))
+            );
+
+            const index = rebuildIndex(reviewsDir);
+            const customEntry = index.entries.find(
+                (candidate) => candidate.fileName === 'T-1-architecture-code.md.gz'
+            );
+
+            assert.ok(customEntry);
+            assert.equal(customEntry.taskId, 'T-1');
+            assert.equal(customEntry.artifactType, 'architecture-code.md.gz');
+        });
+
+        it('does not auto-discover unknown artifacts when no snapshot authorizes them', () => {
+            writeArtifact(reviewsDir, 'T-123-rogue-review.json', '{"task_id":"T-123"}');
+
+            const index = rebuildIndex(reviewsDir);
+
+            assert.equal(index.entries.some((entry) => entry.fileName === 'T-123-rogue-review.json'), false);
         });
 
         it('indexes review-remediation-cycle artifacts for multi-segment task ids', () => {
@@ -185,7 +488,7 @@ describe('reviews-index', () => {
     describe('writeIndex and resolveIndexPath', () => {
         it('writes index atomically and can be read back', () => {
             const index: ReviewsIndex = {
-                version: 2,
+                version: 4,
                 directoryMtimeMs: 12345,
                 generatedAtMs: Date.now(),
                 entries: [{
@@ -202,7 +505,7 @@ describe('reviews-index', () => {
 
             assert.ok(fs.existsSync(indexPath));
             const raw = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-            assert.equal(raw.version, 2);
+            assert.equal(raw.version, 4);
             assert.equal(raw.entries.length, 1);
             assert.equal(raw.entries[0].fileName, 'T-001-task-mode.json');
         });
@@ -211,7 +514,7 @@ describe('reviews-index', () => {
             const badPath = path.join(tmpDir, 'non-existent-deep', 'sub', 'sub2', 'index.json');
             // mkdirSync recursive in writeIndex should handle this
             const index: ReviewsIndex = {
-                version: 2,
+                version: 4,
                 directoryMtimeMs: 0,
                 generatedAtMs: Date.now(),
                 entries: []
@@ -224,7 +527,7 @@ describe('reviews-index', () => {
         it('preserves the previous index when final rename fails', () => {
             const indexPath = resolveIndexPath(reviewsDir);
             const previousIndex: ReviewsIndex = {
-                version: 2,
+                version: 4,
                 directoryMtimeMs: 1,
                 directoryCtimeMs: 1,
                 directoryEntryCount: 0,
@@ -232,7 +535,7 @@ describe('reviews-index', () => {
                 entries: []
             };
             const nextIndex: ReviewsIndex = {
-                version: 2,
+                version: 4,
                 directoryMtimeMs: 2,
                 directoryCtimeMs: 2,
                 directoryEntryCount: 1,
@@ -334,6 +637,33 @@ describe('reviews-index', () => {
             const second = loadIndex(reviewsDir);
             assert.equal(second.source, 'cache');
             assert.equal(second.index.entries.length, 1);
+        });
+
+        it('rebuilds a structurally valid cache containing unauthorized ownership', () => {
+            writeArtifact(reviewsDir, 'T-123-preflight.json', '{"task_id":"T-123","required_reviews":{"code":true}}');
+            writeArtifact(reviewsDir, 'T-123-rogue-review.json', '{"task_id":"T-123"}');
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+            assert.equal(first.index.directoryUnindexedEntryCount, 1);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const forged = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            const roguePath = path.join(reviewsDir, 'T-123-rogue-review.json');
+            const rogueStat = fs.statSync(roguePath);
+            forged.entries.push({
+                fileName: 'T-123-rogue-review.json',
+                taskId: 'T-123',
+                artifactType: 'rogue-review.json',
+                mtimeMs: rogueStat.mtimeMs,
+                sizeBytes: rogueStat.size
+            });
+            forged.directoryUnindexedEntryCount = 0;
+            fs.writeFileSync(indexPath, JSON.stringify(forged), 'utf8');
+
+            const second = loadIndex(reviewsDir);
+
+            assert.equal(second.source, 'rebuilt');
+            assert.equal(second.index.entries.some((entry) => entry.fileName === 'T-123-rogue-review.json'), false);
         });
 
         it('uses cache without statting each artifact on cache hit', () => {

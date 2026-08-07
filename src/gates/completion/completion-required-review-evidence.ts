@@ -10,6 +10,10 @@ import {
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
 import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
+import {
     buildUnavailableRequiredReviewTrustSummary,
     readReviewTrustSummary,
     readReviewTrustSummaryFromReviewGate
@@ -21,7 +25,7 @@ import {
     type TimelineEventEntry
 } from './completion-evidence';
 import {
-    REVIEW_CONTRACTS,
+    resolveCompletionReviewContracts,
     getReviewArtifactFindingsEvidence,
     getReviewFindingsEvidenceFromValidationArtifact
 } from './completion-verdict';
@@ -125,7 +129,13 @@ export function collectRequiredReviewEvidence(input: {
         const requiredReviewBooleans = toRequiredReviewBooleanRecord(input.requiredReviews);
         const reviewEvidence = readJsonArtifact(input.reviewEvidencePath, 'Review gate', input.errors);
         ensurePassedArtifactStatus(reviewEvidence, 'Review gate', input.errors);
-        for (const [reviewKey] of REVIEW_CONTRACTS) {
+        let reviewContracts: ReturnType<typeof resolveCompletionReviewContracts> = [];
+        try {
+            reviewContracts = resolveCompletionReviewContracts(input.preflight);
+        } catch (error: unknown) {
+            input.errors.push(error instanceof Error ? error.message : String(error));
+        }
+        for (const [reviewKey] of reviewContracts) {
             const required = !!input.requiredReviews[reviewKey];
             if (!required) {
                 continue;
@@ -181,6 +191,18 @@ export function collectRequiredReviewEvidence(input: {
                     const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
                     if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
                         receipt = parsedReceipt as ReviewReceipt;
+                        if (isCustomReviewLaneInSnapshot(input.preflight, reviewKey)) {
+                            try {
+                                input.errors.push(...getReviewLaneArtifactEvidenceViolations({
+                                    artifact: parsedReceipt as Record<string, unknown>,
+                                    preflight: input.preflight,
+                                    reviewType: reviewKey,
+                                    label: `Required review receipt for '${reviewKey}'`
+                                }));
+                            } catch (error: unknown) {
+                                input.errors.push(error instanceof Error ? error.message : String(error));
+                            }
+                        }
                     }
                 } catch {
                     input.errors.push(`Required review receipt is invalid JSON: ${normalizePath(receiptPath)}`);
@@ -284,7 +306,9 @@ export function collectRequiredReviewEvidence(input: {
             input.reviewsRoot,
             input.taskId,
             input.scopeCategory,
-            input.preflightSha256
+            input.preflightSha256,
+            input.preflight,
+            input.reviewsRoot
         );
         const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
             reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
@@ -293,7 +317,9 @@ export function collectRequiredReviewEvidence(input: {
             requiredReviewBooleans,
             input.taskId,
             input.scopeCategory,
-            input.preflightSha256
+            input.preflightSha256,
+            input.preflight,
+            input.reviewsRoot
         );
         return {
             receiptReviewTrustSummary,

@@ -23,6 +23,7 @@ import {
 } from '../../gates/task-events-summary/task-events-summary';
 import { GATE_FAIL_EVENTS, GATE_PASS_EVENTS } from './stats/constants';
 import type { AggregateStatsResult, TaskStatsResult, TokenContribution, TokenEconomySummary } from './stats/types';
+import { resolveEffectiveReviewLaneSetOrLegacy } from '../../policy/effective-review-lane-set';
 
 export type { AggregateStatsResult, TaskStatsResult, TokenEconomySummary } from './stats/types';
 export {
@@ -362,19 +363,20 @@ function buildTokenEconomy(
         }
     }
 
+    let effectiveReviewTypeIds: readonly string[] = [];
+    try {
+        effectiveReviewTypeIds = resolveEffectiveReviewLaneSetOrLegacy(
+            safeReadJson(path.join(reviewsRoot, `${taskId}-preflight.json`))
+        ).selected_review_ids;
+    } catch {
+        effectiveReviewTypeIds = [];
+    }
     const currentCycleReviewContextPaths = currentCycle?.compile_gate_timestamp
         ? getCurrentCycleReviewContextPaths(events, currentCycle, repoRoot)
-        : new Map<string, string>([
-            ['code', path.join(reviewsRoot, `${taskId}-code-review-context.json`)],
-            ['db', path.join(reviewsRoot, `${taskId}-db-review-context.json`)],
-            ['security', path.join(reviewsRoot, `${taskId}-security-review-context.json`)],
-            ['refactor', path.join(reviewsRoot, `${taskId}-refactor-review-context.json`)],
-            ['api', path.join(reviewsRoot, `${taskId}-api-review-context.json`)],
-            ['test', path.join(reviewsRoot, `${taskId}-test-review-context.json`)],
-            ['performance', path.join(reviewsRoot, `${taskId}-performance-review-context.json`)],
-            ['infra', path.join(reviewsRoot, `${taskId}-infra-review-context.json`)],
-            ['dependency', path.join(reviewsRoot, `${taskId}-dependency-review-context.json`)]
-        ]);
+        : new Map<string, string>(effectiveReviewTypeIds.map((reviewType) => [
+            reviewType,
+            path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`)
+        ]));
     for (const [, contextPath] of currentCycleReviewContextPaths.entries()) {
         const contextKey = `review-context:${toPosix(contextPath)}`;
         if (sourceIndexByKey.has(contextKey)) continue;

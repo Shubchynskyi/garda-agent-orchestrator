@@ -279,7 +279,7 @@ function buildCustomVerdictTokens(reviewTypeId: string): ReviewVerdictTokens {
     };
 }
 
-function buildBuiltInDefinitions(): NormalizedReviewTypeDefinition[] {
+export function buildBuiltInReviewTypeDefinitions(): NormalizedReviewTypeDefinition[] {
     return BUILT_IN_REVIEW_TYPE_IDS.map((id) => ({
         id,
         display_label: BUILT_IN_DISPLAY_LABELS[id],
@@ -418,7 +418,7 @@ export function normalizeReviewCatalog(
     const customDefinitions = customRawDefinitions
         .map((definition, index) => normalizeCustomDefinition(definition, index, knownSkillIds))
         .sort((left, right) => left.id.localeCompare(right.id));
-    const reviewTypes = [...buildBuiltInDefinitions(), ...customDefinitions];
+    const reviewTypes = [...buildBuiltInReviewTypeDefinitions(), ...customDefinitions];
     const payload: Omit<NormalizedReviewCatalog, 'catalog_sha256'> = {
         schema_version: REVIEW_CATALOG_SCHEMA_VERSION,
         review_types: reviewTypes

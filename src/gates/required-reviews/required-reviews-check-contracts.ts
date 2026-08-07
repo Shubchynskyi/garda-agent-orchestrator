@@ -107,13 +107,14 @@ function synchronizeReviewContracts(
 export function resolveExpectedReviewVerdicts(
     requiredReviews: Record<string, boolean>,
     verdicts?: Record<string, string>,
-    skipReviews?: string[]
+    skipReviews?: string[],
+    reviewContracts: readonly (readonly [string, string])[] = synchronizeReviewContracts(requiredReviews)
 ): Record<string, string> {
     const providedVerdicts = verdicts || {};
     const skipSet = new Set((skipReviews || []).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
     const resolved: Record<string, string> = {};
 
-    for (const [reviewKey, passToken] of synchronizeReviewContracts(requiredReviews)) {
+    for (const [reviewKey, passToken] of reviewContracts) {
         const explicitVerdict = String(providedVerdicts[reviewKey] || '').trim();
         if (explicitVerdict) {
             resolved[reviewKey] = normalizeExplicitReviewVerdict(reviewKey, explicitVerdict, passToken);
@@ -224,6 +225,8 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
         }
     }
 
+    let reviewContracts: Array<[string, string]> = synchronizeReviewContracts(requiredFlags)
+        .map(([reviewId, passToken]) => [reviewId, passToken]);
     const effectiveReviewSnapshot = preflight.effective_review_snapshot;
     if (effectiveReviewSnapshot === undefined) {
         errors.push('Preflight field `effective_review_snapshot` is required for downstream review routing.');
@@ -241,7 +244,8 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
                     '`effective_review_snapshot.required_reviews`.'
                 );
             }
-            synchronizeReviewContracts(snapshotRequiredReviews, snapshot.lanes);
+            reviewContracts = synchronizeReviewContracts(snapshotRequiredReviews, snapshot.lanes)
+                .map(([reviewId, passToken]) => [reviewId, passToken]);
             for (const [reviewId, required] of Object.entries(snapshotRequiredReviews)) {
                 requiredFlags[reviewId] = required;
                 if (requiredReviews?.[reviewId] !== required) {
@@ -305,6 +309,7 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
         preflight,
         resolved_task_id: resolvedTaskId,
         required_reviews: requiredFlags,
+        review_contracts: reviewContracts,
         preflight_path: path.resolve(preflightPath),
         preflight_hash: fileSha256(path.resolve(preflightPath)),
         errors

@@ -1,26 +1,15 @@
 import { stringSha256 } from '../../../gate-runtime/hash';
 import {
+    buildReviewLaneArtifactEvidence,
+    REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS,
     resolveReviewContextLaneBinding,
+    type ReviewLaneArtifactEvidence,
     type ReviewContextLaneBinding
 } from '../../../gates/review-context/review-context-lane';
 
 const REVIEW_TYPE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const MAX_REVIEW_TYPE_ID_LENGTH = 48;
-const REVIEW_LANE_ARTIFACT_EVIDENCE_FIELDS = [
-    'review_lane_binding_sha256',
-    'review_lane_definition_sha256',
-    'effective_review_snapshot_sha256',
-    'review_catalog_sha256',
-    'review_verdict_contract_sha256'
-] as const;
-
-export interface ReviewLaneArtifactEvidence extends Record<string, string> {
-    review_lane_binding_sha256: string;
-    review_lane_definition_sha256: string;
-    effective_review_snapshot_sha256: string;
-    review_catalog_sha256: string;
-    review_verdict_contract_sha256: string;
-}
+export type { ReviewLaneArtifactEvidence } from '../../../gates/review-context/review-context-lane';
 
 export interface AuthenticatedReviewLaneContract {
     reviewType: string;
@@ -52,19 +41,6 @@ export function assertCanonicalReviewTypeId(value: unknown): string {
     return normalized;
 }
 
-function buildCustomArtifactEvidence(
-    binding: ReviewContextLaneBinding,
-    verdictTokensSha256: string
-): ReviewLaneArtifactEvidence {
-    return {
-        review_lane_binding_sha256: binding.binding_sha256,
-        review_lane_definition_sha256: binding.lane_definition_sha256,
-        effective_review_snapshot_sha256: binding.effective_review_snapshot_sha256,
-        review_catalog_sha256: binding.catalog_sha256,
-        review_verdict_contract_sha256: verdictTokensSha256
-    };
-}
-
 export function resolveAuthenticatedReviewLaneContract(options: {
     preflight: Record<string, unknown>;
     reviewContext: Record<string, unknown>;
@@ -90,9 +66,7 @@ export function resolveAuthenticatedReviewLaneContract(options: {
         failVerdict: binding.verdict_tokens.fail,
         verdictTokensSha256,
         binding,
-        artifactEvidence: binding.built_in
-            ? {}
-            : buildCustomArtifactEvidence(binding, verdictTokensSha256)
+        artifactEvidence: buildReviewLaneArtifactEvidence(binding)
     };
 }
 

@@ -368,7 +368,7 @@ export function buildReviewFindingsAuditSummary(options: {
 }): ReviewFindingsAuditSummary | null {
     const validationFailures = collectValidationFailures(options.timelineEvents);
     const remediationCycles = collectRemediationCycles(options.timelineEvents);
-    const lanes = collectKnownRequiredReviewTypes(options.requiredReviews)
+    const lanes = collectKnownRequiredReviewTypes(options.requiredReviews, options.currentPreflight)
         .map((reviewType) => buildCurrentFindingsLane({ ...options, reviewType }))
         .filter((lane): lane is ReviewFindingsAuditLane => lane !== null)
         .sort((left, right) => left.review_type.localeCompare(right.review_type));

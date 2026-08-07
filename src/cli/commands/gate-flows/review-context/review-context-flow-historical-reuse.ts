@@ -387,6 +387,7 @@ export async function tryReuseReviewEvidence(options: {
             repoRoot: options.repoRoot,
             taskId: options.taskId,
             reviewType: options.reviewType,
+            preflightPayload: options.preflightPayload,
             previousReviewContextReuseSha256: options.previousReviewContextReuseSha256,
             timelineEvents,
             latestCompilePassSequence,

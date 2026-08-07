@@ -2,7 +2,7 @@ import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { KNOWN_SUFFIXES } from '../../gate-runtime/reviews-index';
+import { rebuildIndex } from '../../gate-runtime/reviews-index';
 import { inspectTaskEventFile } from '../../gate-runtime/task-events';
 import { readTaskHistoryLedgerScanStatus, type TaskHistoryLedgerScanStatus } from '../../gate-runtime/task-history-ledger';
 import { readTimelineSummaryIndex } from '../../gate-runtime/timeline-summary';
@@ -13,9 +13,7 @@ import {
 import { parseCanonicalActiveTaskQueue } from '../../core/task-md-table';
 import {
     assertCanonicalTaskId,
-    parseKnownReviewArtifactTaskId,
-    parseStructuredTaskArtifactTaskId,
-    taskIdsEqualCaseInsensitive
+    parseStructuredTaskArtifactTaskId
 } from '../../core/task-ids';
 import { validateManagedConfigByName } from '../../schemas/config-artifacts';
 import {
@@ -251,31 +249,6 @@ export function loadRuntimeRetentionPolicy(bundleRoot: string): RuntimeRetention
     };
 }
 
-function parseTaskIdFromReviewArtifact(candidatePath: string, fileName: string): string | null {
-    const knownTaskId = parseKnownReviewArtifactTaskId(fileName, KNOWN_SUFFIXES);
-    if (knownTaskId) {
-        return knownTaskId;
-    }
-    if (fileName.endsWith('.json')) {
-        const structuredTaskId = parseStructuredTaskArtifactTaskId(fileName);
-        try {
-            const parsed = JSON.parse(fs.readFileSync(candidatePath, 'utf8')) as Record<string, unknown>;
-            const taskId = parsed.task_id;
-            if (taskId != null) {
-                const jsonTaskId = assertCanonicalTaskId(taskId);
-                if (structuredTaskId && !taskIdsEqualCaseInsensitive(structuredTaskId, jsonTaskId)) {
-                    return null;
-                }
-                return structuredTaskId ?? jsonTaskId;
-            }
-        } catch {
-            return structuredTaskId;
-        }
-        return structuredTaskId;
-    }
-    return parseStructuredTaskArtifactTaskId(fileName);
-}
-
 function parseTaskIdFromTaskEvents(fileName: string): string | null {
     if (!fileName.endsWith('.jsonl') || fileName === 'all-tasks.jsonl') {
         return null;
@@ -345,7 +318,11 @@ function parseTaskIdFromTmpArtifact(candidatePath: string, fileName: string): st
     return parseStructuredTaskArtifactTaskId(fileName);
 }
 
-function parseTaskIdFromCandidatePath(candidatePath: string, category: string): string | null {
+function parseTaskIdFromCandidatePath(
+    candidatePath: string,
+    category: string,
+    indexedReviewTaskIds: ReadonlyMap<string, string> = new Map()
+): string | null {
     if (!isTaskScopedRuntimeCandidateCategory(category)) {
         return null;
     }
@@ -354,7 +331,7 @@ function parseTaskIdFromCandidatePath(candidatePath: string, category: string): 
         case 'manual-validation':
             return parseTaskIdFromManualValidationArtifact(fileName);
         case 'reviews':
-            return parseTaskIdFromReviewArtifact(candidatePath, fileName);
+            return indexedReviewTaskIds.get(fileName) || null;
         case 'task-events':
             return parseTaskIdFromTaskEvents(fileName)
                 ?? (fileName.endsWith('.completeness.json')
@@ -592,8 +569,26 @@ export function buildRuntimeRetentionPreview(
 ): RuntimeRetentionPreviewSummary {
     const policy = loadRuntimeRetentionPolicy(bundleRoot);
     const candidateGroups = new Map<string, CandidateGroup>();
+    const reviewTaskIdsByDirectory = new Map<string, ReadonlyMap<string, string>>();
     for (const candidate of candidates) {
-        const taskId = parseTaskIdFromCandidatePath(candidate.path, candidate.category);
+        const reviewDirectory = candidate.category === 'reviews'
+            ? path.dirname(candidate.path)
+            : null;
+        let indexedReviewTaskIds: ReadonlyMap<string, string> = new Map();
+        if (reviewDirectory) {
+            indexedReviewTaskIds = reviewTaskIdsByDirectory.get(reviewDirectory) || new Map();
+            if (!reviewTaskIdsByDirectory.has(reviewDirectory)) {
+                indexedReviewTaskIds = new Map(
+                    rebuildIndex(reviewDirectory).entries.map((entry) => [entry.fileName, entry.taskId])
+                );
+                reviewTaskIdsByDirectory.set(reviewDirectory, indexedReviewTaskIds);
+            }
+        }
+        const taskId = parseTaskIdFromCandidatePath(
+            candidate.path,
+            candidate.category,
+            indexedReviewTaskIds
+        );
         if (!taskId) {
             continue;
         }

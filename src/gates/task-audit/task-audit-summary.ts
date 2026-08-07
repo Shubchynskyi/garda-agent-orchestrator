@@ -413,14 +413,16 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             safeTaskId,
             reviewsRoot,
             events,
-            currentCycle
+            currentCycle,
+            preflight
         );
         const evidence = filterNotRequiredEvidenceArtifacts(collectEvidenceArtifacts(
             repoRoot,
             reviewsRoot,
             safeTaskId,
             taskEventFile,
-            projectMemoryImpactEvidence
+            projectMemoryImpactEvidence,
+            preflight
         ), {
             fullSuiteRequired: fullSuiteValidationRequiredForLifecycle,
             completionGatePassed: hasCompletionPass
@@ -441,11 +443,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             requiredReviews,
             safeTaskId,
             scopeCategory,
-            preflightSha256
+            preflightSha256,
+            preflight,
+            reviewsRoot
         );
         const reviewAuthorshipAttestationIssues = collectReviewAuthorshipAttestationIssues(
             reviewGate,
-            requiredReviews
+            requiredReviews,
+            preflight
         );
         const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
         const reviewTrustSummary = reviewGateTrustSummary
@@ -482,7 +487,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             reviewAttemptSummary,
             taskQueueEntries: options.taskQueueEntries
         });
-        const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events, repoRoot);
+        const reviewTimingAudit = buildReviewTimingAuditSummary(
+            reviewsRoot,
+            safeTaskId,
+            events,
+            repoRoot,
+            preflight
+        );
         const reviewCoverageSummary = buildReviewCoverageAuditSummary({
             reviewsRoot,
             taskId: safeTaskId,

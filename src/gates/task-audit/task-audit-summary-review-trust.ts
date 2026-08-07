@@ -19,6 +19,10 @@ import {
     normalizeTrustToken,
     safeReadJson
 } from './task-audit-summary-review-common';
+import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
 
 export interface FinalCloseoutReviewTrustSummary extends ReviewTrustSummary {}
 
@@ -72,9 +76,11 @@ export function readReviewTrustSummaryFromReviewGate(
     requiredReviews: Record<string, boolean>,
     taskId: string,
     scopeCategory: string | null,
-    preflightSha256?: string | null
+    preflightSha256?: string | null,
+    currentPreflight?: Record<string, unknown> | null,
+    reviewsRoot?: string | null
 ): FinalCloseoutReviewTrustSummary | null {
-    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews);
+    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews, currentPreflight);
     if (requiredReviewTypes.length === 0 || !reviewGateMatchesCurrentCycle(reviewGate || {}, taskId, preflightSha256)) {
         return null;
     }
@@ -101,6 +107,27 @@ export function readReviewTrustSummaryFromReviewGate(
             : null;
         if (!check || !reviewGateCheckIsIndependent(check)) {
             return null;
+        }
+        if (currentPreflight && isCustomReviewLaneInSnapshot(currentPreflight, reviewType)) {
+            if (!reviewsRoot) {
+                return null;
+            }
+            const receipt = safeReadJson(path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`));
+            if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
+                return null;
+            }
+            try {
+                if (getReviewLaneArtifactEvidenceViolations({
+                    artifact: receipt,
+                    preflight: currentPreflight,
+                    reviewType,
+                    label: `Review receipt for '${reviewType}'`
+                }).length > 0) {
+                    return null;
+                }
+            } catch {
+                return null;
+            }
         }
         if (check.reused_existing_review === true) {
             reusedCount++;
@@ -168,7 +195,7 @@ function readReviewTrustSummaryUnlocked(
     currentPreflight?: Record<string, unknown> | null,
     repoRoot?: string | null
 ): FinalCloseoutReviewTrustSummary | null {
-    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews);
+    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews, currentPreflight);
     const compatibilityFallbackActive = requiredReviewTypes.length === 0;
     const compatibilityReviewTypes = requiredReviewTypes.length > 0
         ? requiredReviewTypes
@@ -184,6 +211,20 @@ function readReviewTrustSummaryUnlocked(
         const receipt = safeReadJson(receiptPath);
         if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
             return [];
+        }
+        if (currentPreflight && isCustomReviewLaneInSnapshot(currentPreflight, reviewType)) {
+            try {
+                if (getReviewLaneArtifactEvidenceViolations({
+                    artifact: receipt,
+                    preflight: currentPreflight,
+                    reviewType,
+                    label: `Review receipt for '${reviewType}'`
+                }).length > 0) {
+                    return [];
+                }
+            } catch {
+                return [];
+            }
         }
         if (!fs.existsSync(reviewPath)) {
             return [];
@@ -349,4 +390,3 @@ export function reviewReceiptMatchesCurrentReviewDomain(
         return false;
     }
 }
-

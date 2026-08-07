@@ -34,6 +34,10 @@ import {
     reviewFindingsValidationArtifactHasBlockingFindings
 } from '../review/review-finding-disposition';
 import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
+import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
 
 export interface HistoricalReviewReuseCandidate {
     telemetryReceiptPath: string;
@@ -415,6 +419,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
     repoRoot: string;
     taskId: string;
     reviewType: string;
+    preflightPayload: Record<string, unknown>;
     previousReviewContextReuseSha256?: string | null;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
     latestCompilePassSequence: number;
@@ -510,6 +515,22 @@ export function validateHistoricalReviewReuseCandidate(options: {
         ? normalizeReceiptSha256(receipt.reused_from_code_scope_sha256) || sourceReceiptCodeScopeSha256
         : sourceReceiptCodeScopeSha256;
     const remediationPreservedScopeMismatchReason = String(options.remediationPreservedScopeMismatchReason || '').trim() || null;
+
+    if (isCustomReviewLaneInSnapshot(options.preflightPayload, options.reviewType)) {
+        try {
+            const laneEvidenceViolations = getReviewLaneArtifactEvidenceViolations({
+                artifact: receipt as unknown as Record<string, unknown>,
+                preflight: options.preflightPayload,
+                reviewType: options.reviewType,
+                label: `Prior review receipt for '${options.reviewType}'`
+            });
+            if (laneEvidenceViolations.length > 0) {
+                return { accepted: false, reason: laneEvidenceViolations.join(' ') };
+            }
+        } catch (error: unknown) {
+            return { accepted: false, reason: error instanceof Error ? error.message : String(error) };
+        }
+    }
 
     if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
         return { accepted: false, reason: 'prior review receipt task id or review type does not match current request' };

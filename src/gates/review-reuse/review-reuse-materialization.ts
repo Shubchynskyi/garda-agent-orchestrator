@@ -58,6 +58,11 @@ import {
     reviewFindingsValidationArtifactHasBlockingFindings
 } from '../review/review-finding-disposition';
 import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
+import {
+    buildReviewLaneArtifactEvidence,
+    isCustomReviewLaneInSnapshot,
+    resolveReviewContextLaneBinding
+} from '../review-context/review-context-lane';
 
 export interface MaterializeReusedReviewEvidenceOptions {
     repoRoot: string;
@@ -674,7 +679,7 @@ function buildReusedReviewReceipt(
             : []
     });
     const contractBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
-    return buildReviewReceipt({
+    const refreshedReceipt = buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
         preflightSha256: options.currentPreflightHash,
@@ -709,6 +714,15 @@ function buildReusedReviewReceipt(
         reusedFromCodeScopeSha256: options.expectedCodeScopeSha256,
         reusedFromDomainScopeFingerprints: normalizeDomainScopeFingerprints(options.receipt.domain_scope_fingerprints)
     });
+    if (isCustomReviewLaneInSnapshot(options.preflightPayload, options.reviewType)) {
+        Object.assign(
+            refreshedReceipt,
+            buildReviewLaneArtifactEvidence(
+                resolveReviewContextLaneBinding(options.preflightPayload, options.reviewType)
+            )
+        );
+    }
+    return refreshedReceipt;
 }
 
 function buildReuseRecordedEventDetails(input: {

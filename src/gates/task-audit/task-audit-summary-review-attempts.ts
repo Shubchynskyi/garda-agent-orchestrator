@@ -5,7 +5,7 @@ import {
 } from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
 import {
-    REVIEW_TRUST_COMPATIBILITY_TYPES,
+    collectEffectiveReviewTypeIds,
     normalizeKnownReviewType,
     normalizeSha256Text
 } from './task-audit-summary-review-common';
@@ -399,7 +399,8 @@ function summarizeReviewAttemptFromEvent(
     event: ReviewReuseTelemetryEventLike,
     artifactIndex: ReviewAttemptArtifactIndex,
     taskId: string,
-    currentPreflightFingerprints: DomainScopeFingerprints | null
+    currentPreflightFingerprints: DomainScopeFingerprints | null,
+    currentPreflight?: Record<string, unknown> | null
 ): {
     reviewType: string;
     verdict: 'PASS' | 'FAIL' | 'MISSING_OR_INVALID';
@@ -414,7 +415,10 @@ function summarizeReviewAttemptFromEvent(
         return null;
     }
     const details = isPlainRecord(event.details) ? event.details : {};
-    const reviewType = normalizeKnownReviewType(details.review_type ?? details.reviewType);
+    const reviewType = normalizeKnownReviewType(
+        details.review_type ?? details.reviewType,
+        currentPreflight
+    );
     if (!reviewType) {
         return null;
     }
@@ -606,7 +610,8 @@ export function buildReviewAttemptSummary(options: {
                 event,
                 artifactIndex,
                 options.taskId,
-                currentPreflightFingerprints
+                currentPreflightFingerprints,
+                options.currentPreflight
             );
             if (!eventAttempt) {
                 continue;
@@ -651,7 +656,7 @@ export function buildReviewAttemptSummary(options: {
             taskEventAttemptCount += 1;
         }
 
-        for (const reviewType of REVIEW_TRUST_COMPATIBILITY_TYPES) {
+        for (const reviewType of collectEffectiveReviewTypeIds(options.currentPreflight)) {
             for (const fallbackAttempt of summarizeReviewAttemptsFromSnapshotArtifacts(
                 artifactIndex,
                 options.taskId,

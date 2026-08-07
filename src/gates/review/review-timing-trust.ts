@@ -4,22 +4,13 @@ import { normalizeReviewProvenanceUtcTimestamp } from '../../gate-runtime/review
 export const HIDDEN_REVIEW_TIMING_DISTRUST_MESSAGE =
     `Review evidence is not sufficiently trustworthy. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`;
 
-const TIMING_ENFORCED_REVIEW_TYPES = new Set([
-    'code',
-    'db',
-    'security',
-    'refactor',
-    'api',
-    'test',
-    'performance',
-    'infra',
-    'dependency'
-]);
+const REVIEW_TYPE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS = 10_000;
 const MIN_DELEGATED_WORK_WINDOW_MS = 10_000;
 const FUTURE_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
 export type HiddenReviewTimingDistrustCode =
+    | 'invalid_review_type'
     | 'missing_timing'
     | 'future_timestamp'
     | 'impossible_ordering'
@@ -270,8 +261,8 @@ export function evaluateHiddenReviewTimingTrust(options: {
     nowMs?: number;
 }): HiddenReviewTimingTrustResult {
     const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!TIMING_ENFORCED_REVIEW_TYPES.has(reviewType)) {
-        return { trusted: true, code: null, message: null };
+    if (!REVIEW_TYPE_ID_PATTERN.test(reviewType)) {
+        return distrust('invalid_review_type');
     }
     const provenance = options.reviewerProvenance;
     if (

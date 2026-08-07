@@ -18,11 +18,29 @@ import {
 import { resolveProfileReviewCatalogPolicy } from '../../../src/policy/profile-review-catalog-policy';
 import { buildTaskProfilePolicySnapshot } from '../../../src/policy/task-profile-policy-snapshot';
 import {
+    resolveEffectiveReviewLaneSet,
+    resolveEffectiveReviewLaneSetOrLegacy
+} from '../../../src/policy/effective-review-lane-set';
+import {
+    buildReviewLaneArtifactEvidence,
+    getReviewLaneArtifactEvidenceViolations,
+    resolveReviewContextLaneBinding
+} from '../../../src/gates/review-context/review-context-lane';
+import {
+    resolveCompletionReviewContracts,
+    resolveCompletionReviewSkillCandidates
+} from '../../../src/gates/completion/completion-review-skill-contracts';
+import {
     REVIEW_CONTRACTS,
     readConfiguredReviewContracts,
     resolveExpectedReviewVerdicts,
     validatePreflightForReview
 } from '../../../src/gates/required-reviews/required-reviews-check-contracts';
+import { collectEffectiveReviewTypeIds } from '../../../src/gates/task-audit/task-audit-summary-review-common';
+import { collectEvidenceArtifacts } from '../../../src/gates/task-audit/task-audit-summary-review-evidence';
+import { buildReviewIntegrityAttestation } from '../../../src/gates/task-audit/task-audit-summary-review-integrity';
+import { readReviewTrustSummaryFromReviewGate } from '../../../src/gates/task-audit/task-audit-summary-review-trust';
+import type { ProjectMemoryImpactLifecycleEvidence } from '../../../src/gates/project-memory-impact';
 
 const PROFILE_HASH = 'a'.repeat(64);
 
@@ -201,6 +219,228 @@ test('effective review snapshot preserves built-in requirements and never trigge
         snapshot.lanes.find((lane) => lane.id === 'architecture-boundary')?.inactive_reasons,
         ['profile_disabled']
     );
+});
+
+test('rejects forged injected custom requirements without an immutable snapshot', () => {
+    assert.throws(
+        () => resolveEffectiveReviewLaneSetOrLegacy({
+            required_reviews: { code: true, 'architecture-boundary': true }
+        }),
+        /cannot authorize custom required review ids: architecture-boundary/u
+    );
+});
+
+test('task audit uses legacy lanes only when the immutable snapshot is absent', () => {
+    assert.ok(collectEffectiveReviewTypeIds({ required_reviews: { code: true } }).includes('code'));
+
+    const malformedSnapshot = {
+        required_reviews: { code: true },
+        effective_review_snapshot: { schema_version: 1 }
+    };
+    assert.throws(
+        () => collectEffectiveReviewTypeIds(malformedSnapshot),
+        /effective review snapshot is invalid/iu
+    );
+});
+
+test('resolves custom closeout contracts only from the immutable snapshot', () => {
+    const snapshot = buildSnapshot(true);
+    const preflight = {
+        required_reviews: snapshot.required_reviews,
+        effective_review_snapshot: snapshot
+    };
+    const laneSet = resolveEffectiveReviewLaneSet(preflight);
+    const completionContracts = resolveCompletionReviewContracts(preflight);
+    const completionSkillCandidates = resolveCompletionReviewSkillCandidates(preflight);
+
+    assert.ok(laneSet.required_review_ids.includes('architecture-boundary'));
+    assert.deepEqual(
+        completionContracts.find(([reviewType]) => reviewType === 'architecture-boundary'),
+        ['architecture-boundary', 'ARCHITECTURE BOUNDARY REVIEW PASSED']
+    );
+    assert.deepEqual(completionSkillCandidates['architecture-boundary'], ['architecture-review']);
+
+    assert.throws(
+        () => resolveEffectiveReviewLaneSet({
+            ...preflight,
+            required_reviews: { ...snapshot.required_reviews, 'architecture-boundary': false }
+        }),
+        /does not match immutable lane selection/u
+    );
+});
+
+test('task audit inventories custom review evidence from the immutable snapshot', () => {
+    const snapshot = buildSnapshot(true);
+    const preflight = {
+        required_reviews: snapshot.required_reviews,
+        effective_review_snapshot: snapshot
+    };
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-audit-evidence-'));
+    const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+    const taskId = 'T-729-4C';
+    const projectMemoryImpact: ProjectMemoryImpactLifecycleEvidence = {
+        required: false,
+        enabled: false,
+        mode: 'off',
+        configured_mode: 'off',
+        run_before_final_closeout: false,
+        artifact_path: '',
+        update_artifact_path: '',
+        status: null,
+        outcome: null,
+        evidence_status: 'NOT_REQUIRED',
+        update_needed: null,
+        affected_memory_files: [],
+        updated_memory_files: [],
+        compact_status: null,
+        compact_refreshed: null,
+        visible_summary_line: 'Project memory: not required',
+        violations: []
+    };
+
+    try {
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        for (const suffix of [
+            '-architecture-boundary.md',
+            '-architecture-boundary-review-context.json',
+            '-architecture-boundary-receipt.json'
+        ]) {
+            fs.writeFileSync(path.join(reviewsRoot, `${taskId}${suffix}`), '{}', 'utf8');
+        }
+
+        const evidence = collectEvidenceArtifacts(
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            path.join(repoRoot, 'runtime', 'task-events', `${taskId}.jsonl`),
+            projectMemoryImpact,
+            preflight
+        );
+
+        for (const kind of [
+            'architecture-boundary-review',
+            'architecture-boundary-review-context',
+            'architecture-boundary-receipt'
+        ]) {
+            assert.equal(evidence.find((artifact) => artifact.kind === kind)?.exists, true);
+        }
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('rejects stale missing or definition-drifted custom receipt lane evidence', () => {
+    const snapshot = buildSnapshot(true);
+    const preflight = {
+        required_reviews: snapshot.required_reviews,
+        effective_review_snapshot: snapshot
+    };
+    const binding = resolveReviewContextLaneBinding(preflight, 'architecture-boundary');
+    const evidence = buildReviewLaneArtifactEvidence(binding);
+
+    assert.deepEqual(getReviewLaneArtifactEvidenceViolations({
+        artifact: evidence,
+        preflight,
+        reviewType: 'architecture-boundary',
+        label: 'Custom receipt'
+    }), []);
+    assert.ok(getReviewLaneArtifactEvidenceViolations({
+        artifact: { ...evidence, review_lane_definition_sha256: 'f'.repeat(64) },
+        preflight,
+        reviewType: 'architecture-boundary',
+        label: 'Custom receipt'
+    }).some((violation) => violation.includes('review_lane_definition_sha256')));
+    assert.ok(getReviewLaneArtifactEvidenceViolations({
+        artifact: {},
+        preflight,
+        reviewType: 'architecture-boundary',
+        label: 'Custom receipt'
+    }).length > 0);
+});
+
+test('task audit rejects gate-derived custom trust when receipt lane evidence is invalid', () => {
+    const snapshot = buildSnapshot(true);
+    const preflight = {
+        required_reviews: snapshot.required_reviews,
+        effective_review_snapshot: snapshot
+    };
+    const reviewType = 'architecture-boundary';
+    const taskId = 'T-CUSTOM-AUDIT';
+    const preflightSha256 = 'b'.repeat(64);
+    const reviewsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-audit-trust-'));
+    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    const reviewGate = {
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_hash_sha256: preflightSha256,
+        required_reviews: { [reviewType]: true },
+        review_checks: {
+            [reviewType]: {
+                required: true,
+                skipped_by_override: false,
+                receipt_valid: true,
+                trust_level: 'INDEPENDENT_AUDITED',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:architecture-reviewer',
+                reviewer_fallback_reason: null,
+                reviewer_routing_policy: {
+                    delegation_required: true,
+                    expected_execution_mode: 'delegated_subagent',
+                    fallback_allowed: false,
+                    fallback_reason_required: false
+                }
+            }
+        }
+    };
+
+    try {
+        fs.writeFileSync(receiptPath, JSON.stringify({
+            task_id: taskId,
+            review_type: reviewType
+        }), 'utf8');
+
+        assert.equal(readReviewTrustSummaryFromReviewGate(
+            reviewGate,
+            { [reviewType]: true },
+            taskId,
+            'code',
+            preflightSha256,
+            preflight,
+            reviewsRoot
+        ), null);
+
+        const integrity = buildReviewIntegrityAttestation({
+            requiredReviews: { [reviewType]: true },
+            reviewsRoot,
+            taskId,
+            scopeCategory: 'code',
+            preflightSha256,
+            reviewTrustSummary: null,
+            currentPreflight: preflight
+        });
+        assert.ok(integrity.observed_issues.some((issue) => (
+            issue.includes(reviewType) && issue.includes('review_lane_binding_sha256')
+        )));
+
+        const binding = resolveReviewContextLaneBinding(preflight, reviewType);
+        fs.writeFileSync(receiptPath, JSON.stringify({
+            task_id: taskId,
+            review_type: reviewType,
+            ...buildReviewLaneArtifactEvidence(binding)
+        }), 'utf8');
+        assert.equal(readReviewTrustSummaryFromReviewGate(
+            reviewGate,
+            { [reviewType]: true },
+            taskId,
+            'code',
+            preflightSha256,
+            preflight,
+            reviewsRoot
+        )?.status, 'INDEPENDENT_AUDITED');
+    } finally {
+        fs.rmSync(reviewsRoot, { recursive: true, force: true });
+    }
 });
 
 test('explicit built-in profile policy takes precedence over compatibility requirements', () => {

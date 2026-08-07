@@ -42,12 +42,13 @@ export interface ReviewAuthorshipAttestation {
 
 function getRequiredReviewTypesForAuthorshipAttestation(
     requiredReviews: Record<string, boolean>,
-    skipReviews: string[]
+    skipReviews: string[],
+    reviewContracts: readonly (readonly [string, string])[] = REVIEW_CONTRACTS
 ): { requiredTypes: string[]; skippedTypes: string[] } {
     const skipSet = new Set(skipReviews.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean));
     const requiredTypes: string[] = [];
     const skippedTypes: string[] = [];
-    for (const [reviewType] of REVIEW_CONTRACTS) {
+    for (const [reviewType] of reviewContracts) {
         if (requiredReviews[reviewType] !== true) {
             continue;
         }
@@ -193,6 +194,7 @@ export interface CheckRequiredReviewsOptions {
         errors: string[];
         resolved_task_id: string | null;
         required_reviews: Record<string, boolean>;
+        review_contracts?: readonly (readonly [string, string])[];
         preflight_path: string;
         preflight_hash: string | null;
     };
@@ -227,8 +229,20 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const errors = [...validatedPreflight.errors];
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const requiredReviews = validatedPreflight.required_reviews;
-    const requiredReviewTypes = getRequiredReviewTypesForAuthorshipAttestation(requiredReviews, skipReviews).requiredTypes;
-    const verdicts = resolveExpectedReviewVerdicts(requiredReviews, options.verdicts, skipReviews);
+    const reviewContracts = Array.isArray(validatedPreflight.review_contracts)
+        ? validatedPreflight.review_contracts
+        : REVIEW_CONTRACTS;
+    const requiredReviewTypes = getRequiredReviewTypesForAuthorshipAttestation(
+        requiredReviews,
+        skipReviews,
+        reviewContracts
+    ).requiredTypes;
+    const verdicts = resolveExpectedReviewVerdicts(
+        requiredReviews,
+        options.verdicts,
+        skipReviews,
+        reviewContracts
+    );
     const preflightPayload = resolvePreflightPayloadForReviewValidation({
         preflightPayload: options.preflightPayload,
         preflightPath: validatedPreflight.preflight_path
@@ -286,7 +300,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const treeStateFreshnessCache = options.repoRoot
         ? createReviewTreeStateFreshnessCache()
         : null;
-    for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
+    for (const [reviewKey, passToken] of reviewContracts) {
         const required = !!requiredReviews[reviewKey];
         const skippedByOverride = skipReviews.includes(reviewKey);
         const actualVerdict = verdicts[reviewKey] || 'NOT_REQUIRED';

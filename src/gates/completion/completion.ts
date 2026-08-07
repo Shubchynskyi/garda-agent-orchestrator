@@ -40,6 +40,9 @@ import {
 } from './completion-evidence';
 import {
     REVIEW_CONTRACTS,
+    REVIEW_SKILL_CANDIDATES,
+    resolveCompletionReviewContracts,
+    resolveCompletionReviewSkillCandidates,
     validateStageSequence,
     validateZeroDiffCompletionEvidence,
     validateReviewSkillEvidence,
@@ -426,6 +429,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
         ? validatedPreflight.preflight.required_reviews
         : {};
+    let effectiveReviewContracts = REVIEW_CONTRACTS;
+    let effectiveReviewSkillCandidates = REVIEW_SKILL_CANDIDATES;
+    try {
+        effectiveReviewContracts = resolveCompletionReviewContracts(preflight);
+        effectiveReviewSkillCandidates = resolveCompletionReviewSkillCandidates(preflight);
+    } catch (error: unknown) {
+        errors.push(error instanceof Error ? error.message : String(error));
+    }
     const profileSelection = preflight.profile_selection && typeof preflight.profile_selection === 'object' && !Array.isArray(preflight.profile_selection)
         ? preflight.profile_selection as Record<string, unknown>
         : {};
@@ -490,7 +501,8 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         runtimeIdentity.task_mode_identity_backfilled,
         runtimeIdentity.execution_provider_source,
         resolveReviewExecutionPolicyModeFromPreflight(preflight),
-        repoRoot
+        repoRoot,
+        effectiveReviewSkillCandidates
     );
     errors.push(...reviewSkillEvidence.violations);
 
@@ -601,7 +613,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         && (
             reviewSkillEvidence.violations.length > 0
             || (!timelineEventTypes.has('REVIEW_GATE_PASSED') && !timelineEventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE'))
-            || REVIEW_CONTRACTS.some(([reviewKey]) => {
+            || effectiveReviewContracts.some(([reviewKey]) => {
                 if (!requiredReviews[reviewKey]) {
                     return false;
                 }
