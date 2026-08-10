@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReviewAttemptSummary } from '../../../../src/gates/task-audit/task-audit-summary-review-attempts';
+import { normalizeKnownReviewType } from '../../../../src/gates/task-audit/task-audit-summary-review-common';
 import {
     loadIndex,
     resolveIndexPath,
@@ -45,6 +46,23 @@ describe('gates/task-audit-summary', () => {
     });
 
     describe('buildTaskAuditSummary', () => {
+        it('uses a precomputed effective lane set without re-resolving the preflight snapshot', () => {
+            const knownReviewTypes = new Set(['architecture-boundary']);
+            const malformedPreflight = {
+                required_reviews: { 'architecture-boundary': true },
+                effective_review_snapshot: { schema_version: 1 }
+            };
+
+            assert.equal(
+                normalizeKnownReviewType(
+                    'architecture-boundary',
+                    malformedPreflight,
+                    knownReviewTypes
+                ),
+                'architecture-boundary'
+            );
+        });
+
         it('summarizes review attempts from recorded snapshot telemetry', () => {
             writeWorkflowConfig(tmpDir, false);
             writeIntegrityEventSequence(eventsDir, TASK_ID, [
