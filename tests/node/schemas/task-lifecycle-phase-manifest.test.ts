@@ -188,6 +188,24 @@ test('JSON Schema rejects non-canonical stage order, duplicate phases, and revie
     }
 });
 
+test('JSON Schema reports lifecycle stage overflow through maxItems and tuple additionalItems guards', () => {
+    const candidate = mutableManifest();
+    const stages = candidate.stages as unknown[];
+    stages.push(JSON.parse(JSON.stringify(stages[0])));
+
+    const result = validateAgainstSchema(candidate, taskLifecyclePhaseManifestSchema);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) =>
+        error.path === '.stages'
+        && error.message === `Array has ${TASK_LIFECYCLE_PHASE_IDS.length + 1} items, maximum is ${TASK_LIFECYCLE_PHASE_IDS.length}.`
+    ));
+    assert.ok(result.errors.some((error) =>
+        error.path === `.stages[${TASK_LIFECYCLE_PHASE_IDS.length}]`
+        && error.message === 'Additional array items are not allowed.'
+    ));
+});
+
 test('validator rejects unknown lifecycle properties and duplicate semantic ids', () => {
     const unknownProperty = mutableManifest();
     unknownProperty.command = 'node bin/garda.js';
