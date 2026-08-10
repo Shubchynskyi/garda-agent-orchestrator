@@ -835,6 +835,31 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
             required: ['schema_version', 'materialization_mode'],
             additionalProperties: false
         },
+        review_dependency_graph: {
+            type: 'object',
+            description: 'Optional per-profile review dependency DAG. Every active catalog lane must appear once in preparation_order.',
+            properties: {
+                preparation_order: {
+                    type: 'array',
+                    maxItems: 64,
+                    uniqueItems: true,
+                    items: { type: 'string', pattern: '^(?!full-suite-validation$)[a-z][a-z0-9-]*$' }
+                },
+                dependencies: {
+                    type: 'object',
+                    maxProperties: 64,
+                    propertyNames: { pattern: '^(?!full-suite-validation$)[a-z][a-z0-9-]*$' },
+                    additionalProperties: {
+                        type: 'array',
+                        maxItems: 64,
+                        uniqueItems: true,
+                        items: { type: 'string', pattern: '^(?!full-suite-validation$)[a-z][a-z0-9-]*$' }
+                    }
+                }
+            },
+            required: ['preparation_order', 'dependencies'],
+            additionalProperties: false
+        },
         token_economy: {
             type: 'object',
             description: 'Token economy overrides.',

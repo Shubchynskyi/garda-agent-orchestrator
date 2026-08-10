@@ -5,6 +5,23 @@ import type {
     NormalizedReviewTypeDefinition
 } from '../core/review-catalog';
 import { listKnownReviewSkillDirectories } from '../core/review-capabilities';
+import {
+    compileReviewDependencyGraph,
+    getCompiledReviewDependencyGraphViolations,
+    normalizeReviewDependencyGraphDeclaration,
+    type CompiledReviewDependencyGraph,
+    type ReviewDependencyGraphDeclaration
+} from '../core/review-dependency-graph';
+import {
+    LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+    REVIEW_EXECUTION_POLICY_MODES,
+    type EffectiveReviewExecutionPolicyMode,
+    type ReviewExecutionPolicyMode
+} from '../core/review-execution-policy';
+import {
+    FULL_SUITE_VALIDATION_PLACEMENTS,
+    type FullSuiteValidationPlacement
+} from '../core/workflow-config';
 import type {
     ProfileReviewCatalogLane,
     ResolvedProfileReviewCatalogPolicy
@@ -61,12 +78,21 @@ export interface EffectiveReviewSnapshot {
         package_hints: readonly string[];
         optional_skill_ids: readonly string[];
         zero_diff_baseline_only: boolean;
+        review_execution_policy?: Readonly<{
+            mode: EffectiveReviewExecutionPolicyMode;
+            review_dependency_graph: ReviewDependencyGraphDeclaration | null;
+            full_suite_validation: Readonly<{
+                enabled: boolean;
+                placement: FullSuiteValidationPlacement;
+            }>;
+        }>;
     }>;
     required_review_ids: readonly string[];
     optional_review_ids: readonly string[];
     required_reviews: Readonly<Record<string, boolean>>;
     optional_reviews: Readonly<Record<string, boolean>>;
     lanes: readonly EffectiveReviewSnapshotLane[];
+    review_dependency_graph?: CompiledReviewDependencyGraph;
     snapshot_sha256: string;
 }
 
@@ -82,11 +108,32 @@ export interface BuildEffectiveReviewSnapshotOptions {
     packageHints?: readonly string[];
     optionalSkillIds?: readonly string[];
     zeroDiffBaselineOnly?: boolean;
+    reviewExecutionPolicyMode?: EffectiveReviewExecutionPolicyMode;
+    reviewDependencyGraph?: ReviewDependencyGraphDeclaration | null;
+    fullSuiteValidation?: {
+        enabled: boolean;
+        placement: FullSuiteValidationPlacement;
+    };
+    includeDependencyGraph?: boolean;
+}
+
+export interface FrozenReviewExecutionPolicyBinding {
+    mode: EffectiveReviewExecutionPolicyMode;
+    review_dependency_graph?: ReviewDependencyGraphDeclaration | null;
+    full_suite_validation?: {
+        enabled: boolean;
+        placement: FullSuiteValidationPlacement;
+    };
 }
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const SIGNAL_TOKEN_PATTERN = /^[a-z][a-z0-9-]*$/u;
 const TRIGGER_KEY_PATTERN = /^[a-z][a-z0-9_-]*$/u;
+
+function isEffectiveReviewExecutionPolicyMode(value: unknown): value is EffectiveReviewExecutionPolicyMode {
+    return value === LEGACY_REVIEW_EXECUTION_POLICY_MODE
+        || REVIEW_EXECUTION_POLICY_MODES.includes(value as ReviewExecutionPolicyMode);
+}
 
 export function resolveEffectiveReviewTaskIntent(
     explicitTaskIntent: unknown,
@@ -312,6 +359,10 @@ export function buildEffectiveReviewSnapshot(options: BuildEffectiveReviewSnapsh
     if (!SHA256_PATTERN.test(options.profileSnapshotSha256)) {
         throw new Error('Effective review snapshot profileSnapshotSha256 must be a SHA-256 hex string.');
     }
+    const includeDependencyGraph = options.includeDependencyGraph !== false;
+    const normalizedDependencyGraph = options.reviewDependencyGraph == null
+        ? null
+        : normalizeReviewDependencyGraphDeclaration(options.reviewDependencyGraph);
     const inputs: EffectiveReviewSnapshot['inputs'] = {
         legacy_required_reviews: Object.fromEntries(
             options.catalog.review_types.map((definition) => [
@@ -331,7 +382,19 @@ export function buildEffectiveReviewSnapshot(options: BuildEffectiveReviewSnapsh
             ...(options.packageHints || [])
         ])].sort(),
         optional_skill_ids: [...normalizeTokenSet(options.optionalSkillIds || [])].sort(),
-        zero_diff_baseline_only: options.zeroDiffBaselineOnly === true
+        zero_diff_baseline_only: options.zeroDiffBaselineOnly === true,
+        ...(includeDependencyGraph
+            ? {
+                review_execution_policy: {
+                    mode: options.reviewExecutionPolicyMode || LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+                    review_dependency_graph: normalizedDependencyGraph,
+                    full_suite_validation: {
+                        enabled: options.fullSuiteValidation?.enabled === true,
+                        placement: options.fullSuiteValidation?.placement || 'after_compile_before_reviews'
+                    }
+                }
+            }
+            : {})
     };
     const normalizedOptions: BuildEffectiveReviewSnapshotOptions = {
         ...options,
@@ -359,6 +422,16 @@ export function buildEffectiveReviewSnapshot(options: BuildEffectiveReviewSnapsh
     const optionalReviewIds = lanes.filter((lane) => lane.selection === 'optional').map((lane) => lane.id);
     const requiredReviews = Object.fromEntries(lanes.map((lane) => [lane.id, lane.selection === 'required']));
     const optionalReviews = Object.fromEntries(lanes.map((lane) => [lane.id, lane.selection === 'optional']));
+    const reviewDependencyGraph = includeDependencyGraph
+        ? compileReviewDependencyGraph({
+            catalogLaneIds: lanes.map((lane) => lane.id),
+            activeLaneIds: lanes.filter((lane) => lane.profile.active).map((lane) => lane.id),
+            requiredReviewIds,
+            mode: inputs.review_execution_policy!.mode,
+            declaration: inputs.review_execution_policy!.review_dependency_graph,
+            fullSuiteValidation: inputs.review_execution_policy!.full_suite_validation
+        })
+        : null;
     const body: Omit<EffectiveReviewSnapshot, 'snapshot_sha256'> = {
         schema_version: 1,
         catalog_sha256: options.catalog.catalog_sha256,
@@ -369,7 +442,8 @@ export function buildEffectiveReviewSnapshot(options: BuildEffectiveReviewSnapsh
         optional_review_ids: optionalReviewIds,
         required_reviews: requiredReviews,
         optional_reviews: optionalReviews,
-        lanes
+        lanes,
+        ...(reviewDependencyGraph ? { review_dependency_graph: reviewDependencyGraph } : {})
     };
     return deepFreeze({ ...body, snapshot_sha256: sha256(body) });
 }
@@ -406,6 +480,26 @@ export function getEffectiveReviewSnapshotViolations(value: unknown): string[] {
             if (!TRIGGER_KEY_PATTERN.test(triggerId) || typeof active !== 'boolean') {
                 violations.push('Effective review snapshot inputs.task_triggers must be a boolean trigger map.');
                 break;
+            }
+        }
+        if (inputs.review_execution_policy !== undefined) {
+            if (!isJsonRecord(inputs.review_execution_policy) ||
+                !isEffectiveReviewExecutionPolicyMode(inputs.review_execution_policy.mode) ||
+                !isJsonRecord(inputs.review_execution_policy.full_suite_validation) ||
+                typeof inputs.review_execution_policy.full_suite_validation.enabled !== 'boolean' ||
+                !FULL_SUITE_VALIDATION_PLACEMENTS.includes(
+                    inputs.review_execution_policy.full_suite_validation.placement as FullSuiteValidationPlacement
+                )) {
+                violations.push('Effective review snapshot inputs.review_execution_policy is invalid.');
+            } else if (inputs.review_execution_policy.review_dependency_graph !== null) {
+                try {
+                    normalizeReviewDependencyGraphDeclaration(
+                        inputs.review_execution_policy.review_dependency_graph,
+                        'effective_review_snapshot.inputs.review_execution_policy.review_dependency_graph'
+                    );
+                } catch (error) {
+                    violations.push(error instanceof Error ? error.message : String(error));
+                }
             }
         }
     }
@@ -536,6 +630,28 @@ export function getEffectiveReviewSnapshotViolations(value: unknown): string[] {
     if (!isStringArray(snapshot.optional_review_ids) || !arraysEqual(snapshot.optional_review_ids, optionalLaneIds)) {
         violations.push('Effective review snapshot optional_review_ids must match optional lanes in catalog order.');
     }
+    const hasFrozenReviewExecutionPolicy = isJsonRecord(inputs)
+        && inputs.review_execution_policy !== undefined;
+    const hasCompiledReviewDependencyGraph = snapshot.review_dependency_graph !== undefined;
+    if (hasFrozenReviewExecutionPolicy !== hasCompiledReviewDependencyGraph) {
+        violations.push(
+            'Effective review snapshot frozen review_execution_policy and compiled dependency graph must be present together.'
+        );
+    }
+    if (snapshot.review_dependency_graph !== undefined) {
+        violations.push(...getCompiledReviewDependencyGraphViolations(snapshot.review_dependency_graph));
+        if (isJsonRecord(snapshot.review_dependency_graph)) {
+            const graphNodes = Array.isArray(snapshot.review_dependency_graph.nodes)
+                ? snapshot.review_dependency_graph.nodes.filter((entry): entry is string => typeof entry === 'string')
+                : [];
+            if (!arraysEqual([...graphNodes].sort(), [...requiredLaneIds].sort())) {
+                violations.push('Effective review snapshot dependency graph nodes must match required_review_ids.');
+            }
+        }
+        if (!isJsonRecord(inputs) || inputs.review_execution_policy === undefined) {
+            violations.push('Effective review snapshot dependency graph requires frozen review_execution_policy inputs.');
+        }
+    }
     const { snapshot_sha256: actualHash, ...body } = snapshot;
     const expectedHash = sha256(body);
     if (actualHash !== expectedHash) {
@@ -544,13 +660,81 @@ export function getEffectiveReviewSnapshotViolations(value: unknown): string[] {
     return violations;
 }
 
+export function hasCurrentReviewDependencyGraphContract(
+    value: FrozenReviewExecutionPolicyBinding
+): boolean {
+    return Object.prototype.hasOwnProperty.call(value, 'review_dependency_graph')
+        || Object.prototype.hasOwnProperty.call(value, 'full_suite_validation');
+}
+
+export function assertEffectiveReviewSnapshotExecutionPolicyBinding(
+    snapshot: EffectiveReviewSnapshot,
+    frozenPolicy: FrozenReviewExecutionPolicyBinding
+): CompiledReviewDependencyGraph | null {
+    if (!hasCurrentReviewDependencyGraphContract(frozenPolicy)) {
+        return null;
+    }
+    if (!isEffectiveReviewExecutionPolicyMode(frozenPolicy.mode)) {
+        throw new Error('Frozen review execution policy mode is invalid.');
+    }
+    if (!frozenPolicy.full_suite_validation ||
+        typeof frozenPolicy.full_suite_validation.enabled !== 'boolean' ||
+        !FULL_SUITE_VALIDATION_PLACEMENTS.includes(frozenPolicy.full_suite_validation.placement)) {
+        throw new Error('Frozen review execution policy full-suite binding is invalid.');
+    }
+    const normalizedDeclaration = frozenPolicy.review_dependency_graph == null
+        ? null
+        : normalizeReviewDependencyGraphDeclaration(
+            frozenPolicy.review_dependency_graph,
+            'frozen_review_execution_policy.review_dependency_graph'
+        );
+    const expectedInputs = {
+        mode: frozenPolicy.mode,
+        review_dependency_graph: normalizedDeclaration,
+        full_suite_validation: {
+            enabled: frozenPolicy.full_suite_validation.enabled,
+            placement: frozenPolicy.full_suite_validation.placement
+        }
+    };
+    if (sha256(snapshot.inputs.review_execution_policy ?? null) !== sha256(expectedInputs)) {
+        throw new Error(
+            'Effective review snapshot review execution policy does not match the frozen task profile policy.'
+        );
+    }
+    const expectedGraph = compileReviewDependencyGraph({
+        catalogLaneIds: snapshot.lanes.map((lane) => lane.id),
+        activeLaneIds: snapshot.lanes.filter((lane) => lane.profile.active).map((lane) => lane.id),
+        requiredReviewIds: snapshot.required_review_ids,
+        mode: frozenPolicy.mode,
+        declaration: normalizedDeclaration,
+        fullSuiteValidation: expectedInputs.full_suite_validation
+    });
+    if (!snapshot.review_dependency_graph ||
+        sha256(snapshot.review_dependency_graph) !== sha256(expectedGraph)) {
+        throw new Error(
+            'Effective review snapshot dependency graph does not match the canonical frozen task profile graph.'
+        );
+    }
+    return expectedGraph;
+}
+
 export function assertEffectiveReviewSnapshotCurrent(
     snapshot: EffectiveReviewSnapshot,
     catalogOrSha256: NormalizedReviewCatalog | string,
     profileSnapshotSha256: string,
-    profilePolicy?: ResolvedProfileReviewCatalogPolicy
+    profilePolicy?: ResolvedProfileReviewCatalogPolicy,
+    frozenReviewExecutionPolicy?: FrozenReviewExecutionPolicyBinding
 ): void {
     const violations = getEffectiveReviewSnapshotViolations(snapshot);
+    const frozenPolicyHasCurrentGraphContract = !!frozenReviewExecutionPolicy
+        && hasCurrentReviewDependencyGraphContract(frozenReviewExecutionPolicy);
+    if (frozenPolicyHasCurrentGraphContract) {
+        try {
+            assertEffectiveReviewSnapshotExecutionPolicyBinding(snapshot, frozenReviewExecutionPolicy!);
+        } catch (error) {
+            violations.push(error instanceof Error ? error.message : String(error));
+        }
+    }
     const catalogSha256 = typeof catalogOrSha256 === 'string'
         ? catalogOrSha256
         : catalogOrSha256.catalog_sha256;
@@ -585,7 +769,23 @@ export function assertEffectiveReviewSnapshotCurrent(
                 taskTriggers: snapshot.inputs.task_triggers,
                 packageHints: snapshot.inputs.package_hints,
                 optionalSkillIds: snapshot.inputs.optional_skill_ids,
-                zeroDiffBaselineOnly: snapshot.inputs.zero_diff_baseline_only
+                zeroDiffBaselineOnly: snapshot.inputs.zero_diff_baseline_only,
+                reviewExecutionPolicyMode:
+                    (frozenPolicyHasCurrentGraphContract ? frozenReviewExecutionPolicy?.mode : undefined)
+                    ?? snapshot.inputs.review_execution_policy?.mode,
+                reviewDependencyGraph:
+                    (frozenPolicyHasCurrentGraphContract
+                        ? frozenReviewExecutionPolicy?.review_dependency_graph
+                        : undefined)
+                    ?? snapshot.inputs.review_execution_policy?.review_dependency_graph,
+                fullSuiteValidation:
+                    (frozenPolicyHasCurrentGraphContract
+                        ? frozenReviewExecutionPolicy?.full_suite_validation
+                        : undefined)
+                    ?? snapshot.inputs.review_execution_policy?.full_suite_validation,
+                includeDependencyGraph: frozenPolicyHasCurrentGraphContract
+                    ? true
+                    : snapshot.inputs.review_execution_policy !== undefined
             });
             if (rebuilt.snapshot_sha256 !== snapshot.snapshot_sha256) {
                 violations.push(

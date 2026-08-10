@@ -5,6 +5,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import type { FullSuiteValidationPlacement } from '../../../../src/core/workflow-config';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import {
+    buildTaskProfilePolicySnapshot,
+    computeTaskProfilePolicySnapshotHash,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
@@ -80,6 +90,26 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                review_policy: { code: true, test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -129,6 +159,117 @@ function sha256Text(value: string): string {
 
 function fileSha256(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function canonicalize(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(canonicalize);
+    }
+    if (value && typeof value === 'object') {
+        return Object.keys(value as Record<string, unknown>)
+            .sort()
+            .reduce<Record<string, unknown>>((result, key) => {
+                result[key] = canonicalize((value as Record<string, unknown>)[key]);
+                return result;
+            }, {});
+    }
+    return value;
+}
+
+function rehashRecord(record: Record<string, unknown>, hashKey: 'graph_sha256' | 'snapshot_sha256'): void {
+    const body = Object.fromEntries(Object.entries(record).filter(([key]) => key !== hashKey));
+    record[hashKey] = sha256Text(JSON.stringify(canonicalize(body)));
+}
+
+function buildEffectiveSnapshotFixture(
+    repoRoot: string,
+    requiredReviews: Record<string, boolean>,
+    reviewPolicyMode: 'parallel_all' | 'test_after_code' | 'code_first_optional' | 'strict_sequential',
+    fullSuiteValidation: { enabled: boolean; placement: FullSuiteValidationPlacement } = {
+        enabled: false,
+        placement: 'after_compile_before_reviews' as const
+    },
+    includeDependencyGraph = true
+) {
+    const taskMode = JSON.parse(
+        fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), 'utf8')
+    ) as Record<string, unknown>;
+    const frozenProfileSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+    const catalog = normalizeReviewCatalog({ version: 1, custom_review_types: [] }, { knownSkillIds: [] });
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        frozenProfileSnapshot.source.effective_profile,
+        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+        frozenProfileSnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    return buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: frozenProfileSnapshot.snapshot_hash,
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: 'code',
+        taskIntent: 'Exercise review dependency graph routing',
+        changedFiles: ['src/app.ts'],
+        taskTriggers: {},
+        reviewExecutionPolicyMode: reviewPolicyMode,
+        reviewDependencyGraph: null,
+        fullSuiteValidation,
+        includeDependencyGraph
+    });
+}
+
+function seedFrozenGraphPreflight(repoRoot: string): {
+    preflightPath: string;
+    snapshot: Record<string, unknown>;
+} {
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+    const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+    const frozenPolicy = {
+        mode: 'test_after_code' as const,
+        configured: true,
+        visible_summary_line: 'Review execution policy: test_after_code',
+        review_dependency_graph: null,
+        full_suite_validation: {
+            enabled: true,
+            placement: 'before_test_review' as const
+        }
+    };
+    const profilePolicySnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+    profilePolicySnapshot.review_execution_policy = frozenPolicy;
+    profilePolicySnapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(profilePolicySnapshot);
+    writeJson(taskModePath, taskMode);
+    appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', buildTaskModeTimelineDetails(taskModePath, profilePolicySnapshot));
+    seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', taskModePath);
+    appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+    appendEvent(repoRoot, TASK_ID, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+
+    const requiredReviews = { ...ALL_REVIEW_FLAGS, code: true, test: true };
+    const snapshot = buildEffectiveSnapshotFixture(
+        repoRoot,
+        requiredReviews,
+        frozenPolicy.mode,
+        frozenPolicy.full_suite_validation
+    );
+    const preflightPath = writePreflight(repoRoot, TASK_ID, requiredReviews, {
+        seedPostPreflight: false,
+        reviewPolicyMode: frozenPolicy.mode
+    });
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    preflight.effective_review_snapshot = snapshot;
+    preflight.review_execution_policy = {
+        ...(preflight.review_execution_policy as Record<string, unknown>),
+        dependency_graph: snapshot.review_dependency_graph
+    };
+    writeJson(preflightPath, preflight);
+    appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: snapshot
+    });
+    seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, taskModePath);
+    return {
+        preflightPath,
+        snapshot: JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>
+    };
 }
 
 
@@ -182,7 +323,22 @@ function appendEvent(
 }
 
 function seedStartedTask(repoRoot: string, taskId: string): void {
-    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        'balanced',
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    delete profilePolicySnapshot.review_execution_policy.review_dependency_graph;
+    delete profilePolicySnapshot.review_execution_policy.full_suite_validation;
+    profilePolicySnapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(profilePolicySnapshot);
+    writeJson(taskModePath, buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
         requestedDepth: 2,
@@ -192,14 +348,37 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
         executionProviderSource: 'explicit_provider',
-        runtimeIdentityStatus: 'resolved'
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: 'balanced',
+        profileSelectionSource: 'task_queue',
+        activeProfile: 'balanced',
+        profileSource: 'built_in',
+        runtimeActiveProfile: 'balanced',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
     }));
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
-    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
-    seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
+    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', buildTaskModeTimelineDetails(taskModePath, profilePolicySnapshot));
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function buildTaskModeTimelineDetails(
+    taskModePath: string,
+    profilePolicySnapshot: TaskProfilePolicySnapshot
+): Record<string, unknown> {
+    return {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    };
 }
 
 
@@ -268,9 +447,10 @@ function writePreflight(
     requiredReviews: Record<string, boolean>,
     options: {
         seedPostPreflight?: boolean;
-        reviewPolicyMode?: string;
+        reviewPolicyMode?: 'parallel_all' | 'test_after_code' | 'code_first_optional' | 'strict_sequential';
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
+        includeDependencyGraph?: boolean;
     } = {}
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
@@ -285,6 +465,16 @@ function writePreflight(
         })
         : null;
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
+    const effectiveReviewSnapshot = buildEffectiveSnapshotFixture(
+        repoRoot,
+        requiredReviews,
+        reviewPolicyMode,
+        undefined,
+        options.includeDependencyGraph !== false
+    );
+    const taskMode = JSON.parse(
+        fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8')
+    ) as Record<string, unknown>;
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -301,11 +491,15 @@ function writePreflight(
         changed_files: changedFiles,
         review_execution_policy: {
             mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
-        }
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        profile_policy_snapshot: taskMode.profile_policy_snapshot,
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     if (options.seedPostPreflight !== false) {
         seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
@@ -624,7 +818,7 @@ describe('gates/next-step', () => {
         seedCompilePass(repoRoot, TASK_ID);
 
         const beforeCode = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.equal(beforeCode.next_gate, 'build-review-context');
+        assert.equal(beforeCode.next_gate, 'build-review-context', beforeCode.reason);
         assert.equal(beforeCode.review.next_review_type, 'code');
         assert.ok(beforeCode.commands[0].command.includes('--review-type "code"'));
         assert.ok(beforeCode.commands[0].command.includes('--depth "2"'));
@@ -657,6 +851,109 @@ describe('gates/next-step', () => {
         assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
         assert.equal(result.review.review_execution_policy_source, 'workflow_config');
         assert.match(formatNextStepText(result), /ReviewPolicy: strict_sequential \(workflow_config\)/);
+    });
+
+    it('uses the frozen task-profile review policy before preflight exists', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskMode.profile_policy_snapshot = {
+            review_execution_policy: {
+                mode: 'strict_sequential',
+                configured: true,
+                review_dependency_graph: null,
+                full_suite_validation: {
+                    enabled: true,
+                    placement: 'after_compile_before_reviews'
+                }
+            }
+        };
+        writeJson(taskModePath, taskMode);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.commands[0].command, /--stage "TASK_ENTRY"/u);
+        assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
+        assert.equal(result.review.review_execution_policy_source, 'task_profile');
+        assert.match(formatNextStepText(result), /ReviewPolicy: strict_sequential \(task_profile\)/);
+    });
+
+    it('rejects a self-rehashed preflight with its frozen dependency graph removed', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const { preflightPath } = seedFrozenGraphPreflight(repoRoot);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const snapshot = preflight.effective_review_snapshot as Record<string, unknown>;
+        delete snapshot.review_dependency_graph;
+        delete (preflight.review_execution_policy as Record<string, unknown>).dependency_graph;
+        rehashRecord(snapshot, 'snapshot_sha256');
+        writeJson(preflightPath, preflight);
+
+        assert.throws(
+            () => resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            /compiled dependency graph must be present together|dependency graph is required by the frozen task profile policy/u
+        );
+    });
+
+    it('rejects self-rehashed timeline dependency graph tampering', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const { preflightPath, snapshot } = seedFrozenGraphPreflight(repoRoot);
+        const graph = snapshot.review_dependency_graph as Record<string, unknown>;
+        (graph.dependencies as Record<string, string[]>).test = [];
+        graph.preparation_batches = [['code', 'test']];
+        rehashRecord(graph, 'graph_sha256');
+        rehashRecord(snapshot, 'snapshot_sha256');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: snapshot
+        });
+
+        assert.throws(
+            () => resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            /does not match the latest PREFLIGHT_CLASSIFIED timeline binding/u
+        );
+    });
+
+    it('rejects a latest preflight timeline event with its frozen snapshot binding missing', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const { preflightPath } = seedFrozenGraphPreflight(repoRoot);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+
+        assert.throws(
+            () => resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            /timeline event is missing the effective review snapshot binding/u
+        );
+    });
+
+    it('ignores live workflow full-suite placement tampering after preflight', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        seedFrozenGraphPreflight(repoRoot);
+        const workflowConfigPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'workflow-config.json'
+        );
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            enabled: false,
+            placement: 'after_compile_before_reviews'
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.full_suite_validation.enabled, true);
+        assert.equal(result.full_suite_validation.placement, 'before_test_review');
     });
 
     it('routes malformed workflow-config review policy to validation before policy fallback', () => {
@@ -706,7 +1003,11 @@ describe('gates/next-step', () => {
             repoRoot,
             TASK_ID,
             { ...ALL_REVIEW_FLAGS, code: true, test: true },
-            { seedPostPreflight: false }
+            {
+                seedPostPreflight: false,
+                reviewPolicyMode: 'strict_sequential',
+                includeDependencyGraph: false
+            }
         );
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         delete preflight.review_execution_policy;
@@ -716,7 +1017,7 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
         assert.equal(result.review.review_execution_policy_source, 'workflow_config');
     });
@@ -739,7 +1040,7 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.review_execution_policy_mode, 'code_first_optional');
         assert.equal(result.review.review_execution_policy_source, 'preflight');
     });

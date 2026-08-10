@@ -11,6 +11,7 @@ import {
     DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
+import type { CompiledReviewDependencyGraph } from '../../core/review-dependency-graph';
 import { getReviewSkillCandidates } from '../../core/review-capabilities';
 import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../core/orchestration-constants';
 import { fileSha256, normalizePath } from '../shared';
@@ -108,7 +109,8 @@ export function validateReviewSkillEvidence(
     executionProviderSource: string | null = null,
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
     repoRoot: string | null = null,
-    reviewSkillCandidatesByType: ReviewSkillCandidatesByType | null = null
+    reviewSkillCandidatesByType: ReviewSkillCandidatesByType | null = null,
+    reviewDependencyGraph: CompiledReviewDependencyGraph | null = null
 ): ReviewSkillEvidenceResult {
     const result = createEmptyReviewSkillEvidenceResult();
     if (!codeChanged) return result;
@@ -293,7 +295,12 @@ export function validateReviewSkillEvidence(
     for (const key of requiredKeys) {
         upstreamRequiredReviewsByKey.set(
             key,
-            getRequiredUpstreamReviewsFromRecord(key, normalizedRequiredReviewRecord, reviewExecutionPolicyMode)
+            getRequiredUpstreamReviewsFromRecord(
+                key,
+                normalizedRequiredReviewRecord,
+                reviewExecutionPolicyMode,
+                reviewDependencyGraph
+            )
         );
     }
 

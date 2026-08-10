@@ -193,6 +193,7 @@ export interface ClassifyChangeResult {
     review_execution_policy?: {
         mode: string;
         visible_summary_line: string;
+        dependency_graph?: EffectiveReviewSnapshot['review_dependency_graph'];
     };
     zero_diff_guard: {
         zero_diff_detected: boolean;

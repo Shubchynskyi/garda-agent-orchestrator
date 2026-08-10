@@ -10,6 +10,14 @@ import {
 } from '../core/review-execution-policy';
 import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 import {
+    normalizeReviewDependencyGraphDeclaration,
+    type ReviewDependencyGraphDeclaration
+} from '../core/review-dependency-graph';
+import {
+    FULL_SUITE_VALIDATION_PLACEMENTS,
+    type FullSuiteValidationPlacement
+} from '../core/workflow-config';
+import {
     applyProfileGuardrails,
     getProfileEntry,
     loadProfilesData,
@@ -84,6 +92,11 @@ export interface TaskProfilePolicySnapshotReviewExecutionPolicy {
     mode: EffectiveReviewExecutionPolicyMode;
     configured: boolean;
     visible_summary_line: string;
+    review_dependency_graph?: ReviewDependencyGraphDeclaration | null;
+    full_suite_validation?: {
+        enabled: boolean;
+        placement: FullSuiteValidationPlacement;
+    };
 }
 
 export interface TaskProfilePolicySnapshot {
@@ -117,6 +130,8 @@ export interface TaskProfilePolicySnapshot {
 export interface BuildTaskProfilePolicySnapshotOptions {
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
     reviewExecutionPolicyConfigured: boolean;
+    fullSuiteValidationEnabled?: boolean;
+    fullSuiteValidationPlacement?: FullSuiteValidationPlacement;
     lockTimestampUtc?: string;
 }
 
@@ -219,6 +234,12 @@ const REVIEW_EXECUTION_POLICY_KEYS = [
     'mode',
     'configured',
     'visible_summary_line'
+] as const;
+
+const CURRENT_REVIEW_EXECUTION_POLICY_KEYS = [
+    ...REVIEW_EXECUTION_POLICY_KEYS,
+    'review_dependency_graph',
+    'full_suite_validation'
 ] as const;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -500,7 +521,14 @@ function validateReviewExecutionPolicySnapshot(value: unknown, violations: strin
         violations.push('Task profile policy snapshot review_execution_policy must be a JSON object.');
         return;
     }
-    validateExactKeys(value, REVIEW_EXECUTION_POLICY_KEYS, 'review_execution_policy', violations);
+    const hasCurrentGraphContract = Object.prototype.hasOwnProperty.call(value, 'review_dependency_graph')
+        || Object.prototype.hasOwnProperty.call(value, 'full_suite_validation');
+    validateExactKeys(
+        value,
+        hasCurrentGraphContract ? CURRENT_REVIEW_EXECUTION_POLICY_KEYS : REVIEW_EXECUTION_POLICY_KEYS,
+        'review_execution_policy',
+        violations
+    );
     if (!isReviewExecutionPolicyMode(value.mode)) {
         violations.push(
             `Task profile policy snapshot review_execution_policy.mode must be one of ${[
@@ -521,6 +549,40 @@ function validateReviewExecutionPolicySnapshot(value: unknown, violations: strin
             'review_execution_policy.visible_summary_line',
             violations
         );
+    }
+    if (hasCurrentGraphContract) {
+        if (value.review_dependency_graph !== null) {
+            try {
+                normalizeReviewDependencyGraphDeclaration(
+                    value.review_dependency_graph,
+                    'review_execution_policy.review_dependency_graph'
+                );
+            } catch (error) {
+                violations.push(error instanceof Error ? error.message : String(error));
+            }
+        }
+        if (!isPlainRecord(value.full_suite_validation)) {
+            violations.push('Task profile policy snapshot review_execution_policy.full_suite_validation must be a JSON object.');
+        } else {
+            validateExactKeys(
+                value.full_suite_validation,
+                ['enabled', 'placement'],
+                'review_execution_policy.full_suite_validation',
+                violations
+            );
+            if (typeof value.full_suite_validation.enabled !== 'boolean') {
+                violations.push(
+                    'Task profile policy snapshot review_execution_policy.full_suite_validation.enabled must be boolean.'
+                );
+            }
+            if (!FULL_SUITE_VALIDATION_PLACEMENTS.includes(
+                value.full_suite_validation.placement as FullSuiteValidationPlacement
+            )) {
+                violations.push(
+                    'Task profile policy snapshot review_execution_policy.full_suite_validation.placement is invalid.'
+                );
+            }
+        }
     }
 }
 
@@ -930,7 +992,17 @@ export function buildTaskProfilePolicySnapshot(
         review_execution_policy: {
             mode: options.reviewExecutionPolicyMode,
             configured: options.reviewExecutionPolicyConfigured,
-            visible_summary_line: buildReviewExecutionPolicySummaryLine(options.reviewExecutionPolicyMode)
+            visible_summary_line: buildReviewExecutionPolicySummaryLine(options.reviewExecutionPolicyMode),
+            review_dependency_graph: profileEntry.review_dependency_graph === undefined
+                ? null
+                : normalizeReviewDependencyGraphDeclaration(
+                    profileEntry.review_dependency_graph,
+                    `profiles.${resolvedProfile.selection.effective_profile}.review_dependency_graph`
+                ),
+            full_suite_validation: {
+                enabled: options.fullSuiteValidationEnabled === true,
+                placement: options.fullSuiteValidationPlacement || 'after_compile_before_reviews'
+            }
         },
         review_finding_policy: {
             ...resolvedProfile.effective_policy.review_finding_policy,

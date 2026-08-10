@@ -6,6 +6,7 @@ import {
     type ReviewCapabilitiesConfigMap
 } from '../core/review-capabilities';
 import { readReviewCatalogConfigFile } from '../core/review-catalog';
+import type { ReviewDependencyGraphDeclaration } from '../core/review-dependency-graph';
 import {
     resolveProfileReviewCatalogPolicy,
     type ResolvedProfileReviewCatalogPolicy
@@ -87,6 +88,7 @@ export interface ProfileEntry {
     review_policy: ProfileReviewPolicy;
     review_finding_policy?: ReviewFindingPolicy;
     review_follow_up_policy?: ReviewFollowUpPolicy;
+    review_dependency_graph?: ReviewDependencyGraphDeclaration;
     token_economy: ProfileTokenEconomy;
     skills: ProfileSkills;
 }

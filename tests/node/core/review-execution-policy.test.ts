@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { computeReviewLaunchPlan } from '../../../src/core/review-execution-policy';
+import { compileReviewDependencyGraph } from '../../../src/core/review-dependency-graph';
 
 const REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -16,6 +17,44 @@ const REVIEW_FLAGS = Object.freeze({
 });
 
 describe('review execution launch plan', () => {
+    it('uses the compiled profile graph as the authoritative launch dependency source', () => {
+        const dependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'security', 'api', 'test'],
+            activeLaneIds: ['code', 'security', 'api', 'test'],
+            requiredReviewIds: ['code', 'security', 'api', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['security', 'code', 'api', 'test'],
+                dependencies: {
+                    security: [],
+                    code: ['security'],
+                    api: ['code'],
+                    test: ['api']
+                }
+            }
+        });
+        const plan = computeReviewLaunchPlan({
+            requiredReviewTypes: ['code', 'security', 'api', 'test'],
+            requiredReviews: { ...REVIEW_FLAGS, code: true, security: true, api: true, test: true },
+            policyMode: 'parallel_all',
+            dependencyGraph,
+            reviewStates: [
+                { review_type: 'code', satisfied: false },
+                { review_type: 'security', satisfied: false },
+                { review_type: 'api', satisfied: false },
+                { review_type: 'test', satisfied: false }
+            ]
+        });
+
+        assert.deepEqual(plan.launchable_review_types, ['security']);
+        assert.deepEqual(plan.blocked_review_lanes, [
+            { review_type: 'code', blocked_by: ['security'] },
+            { review_type: 'api', blocked_by: ['code'] },
+            { review_type: 'test', blocked_by: ['api'] }
+        ]);
+        assert.equal(plan.next_review_type, 'security');
+    });
+
     it('launches all pending lanes under parallel_all', () => {
         const plan = computeReviewLaunchPlan({
             requiredReviewTypes: ['code', 'security', 'refactor', 'test'],

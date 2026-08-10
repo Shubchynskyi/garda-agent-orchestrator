@@ -289,6 +289,10 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
                     {
                         reviewExecutionPolicyMode: frozenProfileSnapshot.review_execution_policy.mode,
                         reviewExecutionPolicyConfigured: frozenProfileSnapshot.review_execution_policy.configured,
+                        fullSuiteValidationEnabled:
+                            frozenProfileSnapshot.review_execution_policy.full_suite_validation?.enabled,
+                        fullSuiteValidationPlacement:
+                            frozenProfileSnapshot.review_execution_policy.full_suite_validation?.placement,
                         lockTimestampUtc: frozenProfileSnapshot.lock_timestamp_utc
                     }
                 );
@@ -297,7 +301,8 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
                     snapshot,
                     currentCatalog,
                     String(frozenProfileSnapshot.snapshot_hash || '').trim().toLowerCase(),
-                    currentProfilePolicy
+                    currentProfilePolicy,
+                    frozenProfileSnapshot.review_execution_policy
                 );
             } catch (error: unknown) {
                 errors.push(error instanceof Error ? error.message : String(error));

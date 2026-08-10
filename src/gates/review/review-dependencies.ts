@@ -9,6 +9,10 @@ import {
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
+import {
+    resolveCompiledReviewDependencyGraphFromPreflight,
+    type CompiledReviewDependencyGraph
+} from '../../core/review-dependency-graph';
 import * as gateHelpers from '../shared/helpers';
 import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from '../required-reviews/required-reviews-check';
@@ -67,26 +71,44 @@ export function normalizeRequiredReviewRecord(value: unknown): Record<string, bo
 export function getReviewDependencyTypes(
     reviewType: string,
     requiredReviewRecord: Record<string, boolean>,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
-    return getReviewExecutionDependencies(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
+    return getReviewExecutionDependencies(
+        reviewType,
+        requiredReviewRecord,
+        reviewExecutionPolicyMode,
+        dependencyGraph
+    );
 }
 
 export function getRequiredUpstreamReviewsFromRecord(
     reviewType: string,
     requiredReviewRecord: Record<string, boolean>,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
-    return getReviewDependencyTypes(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
+    return getReviewDependencyTypes(
+        reviewType,
+        requiredReviewRecord,
+        reviewExecutionPolicyMode,
+        dependencyGraph
+    );
 }
 
 export function getRequiredUpstreamReviews(
     reviewType: string,
     requiredReviews: unknown,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
     const requiredReviewRecord = normalizeRequiredReviewRecord(requiredReviews);
-    return getRequiredUpstreamReviewsFromRecord(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
+    return getRequiredUpstreamReviewsFromRecord(
+        reviewType,
+        requiredReviewRecord,
+        reviewExecutionPolicyMode,
+        dependencyGraph
+    );
 }
 
 function findLatestTimelineSequence(
@@ -415,10 +437,15 @@ export function buildReviewDependencyDiagnostics(options: {
     runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
 }): ReviewDependencyDiagnostics {
     const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(options.preflightPayload);
+    const dependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+        options.preflightPayload,
+        reviewExecutionPolicyMode
+    );
     const upstreamReviewTypes = getRequiredUpstreamReviews(
         options.reviewType,
         options.preflightPayload.required_reviews,
-        reviewExecutionPolicyMode
+        reviewExecutionPolicyMode,
+        dependencyGraph
     );
     if (upstreamReviewTypes.length === 0) {
         return {

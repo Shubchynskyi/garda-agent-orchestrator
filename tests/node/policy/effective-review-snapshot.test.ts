@@ -8,6 +8,7 @@ import test from 'node:test';
 import { normalizeReviewCatalog, readReviewCatalogConfigFile } from '../../../src/core/review-catalog';
 import type { ReviewCapabilitiesConfigMap } from '../../../src/core/review-capabilities';
 import {
+    assertEffectiveReviewSnapshotExecutionPolicyBinding,
     assertEffectiveReviewSnapshotCurrent,
     buildEffectiveReviewSnapshot,
     collectKnownReviewSkillIds,
@@ -156,6 +157,23 @@ function rehashSnapshot(snapshot: Record<string, unknown>): void {
         .digest('hex');
 }
 
+function suppressReviewInDependencyGraph(snapshot: Record<string, unknown>, reviewId: string): void {
+    const graph = snapshot.review_dependency_graph as Record<string, unknown>;
+    graph.nodes = (graph.nodes as string[]).filter((id) => id !== reviewId);
+    graph.preparation_order = (graph.preparation_order as string[]).filter((id) => id !== reviewId);
+    delete (graph.dependencies as Record<string, unknown>)[reviewId];
+    graph.preparation_batches = (graph.preparation_batches as string[][])
+        .map((batch) => batch.filter((id) => id !== reviewId))
+        .filter((batch) => batch.length > 0);
+    const barrier = graph.full_suite_barrier as Record<string, unknown>;
+    barrier.before_review_ids = (barrier.before_review_ids as string[]).filter((id) => id !== reviewId);
+    const { graph_sha256: ignored, ...body } = graph;
+    void ignored;
+    graph.graph_sha256 = createHash('sha256')
+        .update(JSON.stringify(canonicalize(body)), 'utf8')
+        .digest('hex');
+}
+
 function buildCatalog(signalIds: string[] = ['package:payments', 'skill:node-backend', 'task:architecture']) {
     return normalizeReviewCatalog({
         version: 1,
@@ -218,6 +236,87 @@ test('effective review snapshot preserves built-in requirements and never trigge
     assert.deepEqual(
         snapshot.lanes.find((lane) => lane.id === 'architecture-boundary')?.inactive_reasons,
         ['profile_disabled']
+    );
+});
+
+test('effective review snapshot freezes a profile dependency graph and full-suite barrier', () => {
+    const snapshot = buildSnapshot(true, {
+        legacyRequiredReviews: { code: true, test: true },
+        taskIntent: 'Architecture change',
+        reviewExecutionPolicyMode: 'parallel_all',
+        reviewDependencyGraph: {
+            preparation_order: [
+                'code', 'db', 'security', 'refactor', 'api', 'performance',
+                'infra', 'dependency', 'architecture-boundary', 'test'
+            ],
+            dependencies: {
+                'architecture-boundary': ['code'],
+                test: ['architecture-boundary']
+            }
+        },
+        fullSuiteValidation: { enabled: true, placement: 'before_test_review' }
+    }, {
+        profileOverrides: { test: true },
+        signalIds: ['task:architecture']
+    });
+
+    assert.ok(snapshot.required_review_ids.includes('architecture-boundary'));
+    assert.deepEqual(snapshot.review_dependency_graph?.dependencies['architecture-boundary'], ['code']);
+    assert.deepEqual(snapshot.review_dependency_graph?.full_suite_barrier.before_review_ids, ['test']);
+    assert.equal(snapshot.inputs.review_execution_policy?.mode, 'parallel_all');
+    assert.deepEqual(getEffectiveReviewSnapshotViolations(snapshot), []);
+});
+
+test('rejects removal or self-rehashed substitution of the frozen dependency graph contract', () => {
+    const snapshot = buildSnapshot(true, {
+        legacyRequiredReviews: { code: true, test: true },
+        reviewExecutionPolicyMode: 'test_after_code',
+        fullSuiteValidation: { enabled: true, placement: 'before_test_review' }
+    }, { profileOverrides: { test: true } });
+    const frozenPolicy = snapshot.inputs.review_execution_policy!;
+
+    const removedGraph = JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>;
+    delete removedGraph.review_dependency_graph;
+    rehashSnapshot(removedGraph);
+    assert.ok(getEffectiveReviewSnapshotViolations(removedGraph).some((violation) => (
+        violation.includes('must be present together')
+    )));
+
+    const downgraded = JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>;
+    delete downgraded.review_dependency_graph;
+    delete (downgraded.inputs as Record<string, unknown>).review_execution_policy;
+    rehashSnapshot(downgraded);
+    assert.throws(
+        () => assertEffectiveReviewSnapshotExecutionPolicyBinding(
+            downgraded as unknown as typeof snapshot,
+            frozenPolicy
+        ),
+        /does not match the frozen task profile policy|canonical frozen task profile graph/u
+    );
+
+    const substituted = JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>;
+    const substitutedPolicy = (
+        (substituted.inputs as Record<string, unknown>).review_execution_policy
+    ) as Record<string, unknown>;
+    substitutedPolicy.full_suite_validation = { enabled: true, placement: 'before_completion' };
+    const substitutedGraph = substituted.review_dependency_graph as Record<string, unknown>;
+    substitutedGraph.full_suite_barrier = {
+        enabled: true,
+        placement: 'before_completion',
+        before_review_ids: []
+    };
+    const { graph_sha256: ignoredGraphHash, ...graphBody } = substitutedGraph;
+    void ignoredGraphHash;
+    substitutedGraph.graph_sha256 = createHash('sha256')
+        .update(JSON.stringify(canonicalize(graphBody)), 'utf8')
+        .digest('hex');
+    rehashSnapshot(substituted);
+    assert.throws(
+        () => assertEffectiveReviewSnapshotExecutionPolicyBinding(
+            substituted as unknown as typeof snapshot,
+            frozenPolicy
+        ),
+        /does not match the frozen task profile policy/u
     );
 });
 
@@ -613,6 +712,7 @@ test('canonical reconstruction rejects a self-rehashed auto-lane suppression', (
     (suppressed.required_reviews as Record<string, unknown>)['architecture-boundary'] = false;
     suppressed.required_review_ids = (suppressed.required_review_ids as string[])
         .filter((id) => id !== 'architecture-boundary');
+    suppressReviewInDependencyGraph(suppressed, 'architecture-boundary');
     rehashSnapshot(suppressed);
 
     assert.deepEqual(getEffectiveReviewSnapshotViolations(suppressed), []);
@@ -739,7 +839,12 @@ test('downstream routing rejects live profile input drift after preflight', () =
             scopeCategory: 'code',
             taskIntent: 'Exercise profile drift detection',
             changedFiles: ['src/handler.ts'],
-            taskTriggers: {}
+            taskTriggers: {},
+            reviewExecutionPolicyMode: frozenProfileSnapshot.review_execution_policy.mode,
+            reviewDependencyGraph:
+                frozenProfileSnapshot.review_execution_policy.review_dependency_graph,
+            fullSuiteValidation:
+                frozenProfileSnapshot.review_execution_policy.full_suite_validation
         });
         const preflightPath = path.join(reviewsDir, 'T-729-3-preflight.json');
         fs.writeFileSync(preflightPath, JSON.stringify({

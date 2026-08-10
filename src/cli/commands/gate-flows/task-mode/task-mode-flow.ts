@@ -46,6 +46,7 @@ import {
 import {
     loadReviewExecutionPolicyConfig
 } from '../../../../core/review-execution-policy';
+import { loadFullSuiteValidationConfig } from '../../../../core/full-suite-validation-config';
 import {
     normalizeOptionalPath,
     removeArtifactIfExists,
@@ -422,9 +423,12 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtimeActiveProfile = resolvedProfile.selection.runtime_active_profile;
         runtimeProfileSource = resolvedProfile.selection.runtime_profile_source;
         const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
+        const fullSuiteValidation = loadFullSuiteValidationConfig(repoRoot);
         profilePolicySnapshot = buildTaskProfilePolicySnapshot(orchestratorRoot, rawTaskProfile, {
             reviewExecutionPolicyMode: reviewExecutionPolicy.mode,
-            reviewExecutionPolicyConfigured: reviewExecutionPolicy.configured
+            reviewExecutionPolicyConfigured: reviewExecutionPolicy.configured,
+            fullSuiteValidationEnabled: fullSuiteValidation.enabled,
+            fullSuiteValidationPlacement: fullSuiteValidation.placement
         });
         if (
             Number.isInteger(resolvedProfile.effective_policy.depth)

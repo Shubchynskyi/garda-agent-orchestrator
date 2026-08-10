@@ -21,6 +21,7 @@ import {
 } from '../../../../schemas/task-plan';
 import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/shared/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
+import { loadFullSuiteValidationConfig } from '../../../../core/full-suite-validation-config';
 import { readReviewCatalogConfigFile } from '../../../../core/review-catalog';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
 import {
@@ -1037,9 +1038,18 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 ),
                 optionalSkillIds: optionalSkillSelectionPreview?.payload.selected_installed_skills
                     .map((skill) => skill.id) || [],
-                zeroDiffBaselineOnly: result.zero_diff_guard.status === 'BASELINE_ONLY'
+                zeroDiffBaselineOnly: result.zero_diff_guard.status === 'BASELINE_ONLY',
+                reviewExecutionPolicyMode: taskProfileSnapshot.review_execution_policy.mode,
+                reviewDependencyGraph:
+                    taskProfileSnapshot.review_execution_policy.review_dependency_graph,
+                fullSuiteValidation:
+                    taskProfileSnapshot.review_execution_policy.full_suite_validation
+                    || loadFullSuiteValidationConfig(repoRoot)
             });
             result.effective_review_snapshot = effectiveReviewSnapshot;
+            if (result.review_execution_policy && effectiveReviewSnapshot.review_dependency_graph) {
+                result.review_execution_policy.dependency_graph = effectiveReviewSnapshot.review_dependency_graph;
+            }
             result.required_reviews = { ...effectiveReviewSnapshot.required_reviews };
             result.profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
                 result.profile_guardrails,

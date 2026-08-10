@@ -4,6 +4,7 @@ import {
     type EffectiveReviewExecutionPolicyMode,
     type ReviewLaunchPlan
 } from '../../core/review-execution-policy';
+import type { CompiledReviewDependencyGraph } from '../../core/review-dependency-graph';
 import {
     type FullSuiteValidationPlacement
 } from '../../core/workflow-config';
@@ -30,6 +31,7 @@ export interface NextStepBlockedReviewLaneSummary {
 export function buildNextStepReviewLaunchPlan(params: {
     requiredReviewTypes: string[];
     policyMode: EffectiveReviewExecutionPolicyMode;
+    dependencyGraph?: CompiledReviewDependencyGraph | null;
     requiredReviews: Record<string, boolean>;
     reviewStates: ReviewLaunchPlannerState[];
     isSatisfied: (state: ReviewLaunchPlannerState) => boolean;
@@ -44,6 +46,7 @@ export function buildNextStepReviewLaunchPlan(params: {
         requiredReviewTypes: params.requiredReviewTypes,
         requiredReviews: params.requiredReviews,
         policyMode: params.policyMode,
+        dependencyGraph: params.dependencyGraph,
         reviewStates: params.reviewStates.map((state) => ({
             review_type: state.reviewType,
             satisfied: passedReviews.has(state.reviewType),
@@ -124,11 +127,17 @@ export function getDownstreamReviewTypesFor(
     failedReviewType: string,
     requiredReviewTypes: string[],
     requiredReviews: Record<string, boolean>,
-    policyMode: EffectiveReviewExecutionPolicyMode
+    policyMode: EffectiveReviewExecutionPolicyMode,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
     return requiredReviewTypes.filter((reviewType) => (
         reviewType !== failedReviewType
-        && getReviewExecutionDependencies(reviewType, requiredReviews, policyMode).includes(failedReviewType)
+        && getReviewExecutionDependencies(
+            reviewType,
+            requiredReviews,
+            policyMode,
+            dependencyGraph
+        ).includes(failedReviewType)
     ));
 }
 

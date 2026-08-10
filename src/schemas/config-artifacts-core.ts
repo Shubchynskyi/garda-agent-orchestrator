@@ -9,6 +9,7 @@ import {
 } from './shared';
 import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 import { normalizeReviewCatalog } from '../core/review-catalog';
+import { normalizeReviewDependencyGraphDeclaration } from '../core/review-dependency-graph';
 import {
     ORDINARY_DOC_PATHS_CONFIG_KEY,
     normalizeOrdinaryDocPathPatterns
@@ -434,7 +435,16 @@ function validateReviewFollowUpPolicy(input: unknown, fieldName: string): Record
 
 function validateProfileEntry(input: unknown, profilePath: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, profilePath);
-    const knownKeys = new Set(['description', 'depth', 'review_policy', 'review_finding_policy', 'review_follow_up_policy', 'token_economy', 'skills']);
+    const knownKeys = new Set([
+        'description',
+        'depth',
+        'review_policy',
+        'review_finding_policy',
+        'review_follow_up_policy',
+        'review_dependency_graph',
+        'token_economy',
+        'skills'
+    ]);
     const normalized = cloneUnknownProperties(raw, knownKeys);
 
     normalized.description = normalizeNonEmptyString(raw.description, `${profilePath}.description`);
@@ -457,6 +467,12 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
         normalized.review_follow_up_policy = validateReviewFollowUpPolicy(
             raw.review_follow_up_policy,
             `${profilePath}.review_follow_up_policy`
+        );
+    }
+    if (raw.review_dependency_graph !== undefined) {
+        normalized.review_dependency_graph = normalizeReviewDependencyGraphDeclaration(
+            raw.review_dependency_graph,
+            `${profilePath}.review_dependency_graph`
         );
     }
 

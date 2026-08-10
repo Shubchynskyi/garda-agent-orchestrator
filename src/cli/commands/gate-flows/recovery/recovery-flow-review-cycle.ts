@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
 import { getReviewExecutionPreparationBatches, resolveReviewExecutionPolicyModeFromPreflight } from '../../../../core/review-execution-policy';
+import { resolveCompiledReviewDependencyGraphFromPreflight } from '../../../../core/review-dependency-graph';
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { resolveTaskProfileReviewTriggerPolicy } from '../../../../policy/task-profile-policy-snapshot';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
@@ -559,6 +560,10 @@ export async function runRestartReviewCycleCommand(
         const refreshedRequiredReviews = refreshedPreflight.preflight.required_reviews as Record<string, boolean>;
         const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, refreshedPreflight);
         const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(refreshedPreflight.preflight);
+        const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+            refreshedPreflight.preflight,
+            reviewExecutionPolicyMode
+        );
 
         ensureStepPassed('load-rule-pack (POST_PREFLIGHT)', runLoadRulePackCommand({
             repoRoot,
@@ -600,7 +605,8 @@ export async function runRestartReviewCycleCommand(
 
         const requiredReviewBatches = getReviewExecutionPreparationBatches(
             refreshedRequiredReviews,
-            reviewExecutionPolicyMode
+            reviewExecutionPolicyMode,
+            reviewDependencyGraph
         );
         const requiredReviewTypes = requiredReviewBatches.flat();
         remediationFixClassification = classifyReviewRemediationFix(

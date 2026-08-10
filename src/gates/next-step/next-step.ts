@@ -8,6 +8,17 @@ import {
     type EffectiveReviewExecutionPolicyMode,
     type ResolvedReviewExecutionPolicyConfig
 } from '../../core/review-execution-policy';
+import {
+    bindFullSuiteValidationBarrier,
+    resolveCompiledReviewDependencyGraphFromPreflight
+} from '../../core/review-dependency-graph';
+import {
+    assertEffectiveReviewSnapshotExecutionPolicyBinding,
+    getEffectiveReviewSnapshotViolations,
+    hasCurrentReviewDependencyGraphContract,
+    type EffectiveReviewSnapshot,
+    type FrozenReviewExecutionPolicyBinding
+} from '../../policy/effective-review-snapshot';
 import { isPlainRecord } from '../../core/records';
 import {
     readTaskQueueEntries,
@@ -1004,7 +1015,7 @@ function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null)
         && zeroDiffGuard.completion_requires_audited_no_op === true;
 }
 
-type ReviewExecutionPolicySource = 'preflight' | 'workflow_config' | 'workflow_config_fallback';
+type ReviewExecutionPolicySource = 'preflight' | 'task_profile' | 'workflow_config' | 'workflow_config_fallback';
 
 function hasPreflightReviewPolicyMode(preflight: Record<string, unknown> | null): boolean {
     return !!preflight
@@ -1014,21 +1025,101 @@ function hasPreflightReviewPolicyMode(preflight: Record<string, unknown> | null)
 
 function resolveReviewPolicy(
     preflight: Record<string, unknown> | null,
-    workflowPolicy: ResolvedReviewExecutionPolicyConfig
+    workflowPolicy: ResolvedReviewExecutionPolicyConfig,
+    frozenPolicy?: FrozenReviewExecutionPolicyBinding | null
 ): {
     mode: EffectiveReviewExecutionPolicyMode;
     source: ReviewExecutionPolicySource;
 } {
+    const frozenCurrentContract = !!frozenPolicy && (
+        Object.prototype.hasOwnProperty.call(frozenPolicy, 'review_dependency_graph')
+        || Object.prototype.hasOwnProperty.call(frozenPolicy, 'full_suite_validation')
+    );
     if (hasPreflightReviewPolicyMode(preflight)) {
+        const mode = resolveReviewExecutionPolicyModeFromPreflight(preflight);
+        if (frozenCurrentContract && mode !== frozenPolicy.mode) {
+            throw new Error(
+                `Preflight review execution policy mode '${mode}' does not match frozen task profile mode '${frozenPolicy.mode}'.`
+            );
+        }
         return {
-            mode: resolveReviewExecutionPolicyModeFromPreflight(preflight),
+            mode,
             source: 'preflight'
         };
+    }
+    if (!preflight && frozenCurrentContract) {
+        return {
+            mode: frozenPolicy.mode,
+            source: 'task_profile'
+        };
+    }
+    if (frozenCurrentContract) {
+        throw new Error(
+            'Preflight review execution policy is required by the frozen task profile; refusing live workflow fallback.'
+        );
     }
     return {
         mode: workflowPolicy.mode,
         source: workflowPolicy.configured ? 'workflow_config' : 'workflow_config_fallback'
     };
+}
+
+function resolveFrozenReviewExecutionPolicyBinding(
+    taskMode: Record<string, unknown> | null
+): FrozenReviewExecutionPolicyBinding | null {
+    const profileSnapshot = isPlainRecord(taskMode?.profile_policy_snapshot)
+        ? taskMode.profile_policy_snapshot
+        : null;
+    return profileSnapshot && isPlainRecord(profileSnapshot.review_execution_policy)
+        ? profileSnapshot.review_execution_policy as unknown as FrozenReviewExecutionPolicyBinding
+        : null;
+}
+
+function resolveTimelineBoundReviewDependencyGraph(
+    eventsRoot: string,
+    taskId: string,
+    preflight: Record<string, unknown> | null
+): EffectiveReviewSnapshot['review_dependency_graph'] | undefined {
+    if (!preflight?.effective_review_snapshot) {
+        return undefined;
+    }
+    const timeline = readOrderedTaskEvents(path.join(eventsRoot, `${taskId}.jsonl`)).events;
+    let latestPreflightEvent: (typeof timeline)[number] | undefined;
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+        const event = timeline[index];
+        if (String(event.event_type || '').trim().toUpperCase() === 'PREFLIGHT_CLASSIFIED') {
+            latestPreflightEvent = event;
+            break;
+        }
+    }
+    const eventDetails = isPlainRecord(latestPreflightEvent?.details)
+        ? latestPreflightEvent.details
+        : null;
+    const eventSnapshot = eventDetails?.effective_review_snapshot;
+    if (!eventSnapshot) {
+        throw new Error(
+            'Latest PREFLIGHT_CLASSIFIED timeline event is missing the effective review snapshot binding.'
+        );
+    }
+    const preflightSnapshot = preflight.effective_review_snapshot;
+    const eventViolations = getEffectiveReviewSnapshotViolations(eventSnapshot);
+    const preflightViolations = getEffectiveReviewSnapshotViolations(preflightSnapshot);
+    if (eventViolations.length > 0 || preflightViolations.length > 0) {
+        throw new Error(
+            `Current-cycle effective review snapshot binding is invalid: ${[
+                ...eventViolations,
+                ...preflightViolations
+            ].join('; ')}`
+        );
+    }
+    const eventSnapshotRecord = eventSnapshot as EffectiveReviewSnapshot;
+    const preflightSnapshotRecord = preflightSnapshot as EffectiveReviewSnapshot;
+    if (eventSnapshotRecord.snapshot_sha256 !== preflightSnapshotRecord.snapshot_sha256) {
+        throw new Error(
+            'Preflight effective review snapshot does not match the latest PREFLIGHT_CLASSIFIED timeline binding.'
+        );
+    }
+    return eventSnapshotRecord.review_dependency_graph;
 }
 
 function resolveTaskQueueCaseMismatch(taskEntries: Map<string, TaskQueueEntry>, taskId: string): string | null {
@@ -2265,7 +2356,29 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskQueueEntries: taskEntries,
         workspaceSnapshotRequest
     });
-    const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
+    const frozenReviewPolicy = resolveFrozenReviewExecutionPolicyBinding(taskMode);
+    const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy, frozenReviewPolicy);
+    const frozenReviewDependencyGraph = frozenReviewPolicy && preflight?.effective_review_snapshot
+        ? assertEffectiveReviewSnapshotExecutionPolicyBinding(
+            preflight.effective_review_snapshot as EffectiveReviewSnapshot,
+            frozenReviewPolicy
+        )
+        : null;
+    const timelineBoundReviewDependencyGraph = resolveTimelineBoundReviewDependencyGraph(
+        eventsRoot,
+        taskId,
+        preflight
+    );
+    const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+        preflight,
+        reviewPolicy.mode,
+        timelineBoundReviewDependencyGraph ?? frozenReviewDependencyGraph,
+        !!frozenReviewPolicy && hasCurrentReviewDependencyGraphContract(frozenReviewPolicy)
+    );
+    const fullSuiteConfig = bindFullSuiteValidationBarrier(
+        loadFullSuiteValidationConfig(repoRoot),
+        reviewDependencyGraph
+    );
     const fullSuiteTimeoutForecast = fullSuiteConfig.enabled
         ? buildFullSuiteTimeoutForecast(repoRoot, fullSuiteConfig)
         : null;
@@ -2351,7 +2464,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskId,
         preflightPath
     });
-    const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
     const taskQueueFollowUpFingerprintIndex = buildTaskQueueFollowUpFingerprintIndex(taskEntries, taskId);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(
@@ -2462,6 +2574,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
             policyMode: reviewPolicy.mode,
+            dependencyGraph: reviewDependencyGraph,
             requiredReviews: summary.required_reviews,
             reviewStates,
             isSatisfied: (state) => (
@@ -3746,7 +3859,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewType,
                 requiredReviewTypes,
                 summary.required_reviews,
-                reviewPolicy.mode
+                reviewPolicy.mode,
+                reviewDependencyGraph
             );
             const reviewContextChain = buildReviewGateChainStatusSummary({
                 repoRoot,
