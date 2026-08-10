@@ -22,23 +22,88 @@ test('canonical lifecycle manifest is schema-valid, ordered, and deeply immutabl
     assert.ok(TASK_LIFECYCLE_PHASE_MANIFEST.stages.every((stage) => Object.isFrozen(stage.mandatory_gates)));
 });
 
-test('canonical lifecycle manifest declares placement-aware mandatory gates without execution commands', () => {
-    const validation = TASK_LIFECYCLE_PHASE_MANIFEST.stages.find((stage) => stage.id === 'validation');
-    const review = TASK_LIFECYCLE_PHASE_MANIFEST.stages.find((stage) => stage.id === 'review');
-    const closeout = TASK_LIFECYCLE_PHASE_MANIFEST.stages.find((stage) => stage.id === 'closeout');
-    assert.ok(validation && review && closeout);
-    assert.deepEqual(
-        validation.mandatory_gates.map((entry) => entry.gate_id),
-        ['optional-quality-checklist', 'compile-gate', 'full-suite-validation']
-    );
-    assert.deepEqual(review.mandatory_gates[0].condition, {
-        kind: 'predicate',
-        predicate_id: 'full_suite_before_review_checkpoint'
-    });
-    assert.deepEqual(
-        closeout.mandatory_gates.map((entry) => entry.gate_id),
-        ['required-reviews-check', 'full-suite-validation', 'project-memory-impact', 'doc-impact-gate']
-    );
+test('canonical lifecycle manifest declares every phase and mandatory gate predicate', () => {
+    assert.deepEqual(TASK_LIFECYCLE_PHASE_MANIFEST.stages, [
+        {
+            id: 'startup',
+            condition: { kind: 'always' },
+            mandatory_gates: [
+                { gate_id: 'enter-task-mode', condition: { kind: 'always' } },
+                { gate_id: 'load-rule-pack:task-entry', condition: { kind: 'always' } },
+                { gate_id: 'handshake-diagnostics', condition: { kind: 'always' } },
+                { gate_id: 'shell-smoke-preflight', condition: { kind: 'always' } }
+            ]
+        },
+        {
+            id: 'preflight',
+            condition: { kind: 'always' },
+            mandatory_gates: [
+                { gate_id: 'classify-change', condition: { kind: 'always' } },
+                { gate_id: 'load-rule-pack:post-preflight', condition: { kind: 'always' } }
+            ]
+        },
+        {
+            id: 'implementation',
+            condition: { kind: 'predicate', predicate_id: 'changes_exist' },
+            mandatory_gates: []
+        },
+        {
+            id: 'validation',
+            condition: { kind: 'predicate', predicate_id: 'changes_exist' },
+            mandatory_gates: [
+                {
+                    gate_id: 'optional-quality-checklist',
+                    condition: { kind: 'predicate', predicate_id: 'optional_quality_checks_enabled' }
+                },
+                { gate_id: 'compile-gate', condition: { kind: 'always' } },
+                {
+                    gate_id: 'full-suite-validation',
+                    condition: { kind: 'predicate', predicate_id: 'full_suite_after_compile_before_reviews' }
+                }
+            ]
+        },
+        {
+            id: 'review',
+            condition: { kind: 'predicate', predicate_id: 'reviews_required' },
+            mandatory_gates: [
+                {
+                    gate_id: 'full-suite-validation',
+                    condition: { kind: 'predicate', predicate_id: 'full_suite_before_review_checkpoint' }
+                }
+            ],
+            extension: {
+                kind: 'opaque',
+                owner: 'review-subsystem',
+                contract_id: 'task-review-phase'
+            }
+        },
+        {
+            id: 'closeout',
+            condition: { kind: 'always' },
+            mandatory_gates: [
+                {
+                    gate_id: 'required-reviews-check',
+                    condition: { kind: 'predicate', predicate_id: 'review_gate_required' }
+                },
+                {
+                    gate_id: 'full-suite-validation',
+                    condition: { kind: 'predicate', predicate_id: 'full_suite_before_completion' }
+                },
+                {
+                    gate_id: 'project-memory-impact',
+                    condition: { kind: 'predicate', predicate_id: 'project_memory_impact_required' }
+                },
+                { gate_id: 'doc-impact-gate', condition: { kind: 'always' } }
+            ]
+        },
+        {
+            id: 'terminal',
+            condition: { kind: 'always' },
+            mandatory_gates: [
+                { gate_id: 'completion-gate', condition: { kind: 'always' } }
+            ]
+        }
+    ]);
     assert.doesNotMatch(JSON.stringify(TASK_LIFECYCLE_PHASE_MANIFEST), /(?:node |npm |\.js\b|--repo-root)/u);
 });
 
@@ -88,6 +153,39 @@ test('validator rejects reordered stages and extensions outside the review bound
         () => validateTaskLifecyclePhaseManifest(misplaced),
         /only supported for the review phase/u
     );
+});
+
+test('JSON Schema rejects non-canonical stage order, duplicate phases, and review extension drift', () => {
+    const invalidCandidates = [
+        (() => {
+            const candidate = mutableManifest();
+            const stages = candidate.stages as unknown[];
+            [stages[0], stages[1]] = [stages[1], stages[0]];
+            return candidate;
+        })(),
+        (() => {
+            const candidate = mutableManifest();
+            const stages = candidate.stages as unknown[];
+            stages[1] = JSON.parse(JSON.stringify(stages[0]));
+            return candidate;
+        })(),
+        (() => {
+            const candidate = mutableManifest();
+            const review = (candidate.stages as Array<Record<string, unknown>>)[4];
+            delete review.extension;
+            return candidate;
+        })(),
+        (() => {
+            const candidate = mutableManifest();
+            const stages = candidate.stages as Array<Record<string, unknown>>;
+            stages[0].extension = JSON.parse(JSON.stringify(stages[4].extension));
+            return candidate;
+        })()
+    ];
+
+    for (const candidate of invalidCandidates) {
+        assert.equal(validateAgainstSchema(candidate, taskLifecyclePhaseManifestSchema).valid, false);
+    }
 });
 
 test('validator rejects unknown lifecycle properties and duplicate semantic ids', () => {

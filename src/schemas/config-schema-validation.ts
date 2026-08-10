@@ -39,8 +39,9 @@ function validateType(value: unknown, expected: string, jsonPath: string): Schem
  * Validates a JSON value against a JSON Schema subset (draft-07).
  *
  * Supports: type, required, properties, additionalProperties, items,
+ * tuple items, additionalItems,
  * enum, const, not, oneOf, anyOf, allOf, contains, pattern, minimum, maximum,
- * minLength, minItems, minProperties, uniqueItems, and the local
+ * minLength, minItems, maxItems, minProperties, uniqueItems, and the local
  * x-case-insensitive-unique-item-properties extension.
  */
 export function validateAgainstSchema(value: unknown, schema: Record<string, unknown>, rootPath = ''): SchemaValidationResult {
@@ -134,8 +135,36 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
         if (minItems !== undefined && value.length < minItems) {
             errors.push({ path: jsonPath, message: `Array has ${value.length} items, minimum is ${minItems}.` });
         }
-        const itemsSchema = schema.items as Record<string, unknown> | undefined;
-        if (itemsSchema) {
+        const maxItems = schema.maxItems as number | undefined;
+        if (maxItems !== undefined && value.length > maxItems) {
+            errors.push({ path: jsonPath, message: `Array has ${value.length} items, maximum is ${maxItems}.` });
+        }
+        const itemsSchema = schema.items as Record<string, unknown> | Array<Record<string, unknown>> | undefined;
+        if (Array.isArray(itemsSchema)) {
+            const positionalItemCount = Math.min(value.length, itemsSchema.length);
+            for (let i = 0; i < positionalItemCount; i++) {
+                const itemResult = validateAgainstSchema(value[i], itemsSchema[i], `${rootPath}[${i}]`);
+                errors.push(...itemResult.errors);
+            }
+            if (value.length > itemsSchema.length) {
+                const additionalItems = schema.additionalItems;
+                if (additionalItems === false) {
+                    errors.push({
+                        path: `${rootPath}[${itemsSchema.length}]`,
+                        message: 'Additional array items are not allowed.'
+                    });
+                } else if (additionalItems && typeof additionalItems === 'object' && !Array.isArray(additionalItems)) {
+                    for (let i = itemsSchema.length; i < value.length; i++) {
+                        const itemResult = validateAgainstSchema(
+                            value[i],
+                            additionalItems as Record<string, unknown>,
+                            `${rootPath}[${i}]`
+                        );
+                        errors.push(...itemResult.errors);
+                    }
+                }
+            }
+        } else if (itemsSchema) {
             for (let i = 0; i < value.length; i++) {
                 const itemResult = validateAgainstSchema(value[i], itemsSchema, `${rootPath}[${i}]`);
                 errors.push(...itemResult.errors);

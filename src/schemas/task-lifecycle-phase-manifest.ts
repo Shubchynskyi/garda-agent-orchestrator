@@ -83,6 +83,53 @@ const CONDITION_SCHEMA = Object.freeze({
     ]
 });
 
+const MANDATORY_GATE_SCHEMA = Object.freeze({
+    type: 'object',
+    properties: {
+        gate_id: { type: 'string', minLength: 1 },
+        condition: CONDITION_SCHEMA
+    },
+    required: ['gate_id', 'condition'],
+    additionalProperties: false
+});
+
+const REVIEW_EXTENSION_SCHEMA = Object.freeze({
+    type: 'object',
+    properties: {
+        kind: { const: 'opaque' },
+        owner: { const: 'review-subsystem' },
+        contract_id: { const: 'task-review-phase' },
+        payload: {}
+    },
+    required: ['kind', 'owner', 'contract_id'],
+    additionalProperties: false
+});
+
+function createStageSchema(id: TaskLifecyclePhaseId): Record<string, unknown> {
+    const reviewStage = id === 'review';
+    return Object.freeze({
+        type: 'object',
+        properties: {
+            id: { const: id },
+            condition: CONDITION_SCHEMA,
+            mandatory_gates: {
+                type: 'array',
+                items: MANDATORY_GATE_SCHEMA
+            },
+            ...(reviewStage ? { extension: REVIEW_EXTENSION_SCHEMA } : {})
+        },
+        required: [
+            'id',
+            'condition',
+            'mandatory_gates',
+            ...(reviewStage ? ['extension'] : [])
+        ],
+        additionalProperties: false
+    });
+}
+
+const STAGE_SCHEMAS = Object.freeze(TASK_LIFECYCLE_PHASE_IDS.map(createStageSchema));
+
 export const taskLifecyclePhaseManifestSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/task-lifecycle-phase-manifest.schema.json',
@@ -95,38 +142,8 @@ export const taskLifecyclePhaseManifestSchema: Record<string, unknown> = Object.
             type: 'array',
             minItems: TASK_LIFECYCLE_PHASE_IDS.length,
             maxItems: TASK_LIFECYCLE_PHASE_IDS.length,
-            items: {
-                type: 'object',
-                properties: {
-                    id: { enum: [...TASK_LIFECYCLE_PHASE_IDS] },
-                    condition: CONDITION_SCHEMA,
-                    mandatory_gates: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                gate_id: { type: 'string', minLength: 1 },
-                                condition: CONDITION_SCHEMA
-                            },
-                            required: ['gate_id', 'condition'],
-                            additionalProperties: false
-                        }
-                    },
-                    extension: {
-                        type: 'object',
-                        properties: {
-                            kind: { const: 'opaque' },
-                            owner: { const: 'review-subsystem' },
-                            contract_id: { const: 'task-review-phase' },
-                            payload: {}
-                        },
-                        required: ['kind', 'owner', 'contract_id'],
-                        additionalProperties: false
-                    }
-                },
-                required: ['id', 'condition', 'mandatory_gates'],
-                additionalProperties: false
-            }
+            items: STAGE_SCHEMAS,
+            additionalItems: false
         },
         recommended_post_closeout_commands: {
             type: 'array',
