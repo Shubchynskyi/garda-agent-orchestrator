@@ -48,8 +48,11 @@ export function hasAuthenticatedFixNowDisposition(state: ReviewArtifactState): b
 }
 
 function hasAcceptedDeferredOrIgnoredDisposition(state: ReviewArtifactState): boolean {
-    const disposition = state.reviewFindingsDisposition;
-    return state.reviewFindingsValidationAccepted === true
+    const disposition = state.frozenReviewFindingsDisposition ?? state.reviewFindingsDisposition;
+    return (
+        state.frozenReviewFindingsValidationAccepted === true
+        || state.reviewFindingsValidationAccepted === true
+    )
         && disposition !== null
         && disposition.blocking_count === 0
         && (
@@ -59,7 +62,9 @@ function hasAcceptedDeferredOrIgnoredDisposition(state: ReviewArtifactState): bo
 }
 
 function describeDisposition(state: ReviewArtifactState): string {
-    const counts = state.reviewFindingsDisposition?.counts_by_action;
+    const counts = (
+        state.frozenReviewFindingsDisposition ?? state.reviewFindingsDisposition
+    )?.counts_by_action;
     return `${state.reviewType}(create_follow_up=${counts?.create_follow_up || 0}, ignore=${counts?.ignore || 0})`;
 }
 

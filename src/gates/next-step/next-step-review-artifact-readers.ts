@@ -105,9 +105,11 @@ export interface ReviewArtifactState {
         | null;
     failureReason: string | null;
     reviewFindingsValidationAccepted: boolean | null;
+    frozenReviewFindingsValidationAccepted?: boolean | null;
     reviewFindingsValidationRejected: boolean;
     reviewFindingsValidationArtifactPath: string | null;
     reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null;
+    frozenReviewFindingsDisposition?: ReviewFindingsDispositionEvaluation | null;
     reviewFindingsDispositionArtifactPath: string | null;
     reviewFindingsDispositionArtifactSha256: string | null;
     reviewFindingsFollowUpArtifactPath: string | null;
@@ -633,9 +635,11 @@ export function readReviewArtifactState(
     let failureKind: ReviewArtifactState['failureKind'] = null;
     let failureReason: string | null = null;
     let reviewFindingsValidationAccepted: boolean | null = null;
+    let frozenReviewFindingsValidationAccepted: boolean | null = null;
     let reviewFindingsValidationRejected = false;
     let reviewFindingsValidationArtifactPath: string | null = null;
     let reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
+    let frozenReviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     let reviewFindingsDispositionArtifactPath: string | null = null;
     let reviewFindingsDispositionArtifactSha256: string | null = null;
     let reviewFindingsFollowUpArtifactPath: string | null = null;
@@ -917,6 +921,49 @@ export function readReviewArtifactState(
             reviewFindingsValidationArtifactPath = validationArtifact.reference?.artifact_path || null;
             reviewFindingsValidationAccepted = validationArtifact.accepted;
             violations.push(...validationArtifact.violations);
+            if (!validationArtifact.valid) {
+                const frozenValidationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                    receipt,
+                    reviewArtifactPath: artifactPath,
+                    expectedTaskId: taskId,
+                    expectedReviewType: reviewType,
+                    expectedReviewOutputSha256: typeof receipt.review_output_sha256 === 'string'
+                        ? receipt.review_output_sha256
+                        : null,
+                    expectedReviewArtifactSha256: artifactHash || null,
+                    expectedReviewContextPath: reusedExistingReview ? null : contextPath,
+                    expectedReviewContextSha256: reusedExistingReview
+                        ? reusedFromReviewContextSha256
+                        : contextHash || null,
+                    expectedPreflightPath: reusedExistingReview ? null : preflightPath,
+                    expectedPreflightSha256: reusedExistingReview ? null : preflightSha256,
+                    expectedScopeSha256: reusedExistingReview
+                        ? null
+                        : normalizeReviewEvidenceSha256(receipt.scope_sha256),
+                    expectedReviewScopeSha256: reusedExistingReview
+                        ? reusedFromReviewScopeSha256
+                        : receiptReviewScopeSha256,
+                    expectedCodeScopeSha256: reusedExistingReview
+                        ? reusedFromCodeScopeSha256
+                        : receiptCodeScopeSha256,
+                    expectedReviewTreeStateSha256: reusedExistingReview
+                        ? reusedFromReviewTreeStateSha256
+                        : contextReviewTreeStateSha256,
+                    expectedCoverageContractSha256: reusedExistingReview
+                        ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
+                        : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null,
+                    requireAccepted: true
+                });
+                frozenReviewFindingsValidationAccepted = frozenValidationArtifact.accepted;
+                if (frozenValidationArtifact.valid && frozenValidationArtifact.accepted) {
+                    frozenReviewFindingsDisposition = evaluateReviewFindingsValidationArtifactDispositions(
+                        frozenValidationArtifact.artifact,
+                        reusedExistingReview
+                            ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)
+                            : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
+                    );
+                }
+            }
             if (validationArtifact.valid) {
                 if (reviewFindingsValidationArtifactHasBlockingFindings(
                     validationArtifact.artifact,
@@ -1067,9 +1114,11 @@ export function readReviewArtifactState(
         failureKind,
         failureReason,
         reviewFindingsValidationAccepted,
+        frozenReviewFindingsValidationAccepted,
         reviewFindingsValidationRejected,
         reviewFindingsValidationArtifactPath,
         reviewFindingsDisposition,
+        frozenReviewFindingsDisposition,
         reviewFindingsDispositionArtifactPath,
         reviewFindingsDispositionArtifactSha256,
         reviewFindingsFollowUpArtifactPath,

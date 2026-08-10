@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -6,6 +6,15 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import type { EffectiveReviewExecutionPolicyMode } from '../../../../src/core/review-execution-policy';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 import { resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
@@ -59,6 +68,8 @@ import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 const nodeRequire = createRequire(__filename);
+const DEFAULT_APP_SOURCE = 'export const value = 1;\n';
+const PREFLIGHT_CHANGED_APP_SOURCE = 'export const value = 1;\n// Review routing fixture change.\n';
 
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -73,11 +84,9 @@ const ALL_REVIEW_FLAGS = Object.freeze({
 });
 
 let tempRoots: string[] = [];
+let sharedRepoTemplateRoot: string | null = null;
 
-
-function makeTempRepo(): string {
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-'));
-    tempRoots.push(repoRoot);
+function populateTempRepo(repoRoot: string): void {
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
@@ -94,7 +103,7 @@ function makeTempRepo(): string {
         `| ${TASK_ID} | TODO | P1 | ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |`,
         ''
     ].join('\n'), 'utf8');
-    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), DEFAULT_APP_SOURCE, 'utf8');
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
         SourceOfTruth: 'Codex'
     });
@@ -122,6 +131,26 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                review_policy: { code: 'auto', test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -145,6 +174,25 @@ function makeTempRepo(): string {
         ].join('\n'),
         'utf8'
     );
+}
+
+function getSharedRepoTemplateRoot(): string {
+    if (sharedRepoTemplateRoot) {
+        return sharedRepoTemplateRoot;
+    }
+    sharedRepoTemplateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-template-'));
+    populateTempRepo(sharedRepoTemplateRoot);
+    seedRunnableFocusedIntermediateCommand(sharedRepoTemplateRoot, { markTestChanged: false });
+    initGitRepo(sharedRepoTemplateRoot, {
+        gitignoreContent: 'TASK.md\ngarda-agent-orchestrator/runtime/\n'
+    });
+    return sharedRepoTemplateRoot;
+}
+
+function makeTempRepo(): string {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-'));
+    fs.cpSync(getSharedRepoTemplateRoot(), repoRoot, { recursive: true });
+    tempRoots.push(repoRoot);
     return repoRoot;
 }
 
@@ -238,7 +286,19 @@ function appendEvent(
 }
 
 function seedStartedTask(repoRoot: string, taskId: string): void {
-    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        'balanced',
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    writeJson(taskModePath, buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
         requestedDepth: 2,
@@ -248,14 +308,40 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
         executionProviderSource: 'explicit_provider',
-        runtimeIdentityStatus: 'resolved'
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: 'balanced',
+        profileSelectionSource: 'task_queue',
+        activeProfile: 'balanced',
+        profileSource: 'built_in',
+        runtimeActiveProfile: 'balanced',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
     }));
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
-    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
-    seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
+    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', buildTaskModeTimelineDetails(
+        taskModePath,
+        profilePolicySnapshot
+    ));
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function buildTaskModeTimelineDetails(
+    taskModePath: string,
+    profilePolicySnapshot: TaskProfilePolicySnapshot
+): Record<string, unknown> {
+    return {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    };
 }
 
 
@@ -324,7 +410,7 @@ function writePreflight(
     requiredReviews: Record<string, boolean>,
     options: {
         seedPostPreflight?: boolean;
-        reviewPolicyMode?: string;
+        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
         reviewFindingPolicy?: {
             schema_version: 1;
             policy_id: 'soft' | 'balanced' | 'strict' | 'custom';
@@ -346,6 +432,14 @@ function writePreflight(
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const changedFiles = options.changedFiles || ['src/app.ts'];
+    const appPath = path.join(repoRoot, 'src', 'app.ts');
+    if (
+        changedFiles.includes('src/app.ts')
+        && fs.existsSync(appPath)
+        && fs.readFileSync(appPath, 'utf8') === DEFAULT_APP_SOURCE
+    ) {
+        fs.writeFileSync(appPath, PREFLIGHT_CHANGED_APP_SOURCE, 'utf8');
+    }
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
     const domainScopeFingerprints = options.includeDomainScopeFingerprints
         ? buildDomainScopeFingerprints({
@@ -356,6 +450,37 @@ function writePreflight(
         })
         : null;
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const taskMode = JSON.parse(
+        fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8')
+    ) as Record<string, unknown>;
+    const frozenProfileSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        frozenProfileSnapshot.source.effective_profile,
+        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+        frozenProfileSnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: frozenProfileSnapshot.snapshot_hash,
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: 'code',
+        taskIntent: 'Exercise failed review routing',
+        changedFiles,
+        taskTriggers: {},
+        reviewExecutionPolicyMode: reviewPolicyMode,
+        reviewDependencyGraph: null,
+        fullSuiteValidation: {
+            enabled: false,
+            placement: 'after_compile_before_reviews'
+        },
+        includeDependencyGraph: true
+    });
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -370,28 +495,33 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
-        ...(options.reviewFindingPolicy || options.reviewFollowUpPolicy
-            ? {
-                profile_policy_snapshot: {
-                    ...(options.reviewFindingPolicy
-                        ? { review_finding_policy: options.reviewFindingPolicy }
-                        : {}),
-                    ...(options.reviewFollowUpPolicy
-                        ? { review_follow_up_policy: options.reviewFollowUpPolicy }
-                        : {})
-                }
-            }
-            : {}),
+        profile_policy_snapshot: {
+            snapshot_hash: frozenProfileSnapshot.snapshot_hash,
+            ...(options.reviewFindingPolicy
+                ? { review_finding_policy: options.reviewFindingPolicy }
+                : {}),
+            ...(options.reviewFollowUpPolicy
+                ? { review_follow_up_policy: options.reviewFollowUpPolicy }
+                : {})
+        },
         review_execution_policy: {
             mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
-        }
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     if (options.seedPostPreflight !== false) {
-        seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        seedPostPreflightRulePack(
+            repoRoot,
+            taskId,
+            preflightPath,
+            path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`)
+        );
     }
     return preflightPath;
 }
@@ -1180,13 +1310,22 @@ function writeFocusedIntermediateEvidence(
     }
 }
 
-function seedRunnableFocusedIntermediateCommand(repoRoot: string): void {
+function seedRunnableFocusedIntermediateCommand(
+    repoRoot: string,
+    options: { markTestChanged?: boolean } = {}
+): void {
     const scriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
     const npmTestScriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'npm-focused-test.cjs');
     const testPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-evidence.test.ts');
     fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
     fs.mkdirSync(path.dirname(testPath), { recursive: true });
-    fs.writeFileSync(testPath, 'export {};\n', 'utf8');
+    fs.writeFileSync(
+        testPath,
+        options.markTestChanged === false
+            ? 'export {};\n'
+            : 'export {};\n// Focused evidence fixture change.\n',
+        'utf8'
+    );
     fs.writeFileSync(
         scriptPath,
         [
@@ -1235,15 +1374,19 @@ function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<
 
 
 
-afterEach(() => {
+after(() => {
     for (const tempRoot of tempRoots) {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
     tempRoots = [];
+    if (sharedRepoTemplateRoot) {
+        fs.rmSync(sharedRepoTemplateRoot, { recursive: true, force: true });
+        sharedRepoTemplateRoot = null;
+    }
 });
 
 
-describe('gates/next-step', () => {
+describe('gates/next-step', { concurrency: 2 }, () => {
     it('routes back to failed code remediation instead of independent review lanes after a current failed code review', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -1604,6 +1747,37 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--receipt-path'));
         assert.ok(result.commands[0].command.includes('--artifact-path'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('blocks accepted deferred receipt source drift before ordinary classify-change recovery', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-review-source-mutation-guard', result.reason);
+        assert.match(result.title, /Stop unauthorized post-review source mutation/);
+        assert.match(result.reason, /domain\(s\) implementation/);
+        assert.match(result.reason, /Do not normalize these changes through classify-change/);
+        assert.deepEqual(result.commands, []);
     });
 
     it('defers grouped follow-up materialization until every required review lane is satisfied', () => {
@@ -2382,7 +2556,7 @@ describe('gates/next-step', () => {
         const requiredTestPath = 'tests/node/gates/focused-evidence.test.ts';
         const focusedFinding = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
         seedStartedTask(repoRoot, TASK_ID);
-        seedRunnableFocusedIntermediateCommand(repoRoot);
+        seedRunnableFocusedIntermediateCommand(repoRoot, { markTestChanged: false });
         fs.writeFileSync(path.join(repoRoot, 'src', 'focused-remediation.ts'), 'export const focusedRemediation = true;\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/focused-remediation.ts']
@@ -2729,7 +2903,7 @@ describe('gates/next-step', () => {
         seedStartedTask(repoRoot, TASK_ID);
         const focusedTestPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-evidence.test.ts');
         fs.mkdirSync(path.dirname(focusedTestPath), { recursive: true });
-        fs.writeFileSync(focusedTestPath, 'export {};\n', 'utf8');
+        fs.writeFileSync(focusedTestPath, 'export {};\n// Focused evidence fixture change.\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['tests/node/gates/focused-evidence.test.ts']
         });

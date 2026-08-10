@@ -23,8 +23,12 @@ function makeRepo(): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-post-review-source-guard-'));
     tempRoots.push(repoRoot);
     fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'config'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'export const expected = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'config', 'settings.json'), '{"enabled":true}\n', 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'docs', 'notes.md'), '# Notes\n', 'utf8');
     return repoRoot;
 }
@@ -70,7 +74,7 @@ function rejectedFailedState(reviewType = 'test'): ReviewArtifactState {
     } as ReviewArtifactState;
 }
 
-function preflightFor(repoRoot: string): Record<string, unknown> {
+function preflightFor(repoRoot: string, changedFiles = ['src/app.ts']): Record<string, unknown> {
     return {
         detection_source: 'explicit_changed_files',
         include_untracked: true,
@@ -79,7 +83,7 @@ function preflightFor(repoRoot: string): Record<string, unknown> {
                 repoRoot,
                 detectionSource: 'explicit_changed_files',
                 includeUntracked: true,
-                changedFiles: ['src/app.ts']
+                changedFiles
             })
         }
     };
@@ -146,6 +150,52 @@ test('blocks parent source remediation for an accepted ignored finding', () => {
 
     assert.equal(result.blocked, true, result.reason);
     assert.match(result.reason, /performance\(create_follow_up=0, ignore=1\)/);
+});
+
+test('blocks a direct test-domain mutation after an accepted deferred finding', () => {
+    const repoRoot = makeRepo();
+    const testPath = path.join(repoRoot, 'tests', 'app.test.ts');
+    const preflight = preflightFor(repoRoot, ['tests/app.test.ts']);
+    fs.writeFileSync(testPath, 'export const expected = 2;\n', 'utf8');
+
+    const result = evaluatePostReviewSourceMutationGuard({
+        repoRoot,
+        preflight,
+        workspaceReadiness: {
+            ready: false,
+            reason: 'test changed after deferred finding',
+            currentChangedFiles: ['tests/app.test.ts']
+        },
+        reviewStates: [acceptedDeferredState()],
+        authorizedImplementationTransition: false
+    });
+
+    assert.equal(result.blocked, true, result.reason);
+    assert.deepEqual(result.mutated_domains, ['test']);
+    assert.deepEqual(result.mutated_files, ['tests/app.test.ts']);
+});
+
+test('blocks a direct config-domain mutation after an accepted deferred finding', () => {
+    const repoRoot = makeRepo();
+    const configPath = path.join(repoRoot, 'config', 'settings.json');
+    const preflight = preflightFor(repoRoot, ['config/settings.json']);
+    fs.writeFileSync(configPath, '{"enabled":false}\n', 'utf8');
+
+    const result = evaluatePostReviewSourceMutationGuard({
+        repoRoot,
+        preflight,
+        workspaceReadiness: {
+            ready: false,
+            reason: 'config changed after deferred finding',
+            currentChangedFiles: ['config/settings.json']
+        },
+        reviewStates: [acceptedDeferredState()],
+        authorizedImplementationTransition: false
+    });
+
+    assert.equal(result.blocked, true, result.reason);
+    assert.deepEqual(result.mutated_domains, ['config']);
+    assert.deepEqual(result.mutated_files, ['config/settings.json']);
 });
 
 test('allows legitimate authenticated fix_now source remediation', () => {
