@@ -318,7 +318,14 @@ export function formatNextStepText(result: NextStepResult): string {
     if (result.quality_checklist) {
         lines.push(result.quality_checklist.visible_summary_line);
     }
-    lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
+    lines.push(`ReviewExecutionOrder: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
+    const findingPolicyActions = result.review.review_finding_policy_actions;
+    lines.push(
+        `FindingPolicy: ${result.review.review_finding_policy_id} (${result.review.review_finding_policy_source}); `
+        + `critical=${findingPolicyActions.critical}; high=${findingPolicyActions.high}; `
+        + `medium=${findingPolicyActions.medium}; low=${findingPolicyActions.low}; `
+        + `residual_risk=${findingPolicyActions.residual_risk}`
+    );
     if (result.review.required_reviews.length > 0) {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);
     } else {

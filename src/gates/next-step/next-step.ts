@@ -207,6 +207,9 @@ import {
     type ReviewArtifactState
 } from './next-step-review-artifact-readers';
 import {
+    resolveLockedReviewFindingPolicyFromPreflight
+} from '../review/review-finding-disposition';
+import {
     applyFullSuiteReadinessToReviewLaunchPlan,
     buildNextStepReviewLaunchPlan,
     describeBlockedReviewDependencies,
@@ -266,6 +269,10 @@ import {
     readReadyFinalReportSummary,
     type NextStepFinalReportSummary
 } from './next-step-closeout-status-readers';
+import {
+    evaluatePostReviewSourceMutationGuard,
+    hasAuthenticatedFixNowDisposition
+} from './next-step-post-review-source-mutation-guard';
 import {
     materializeSplitRequiredLatch,
     readSplitRequiredLatchEvidence,
@@ -427,6 +434,15 @@ export interface NextStepReviewSummary {
     required_reviews: string[];
     review_execution_policy_mode: EffectiveReviewExecutionPolicyMode;
     review_execution_policy_source: ReviewExecutionPolicySource;
+    review_finding_policy_id: string;
+    review_finding_policy_source: string;
+    review_finding_policy_actions: {
+        critical: string;
+        high: string;
+        medium: string;
+        low: string;
+        residual_risk: string;
+    };
     launchable_review_types: string[];
     blocked_review_lanes: NextStepBlockedReviewLane[];
     failed_review_type: string | null;
@@ -2290,6 +2306,21 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
+    const findingPolicyResolution = resolveLockedReviewFindingPolicyFromPreflight(
+        preflight || {
+            profile_policy_snapshot: isPlainRecord(taskMode?.profile_policy_snapshot)
+                ? taskMode.profile_policy_snapshot
+                : null
+        }
+    );
+    const findingPolicySummary = {
+        review_finding_policy_id: findingPolicyResolution.policy.policy_id,
+        review_finding_policy_source: findingPolicyResolution.source,
+        review_finding_policy_actions: {
+            ...findingPolicyResolution.policy.findings,
+            residual_risk: findingPolicyResolution.policy.residual_risk
+        }
+    };
     const optionalSkillSelectionSummary = buildOptionalSkillSelectionSummary(repoRoot, cliPrefix, taskId, preflight);
     let workflowReviewPolicy: ResolvedReviewExecutionPolicyConfig = {
         mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
@@ -2331,6 +2362,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 required_reviews: [],
                 review_execution_policy_mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
                 review_execution_policy_source: 'workflow_config_fallback',
+                ...findingPolicySummary,
                 launchable_review_types: [],
                 blocked_review_lanes: [],
                 failed_review_type: null,
@@ -2593,6 +2625,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         required_reviews: requiredReviewTypes,
         review_execution_policy_mode: reviewPolicy.mode,
         review_execution_policy_source: reviewPolicy.source,
+        ...findingPolicySummary,
         launchable_review_types: reviewLaunchPlan.launchable_review_types,
         blocked_review_lanes: toNextStepBlockedReviewLanes(reviewLaunchPlan),
         failed_review_type: reviewLaunchPlan.failed_review_type,
@@ -3188,6 +3221,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         return buildDecisionRouteResult(currentProtectedScopeRoute);
     }
 
+    const preGuardWorkspaceReadiness = reviewGateAlreadyPassed
+        ? effectivePreflightWorkspaceReadiness
+        : effectiveStrictPreGuardWorkspaceReadiness;
+    const postReviewSourceMutationGuard = evaluatePostReviewSourceMutationGuard({
+        repoRoot,
+        preflight,
+        workspaceReadiness: preGuardWorkspaceReadiness,
+        reviewStates,
+        authorizedImplementationTransition: Boolean(
+            failedCurrentReviewStateForPreflight
+            && hasAuthenticatedFixNowDisposition(failedCurrentReviewStateForPreflight)
+        )
+    });
+
     const preGuardRoute = resolvePreGuardDecisionRoute({
         preflightCycleReadiness,
         preflightCycleRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
@@ -3215,9 +3262,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             selfGuardPolicyChangeCommand: buildGardaSelfGuardPolicyChangeCommand(cliPrefix),
             orchestratorWorkRestartCommand: buildOrchestratorWorkRestartCommand(repoRoot, cliPrefix, taskId, taskMode)
         },
-        workspaceReadiness: reviewGateAlreadyPassed
-            ? effectivePreflightWorkspaceReadiness
-            : effectiveStrictPreGuardWorkspaceReadiness,
+        postReviewSourceMutationGuard,
+        workspaceReadiness: preGuardWorkspaceReadiness,
         workspaceRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
             cliPrefix,

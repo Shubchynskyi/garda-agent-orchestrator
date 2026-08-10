@@ -77,6 +77,47 @@ test('resolveNextStepPreGuardRoute routes protected control-plane scope through 
     assert.match(route.reason, /protected Garda control-plane files/);
 });
 
+test('resolveNextStepPreGuardRoute blocks frozen deferred findings before ordinary workspace refresh', () => {
+    const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
+        postReviewSourceMutationGuard: {
+            blocked: true,
+            reason: 'accepted create_follow_up evidence freezes parent source remediation'
+        },
+        workspaceReadiness: {
+            ready: false,
+            reason: 'workspace source hash changed'
+        }
+    }));
+
+    assert.ok(route);
+    assert.equal(route.nextGate, 'post-review-source-mutation-guard');
+    assert.equal(route.title, 'Stop unauthorized post-review source mutation.');
+    assert.equal(route.commands.length, 0);
+    assert.match(route.reason, /freezes parent source remediation/);
+});
+
+test('resolveNextStepPreGuardRoute keeps authenticated failed-review remediation ahead of ordinary workspace refresh', () => {
+    const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
+        postReviewSourceMutationGuard: {
+            blocked: false,
+            reason: 'current fix_now transition is authenticated'
+        },
+        workspaceReadiness: {
+            ready: false,
+            reason: 'workspace source hash changed'
+        },
+        failedReviewRemediation: {
+            reviewType: 'test',
+            verdictToken: 'TEST REVIEW FAILED',
+            restartReviewCycleCommand: 'node bin/garda.js gate restart-review-cycle --task-id "T-1"'
+        }
+    }));
+
+    assert.ok(route);
+    assert.equal(route.nextGate, 'restart-review-cycle');
+    assert.match(route.reason, /failed 'test' review verdict/);
+});
+
 test('resolveNextStepPreGuardRoute preserves POST_PREFLIGHT rebind route wording and command label', () => {
     const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
         postPreflightRulePack: {

@@ -63,6 +63,10 @@ export interface NextStepPreGuardRoutingOptions {
     preflightCycleReadiness: NextStepReadinessState;
     preflightCycleRefreshCommand: string;
     protectedControlPlane: NextStepProtectedControlPlaneRoutingOptions;
+    postReviewSourceMutationGuard?: {
+        blocked: boolean;
+        reason: string;
+    } | null;
     workspaceReadiness: NextStepWorkspaceReadinessState;
     workspaceRefreshCommand: string;
     failedReviewRemediation?: {
@@ -80,6 +84,16 @@ export interface NextStepPreGuardRoutingOptions {
 export function resolveNextStepPreGuardRoute(
     options: NextStepPreGuardRoutingOptions
 ): NextStepPreReviewRoute | null {
+    if (options.postReviewSourceMutationGuard?.blocked) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'post-review-source-mutation-guard',
+            title: 'Stop unauthorized post-review source mutation.',
+            reason: options.postReviewSourceMutationGuard.reason,
+            commands: []
+        };
+    }
+
     if (!options.preflightCycleReadiness.ready) {
         return {
             status: 'BLOCKED',

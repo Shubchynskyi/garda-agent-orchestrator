@@ -850,7 +850,8 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'classify-change');
         assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
         assert.equal(result.review.review_execution_policy_source, 'workflow_config');
-        assert.match(formatNextStepText(result), /ReviewPolicy: strict_sequential \(workflow_config\)/);
+        assert.match(formatNextStepText(result), /ReviewExecutionOrder: strict_sequential \(workflow_config\)/);
+        assert.match(formatNextStepText(result), /FindingPolicy: /);
     });
 
     it('uses the frozen task-profile review policy before preflight exists', () => {
@@ -877,7 +878,8 @@ describe('gates/next-step', () => {
         assert.match(result.commands[0].command, /--stage "TASK_ENTRY"/u);
         assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
         assert.equal(result.review.review_execution_policy_source, 'task_profile');
-        assert.match(formatNextStepText(result), /ReviewPolicy: strict_sequential \(task_profile\)/);
+        assert.match(formatNextStepText(result), /ReviewExecutionOrder: strict_sequential \(task_profile\)/);
+        assert.match(formatNextStepText(result), /FindingPolicy: /);
     });
 
     it('rejects a self-rehashed preflight with its frozen dependency graph removed', () => {
