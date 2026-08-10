@@ -127,6 +127,7 @@ export function collectRequiredReviewEvidence(input: {
         reviewGateTrustSummary
     } = withReviewArtifactReadBarrier(input.reviewsRoot, () => {
         const requiredReviewBooleans = toRequiredReviewBooleanRecord(input.requiredReviews);
+        const repoRoot = path.resolve(input.reviewsRoot, '..', '..', '..');
         const reviewEvidence = readJsonArtifact(input.reviewEvidencePath, 'Review gate', input.errors);
         ensurePassedArtifactStatus(reviewEvidence, 'Review gate', input.errors);
         let reviewContracts: ReturnType<typeof resolveCompletionReviewContracts> = [];
@@ -176,7 +177,7 @@ export function collectRequiredReviewEvidence(input: {
                             requirePreflightPath: true,
                             requirePreflightSha256: true,
                             expectedPreflightPayload: input.preflight,
-                            repoRoot: path.resolve(input.reviewsRoot, '..', '..', '..'),
+                            repoRoot,
                             ...buildReviewContextPreflightDiffExpectations(input.preflight, reviewKey)
                         }));
                     }
@@ -215,7 +216,6 @@ export function collectRequiredReviewEvidence(input: {
                 if (!receipt) {
                     findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(artifactPath, null);
                 } else {
-                    const repoRoot = path.resolve(input.reviewsRoot, '..', '..', '..');
                     const reusedExistingReview = receipt.reused_existing_review === true;
                     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(input.preflight, repoRoot);
                     const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(reviewKey, input.preflight, repoRoot);
@@ -308,7 +308,7 @@ export function collectRequiredReviewEvidence(input: {
             input.scopeCategory,
             input.preflightSha256,
             input.preflight,
-            input.reviewsRoot
+            repoRoot
         );
         const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
             reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)

@@ -400,7 +400,8 @@ function summarizeReviewAttemptFromEvent(
     artifactIndex: ReviewAttemptArtifactIndex,
     taskId: string,
     currentPreflightFingerprints: DomainScopeFingerprints | null,
-    currentPreflight?: Record<string, unknown> | null
+    currentPreflight: Record<string, unknown> | null | undefined,
+    knownReviewTypes: ReadonlySet<string>
 ): {
     reviewType: string;
     verdict: 'PASS' | 'FAIL' | 'MISSING_OR_INVALID';
@@ -417,7 +418,8 @@ function summarizeReviewAttemptFromEvent(
     const details = isPlainRecord(event.details) ? event.details : {};
     const reviewType = normalizeKnownReviewType(
         details.review_type ?? details.reviewType,
-        currentPreflight
+        currentPreflight,
+        knownReviewTypes
     );
     if (!reviewType) {
         return null;
@@ -601,6 +603,8 @@ export function buildReviewAttemptSummary(options: {
         const seenEvidenceKeysByType = new Map<string, Set<string>>();
         const diagnosticAttempts: ReviewAttemptDiagnosticInput[] = [];
         const currentPreflightFingerprints = readPreflightDomainScopeFingerprints(options.currentPreflight);
+        const effectiveReviewTypeIds = collectEffectiveReviewTypeIds(options.currentPreflight);
+        const knownReviewTypes = new Set(effectiveReviewTypeIds);
         const excludedReviewTypes = options.excludedReviewTypes ?? ['test'];
         let taskEventAttemptCount = 0;
         let fallbackAttemptCount = 0;
@@ -611,7 +615,8 @@ export function buildReviewAttemptSummary(options: {
                 artifactIndex,
                 options.taskId,
                 currentPreflightFingerprints,
-                options.currentPreflight
+                options.currentPreflight,
+                knownReviewTypes
             );
             if (!eventAttempt) {
                 continue;
@@ -656,7 +661,7 @@ export function buildReviewAttemptSummary(options: {
             taskEventAttemptCount += 1;
         }
 
-        for (const reviewType of collectEffectiveReviewTypeIds(options.currentPreflight)) {
+        for (const reviewType of effectiveReviewTypeIds) {
             for (const fallbackAttempt of summarizeReviewAttemptsFromSnapshotArtifacts(
                 artifactIndex,
                 options.taskId,

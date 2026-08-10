@@ -6,23 +6,30 @@ import { createHash } from 'node:crypto';
 
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { runCompletionGate } from '../../../../src/gates/completion';
+import { collectRequiredReviewEvidence } from '../../../../src/gates/completion/completion-required-review-evidence';
+import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
 import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     assessProjectMemoryImpact
 } from '../../../../src/gates/project-memory-impact';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
 import {
     createTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,
     loadPostPreflightRulePack,
     loadTaskEntryRulePack,
-    runEnterTaskMode,
+    runEnterTaskMode as runBaseEnterTaskMode,
     runHandshakeForTask,
     runShellSmokeForTask,
     seedInitAnswers,
     seedTaskQueue,
+    writeBalancedProfilesConfig,
     writeCompilePassEvidence,
     writePreflight,
     writeReceiptBackedReviewArtifact
@@ -35,6 +42,60 @@ function fileSha256(filePath: string): string {
 function writeJson(filePath: string, payload: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function runEnterTaskMode(
+    options: Parameters<typeof runBaseEnterTaskMode>[0]
+): ReturnType<typeof runBaseEnterTaskMode> {
+    assert.ok(options.repoRoot);
+    const profilesPath = writeBalancedProfilesConfig(options.repoRoot);
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as Record<string, unknown>;
+    const builtInProfiles = profiles.built_in_profiles as Record<string, Record<string, unknown>>;
+    const reviewPolicy = builtInProfiles.balanced.review_policy as Record<string, boolean | 'auto'>;
+    reviewPolicy.code = 'auto';
+    writeJson(profilesPath, profiles);
+    const result = runBaseEnterTaskMode(options);
+    const reviewsRoot = getReviewsRoot(options.repoRoot);
+    const preflightPath = path.join(reviewsRoot, `${options.taskId}-preflight.json`);
+    const taskModePath = path.join(reviewsRoot, `${options.taskId}-task-mode.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+    const taskProfileSnapshot = taskMode.profile_policy_snapshot as Record<string, unknown>;
+    const profileSource = taskProfileSnapshot.source as Record<string, unknown>;
+    const laneSelection = taskProfileSnapshot.review_lane_selection as Record<string, unknown>;
+    const catalog = normalizeReviewCatalog({
+        version: 1,
+        custom_review_types: []
+    }, { knownSkillIds: [] });
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        String(profileSource.effective_profile),
+        laneSelection.profile_review_policy as Record<string, boolean | 'auto'>,
+        laneSelection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map(String)
+        : [];
+    const taskTriggers = Object.fromEntries(
+        Object.entries(preflight.triggers as Record<string, unknown> | undefined ?? {})
+            .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')
+    );
+    const snapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: String(taskProfileSnapshot.snapshot_hash),
+        legacyRequiredReviews: preflight.required_reviews as Record<string, boolean>,
+        scopeCategory: String(preflight.scope_category || 'code'),
+        taskIntent: String(options.taskSummary || 'Validate completion review trust'),
+        changedFiles,
+        taskTriggers,
+        zeroDiffBaselineOnly: false
+    });
+    preflight.profile_policy_snapshot = taskProfileSnapshot;
+    preflight.effective_review_snapshot = snapshot;
+    preflight.required_reviews = snapshot.required_reviews;
+    writeJson(preflightPath, preflight);
+    return result;
 }
 
 function writeProjectMemoryWorkflowConfig(repoRoot: string, enabled = true): void {
@@ -70,6 +131,73 @@ function recordCurrentProjectMemoryImpact(repoRoot: string, taskId: string, pref
 }
 
 describe('gates/completion review trust', () => {
+    it('accepts a stale receipt when its review domain matches from the repository root', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904c-completion-domain-root';
+
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+            const preflightPath = writePreflight(repoRoot, taskId);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Validate completion receipt-domain repository root',
+                provider: 'Codex',
+                routedTo: 'AGENTS.md'
+            });
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'code',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
+
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+            const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            receipt.preflight_sha256 = 'a'.repeat(64);
+            receipt.domain_scope_fingerprints = buildDomainScopeFingerprints({
+                repoRoot,
+                detectionSource: String(preflight.detection_source || 'git_auto'),
+                includeUntracked: preflight.include_untracked !== false,
+                changedFiles: preflight.changed_files as string[]
+            });
+            writeJson(receiptPath, receipt);
+            const reviewEvidencePath = path.join(reviewsRoot, `${taskId}-review-gate.json`);
+            writeJson(reviewEvidencePath, {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS'
+            });
+
+            const errors: string[] = [];
+            const result = collectRequiredReviewEvidence({
+                reviewsRoot,
+                taskId,
+                preflight,
+                preflightPath,
+                preflightSha256: fileSha256(preflightPath),
+                reviewEvidencePath,
+                requiredReviews: preflight.required_reviews as Record<string, unknown>,
+                scopeCategory: 'code',
+                orderedEvents: [],
+                errors
+            });
+
+            assert.equal(
+                result.receiptReviewTrustSummary?.status,
+                'INDEPENDENT_AUDITED',
+                errors.join('\n')
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('does not fall back to receipt-derived independent trust when current review gate is incomplete', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904c-completion-trust-gate';
@@ -108,7 +236,14 @@ describe('gates/completion review trust', () => {
                 preflight_path: preflightPath.replace(/\\/g, '/')
             });
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'code',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
 
             const reviewsRoot = getReviewsRoot(repoRoot);
             const preflightHash = fileSha256(preflightPath);
@@ -203,7 +338,14 @@ describe('gates/completion review trust', () => {
                 preflight_path: preflightPath.replace(/\\/g, '/')
             });
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'code',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
 
             const reviewsRoot = getReviewsRoot(repoRoot);
             const preflightHash = fileSha256(preflightPath);
@@ -298,7 +440,14 @@ describe('gates/completion review trust', () => {
                 preflight_path: preflightPath.replace(/\\/g, '/')
             });
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'code',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
 
             const reviewsRoot = getReviewsRoot(repoRoot);
             const preflightHash = fileSha256(preflightPath);
@@ -393,7 +542,14 @@ describe('gates/completion review trust', () => {
                 preflight_path: preflightPath.replace(/\\/g, '/')
             });
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'REVIEW PASSED');
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'test',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
 
             const reviewsRoot = getReviewsRoot(repoRoot);
             const preflightHash = fileSha256(preflightPath);
@@ -487,7 +643,14 @@ describe('gates/completion review trust', () => {
                 preflight_path: preflightPath.replace(/\\/g, '/')
             });
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'REVIEW PASSED');
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'test',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
 
             const reviewsRoot = getReviewsRoot(repoRoot);
             const preflightHash = fileSha256(preflightPath);
@@ -581,7 +744,14 @@ describe('gates/completion review trust', () => {
                 preflight_path: preflightPath.replace(/\\/g, '/')
             });
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+            writeReceiptBackedReviewArtifact(
+                repoRoot,
+                taskId,
+                'code',
+                'REVIEW PASSED',
+                undefined,
+                { allowLegacyManualReviewContext: true }
+            );
 
             const reviewsRoot = getReviewsRoot(repoRoot);
             const preflightHash = fileSha256(preflightPath);

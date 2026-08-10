@@ -29,12 +29,14 @@ export function collectEffectiveReviewTypeIds(
 
 export function normalizeKnownReviewType(
     value: unknown,
-    currentPreflight?: Record<string, unknown> | null
+    currentPreflight?: Record<string, unknown> | null,
+    knownReviewTypes?: ReadonlySet<string>
 ): string | null {
     const normalized = String(value || '').trim().toLowerCase();
-    const knownTypes = currentPreflight
-        ? new Set(collectEffectiveReviewTypeIds(currentPreflight))
-        : REVIEW_TRUST_COMPATIBILITY_TYPE_SET;
+    const knownTypes = knownReviewTypes
+        ?? (currentPreflight
+            ? new Set(collectEffectiveReviewTypeIds(currentPreflight))
+            : REVIEW_TRUST_COMPATIBILITY_TYPE_SET);
     return knownTypes.has(normalized) ? normalized : null;
 }
 
