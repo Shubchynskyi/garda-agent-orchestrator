@@ -508,6 +508,7 @@ describe('reviews-index', () => {
             assert.equal(raw.version, 4);
             assert.equal(raw.entries.length, 1);
             assert.equal(raw.entries[0].fileName, 'T-001-task-mode.json');
+            assert.match(raw.entries_sha256, /^[0-9a-f]{64}$/u);
         });
 
         it('cleans up temp file on write failure', () => {
@@ -666,7 +667,7 @@ describe('reviews-index', () => {
             assert.equal(second.index.entries.some((entry) => entry.fileName === 'T-123-rogue-review.json'), false);
         });
 
-        it('uses cache without statting each artifact on cache hit', () => {
+        it('uses cache without revalidating or rescanning artifacts on cache hit', () => {
             for (let i = 0; i < 25; i++) {
                 writeArtifact(reviewsDir, `T-${String(i).padStart(3, '0')}-task-mode.json`);
             }
@@ -675,28 +676,55 @@ describe('reviews-index', () => {
 
             const realFs = require('node:fs');
             const originalStatSync = realFs.statSync;
-            let artifactStatCount = 0;
+            const originalLstatSync = realFs.lstatSync;
+            const originalRealpathSync = realFs.realpathSync;
+            const originalReaddirSync = realFs.readdirSync;
+            let artifactValidationCount = 0;
+            let reviewsDirectoryReadCount = 0;
+            const isReviewArtifactPath = (candidate: unknown): boolean => {
+                const targetPath = typeof candidate === 'string'
+                    ? path.resolve(candidate)
+                    : '';
+                return path.dirname(targetPath) === path.resolve(reviewsDir)
+                    && path.basename(targetPath) !== 'reviews-index.json';
+            };
             try {
                 realFs.statSync = function (...args: any[]) {
-                    const targetPath = typeof args[0] === 'string'
-                        ? path.resolve(args[0])
-                        : '';
-                    if (
-                        path.dirname(targetPath) === path.resolve(reviewsDir)
-                        && path.basename(targetPath) !== 'reviews-index.json'
-                    ) {
-                        artifactStatCount += 1;
+                    if (isReviewArtifactPath(args[0])) {
+                        artifactValidationCount += 1;
                     }
                     return originalStatSync.apply(realFs, args);
+                };
+                realFs.lstatSync = function (...args: any[]) {
+                    if (isReviewArtifactPath(args[0])) {
+                        artifactValidationCount += 1;
+                    }
+                    return originalLstatSync.apply(realFs, args);
+                };
+                realFs.realpathSync = function (...args: any[]) {
+                    if (isReviewArtifactPath(args[0])) {
+                        artifactValidationCount += 1;
+                    }
+                    return originalRealpathSync.apply(realFs, args);
+                };
+                realFs.readdirSync = function (...args: any[]) {
+                    if (path.resolve(String(args[0])) === path.resolve(reviewsDir)) {
+                        reviewsDirectoryReadCount += 1;
+                    }
+                    return originalReaddirSync.apply(realFs, args);
                 };
 
                 const second = loadIndex(reviewsDir);
                 assert.equal(second.source, 'cache');
             } finally {
                 realFs.statSync = originalStatSync;
+                realFs.lstatSync = originalLstatSync;
+                realFs.realpathSync = originalRealpathSync;
+                realFs.readdirSync = originalReaddirSync;
             }
 
-            assert.equal(artifactStatCount, 0);
+            assert.equal(artifactValidationCount, 0);
+            assert.equal(reviewsDirectoryReadCount, 0);
         });
 
         it('rebuilds when forceRebuild is true', () => {

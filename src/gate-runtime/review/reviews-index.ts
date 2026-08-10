@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { writeFileAtomically } from '../../core/filesystem';
 import { BUILT_IN_REVIEW_TYPE_IDS } from '../../core/review-catalog';
 import {
@@ -50,6 +51,7 @@ export interface ReviewsIndex {
     directoryEntryCount?: number;
     directoryUnindexedEntryCount?: number;
     generatedAtMs: number;
+    entries_sha256?: string;
     entries: ReviewsIndexEntry[];
 }
 
@@ -86,8 +88,15 @@ function cloneReviewsIndex(index: ReviewsIndex): ReviewsIndex {
             ? { directoryUnindexedEntryCount: index.directoryUnindexedEntryCount }
             : {}),
         generatedAtMs: index.generatedAtMs,
+        entries_sha256: index.entries_sha256 ?? computeEntriesSha256(index.entries),
         entries: index.entries.map((entry) => ({ ...entry }))
     };
+}
+
+function computeEntriesSha256(entries: readonly ReviewsIndexEntry[]): string {
+    return createHash('sha256')
+        .update(JSON.stringify(entries), 'utf8')
+        .digest('hex');
 }
 
 function getDirectoryTimestampSnapshot(dirPath: string): { mtimeMs: number; ctimeMs: number } {
@@ -142,16 +151,8 @@ function markIndexFileAsDirectorySelfWrite(indexPath: string, reviewsDir: string
 function isDirectoryChangeFromIndexWrite(
     indexPath: string,
     cached: ReviewsIndex,
-    currentDirSnapshot: { mtimeMs: number; ctimeMs: number },
-    currentDirectoryEntryCount: number
+    currentDirSnapshot: { mtimeMs: number; ctimeMs: number }
 ): boolean {
-    if (
-        typeof cached.directoryEntryCount === 'number'
-        && currentDirectoryEntryCount !== cached.directoryEntryCount
-    ) {
-        return false;
-    }
-
     try {
         const indexStat = fs.statSync(indexPath);
         if (!indexStat.isFile()) {
@@ -217,6 +218,8 @@ function readIndexFile(
             || !Number.isSafeInteger(raw.generatedAtMs)
             || raw.generatedAtMs < 0
             || raw.generatedAtMs > Date.now()
+            || typeof raw.entries_sha256 !== 'string'
+            || !/^[0-9a-f]{64}$/u.test(raw.entries_sha256)
             || !Array.isArray(raw.entries)
             || typeof raw.directoryEntryCount !== 'number'
             || !Number.isSafeInteger(raw.directoryEntryCount)
@@ -230,9 +233,19 @@ function readIndexFile(
             return null;
         }
         const entries = raw.entries as ReviewsIndexEntry[];
+        if (raw.entries_sha256 !== computeEntriesSha256(entries)) {
+            return null;
+        }
         const fileNames = new Set(entries.map((entry) => entry.fileName));
         if (fileNames.size !== entries.length) {
             return null;
+        }
+        const entriesRequiringDiskAuthorization = entries.filter((entry) => (
+            !entriesPendingRemoval.has(entry.fileName)
+            && parseKnownReviewArtifactTaskId(entry.fileName, KNOWN_SUFFIXES) !== entry.taskId
+        ));
+        if (entriesRequiringDiskAuthorization.length === 0) {
+            return raw as unknown as ReviewsIndex;
         }
         const reviewsDir = path.dirname(indexPath);
         const reviewsRootRealPath = resolveReviewsRootRealPath(reviewsDir);
@@ -246,10 +259,7 @@ function readIndexFile(
                 .map((entry) => entry.fileName),
             reviewsRootRealPath
         );
-        const entriesAreAuthorized = entries.every((entry) => {
-            if (entriesPendingRemoval.has(entry.fileName)) {
-                return true;
-            }
+        const entriesAreAuthorized = entriesRequiringDiskAuthorization.every((entry) => {
             if (!resolveContainedRegularReviewArtifact(reviewsDir, entry.fileName, reviewsRootRealPath)) {
                 return false;
             }
@@ -300,20 +310,17 @@ function isLoadedIndexStale(
 ): boolean {
 
     const currentDirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-    const currentDirectoryEntryCount = getDirectoryEntryCount(reviewsDir);
-    if (currentDirSnapshot.mtimeMs !== cached.directoryMtimeMs) {
-        if (!isDirectoryChangeFromIndexWrite(indexPath, cached, currentDirSnapshot, currentDirectoryEntryCount)) {
-            return true;
-        }
-    }
+    const directoryMetadataChanged = currentDirSnapshot.mtimeMs !== cached.directoryMtimeMs
+        || (
+            typeof cached.directoryCtimeMs === 'number'
+            && currentDirSnapshot.ctimeMs !== cached.directoryCtimeMs
+        );
     if (
-        typeof cached.directoryCtimeMs === 'number'
-        && currentDirSnapshot.ctimeMs !== cached.directoryCtimeMs
-        && !isDirectoryChangeFromIndexWrite(indexPath, cached, currentDirSnapshot, currentDirectoryEntryCount)
+        directoryMetadataChanged
+        && !isDirectoryChangeFromIndexWrite(indexPath, cached, currentDirSnapshot)
     ) {
         return true;
     }
-    if (typeof cached.directoryEntryCount === 'number' && currentDirectoryEntryCount !== cached.directoryEntryCount) return true;
 
     return Date.now() - cached.generatedAtMs > maxStalenessMs;
 }
@@ -768,6 +775,7 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
             directoryEntryCount: 0,
             directoryUnindexedEntryCount: 0,
             generatedAtMs: Date.now(),
+            entries_sha256: computeEntriesSha256(entries),
             entries
         };
     }
@@ -816,6 +824,7 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
         directoryEntryCount: indexedCandidates.length,
         directoryUnindexedEntryCount: Math.max(0, indexedCandidates.length - entries.length),
         generatedAtMs: Date.now(),
+        entries_sha256: computeEntriesSha256(entries),
         entries
     };
 }
@@ -825,6 +834,7 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
  */
 export function writeIndex(indexPath: string, index: ReviewsIndex): void {
     const dir = path.dirname(indexPath);
+    index.entries_sha256 = computeEntriesSha256(index.entries);
     writeFileAtomically(indexPath, JSON.stringify(index, null, 2) + '\n', { encoding: 'utf8', fsync: false });
     markIndexFileAsDirectorySelfWrite(indexPath, dir);
 }
