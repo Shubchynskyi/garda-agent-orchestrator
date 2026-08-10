@@ -493,6 +493,40 @@ test('resolveValidationDecisionRoute does not evaluate lower-priority resolvers'
     assert.equal(lowerPriorityReads, 0);
 });
 
+test('resolveValidationDecisionRoute evaluates only manifest-projected validation gates', () => {
+    let qualityReads = 0;
+    let fullSuiteReads = 0;
+    const route = resolveValidationDecisionRoute({
+        lifecycleGateIds: ['compile-gate'],
+        resolveQualityChecklistRoute: () => {
+            qualityReads += 1;
+            return null;
+        },
+        resolveBaselineOnlyPreImplementationRoute: () => null,
+        resolveCompileGateRoute: () => ({
+            status: 'BLOCKED',
+            nextGate: 'compile-gate',
+            title: 'Run compile gate.',
+            reason: 'Compile is pending.',
+            commands: []
+        }),
+        resolveAuditedNoOpState: () => ({
+            required: false,
+            passed: false,
+            evidenceStatus: 'NOT_REQUIRED',
+            command: 'record-no-op'
+        }),
+        resolveFullSuiteValidationRoute: () => {
+            fullSuiteReads += 1;
+            return null;
+        }
+    });
+
+    assert.equal(route?.nextGate, 'compile-gate');
+    assert.equal(qualityReads, 0);
+    assert.equal(fullSuiteReads, 0);
+});
+
 test('resolveValidationDecisionRoute short-circuits after baseline, compile, and audited no-op winners', () => {
     let lowerPriorityReads = 0;
     const lowerPriority = () => {

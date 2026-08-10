@@ -142,6 +142,10 @@ import {
     suggestSkills
 } from '../../runtime/skills';
 import {
+    getActiveTaskLifecycleGateIds,
+    resolveFirstActiveTaskLifecycleGate
+} from '../../runtime/task-lifecycle-phase-runtime';
+import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
 import {
@@ -3537,7 +3541,50 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }
         return auditedNoOpState;
     };
+    const resolveFullSuiteLifecycleRoute = () => {
+        const fullSuiteRepairTaskCommand =
+            `${cliPrefix} gate materialize-full-suite-repair-task --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --full-suite-artifact-path "${toRepoDisplayPath(repoRoot, readinessArtifacts.paths.fullSuiteValidationPath)}" --repo-root "."`;
+        const fullSuiteRunMarkerRecoveryCommand =
+            `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+        const fullSuiteRunMarkerCleanupCommand =
+            `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --clear-dead-marker --operator-confirmed yes --repo-root "."`;
+        return resolveFullSuiteDecisionRoute({
+            enabled: fullSuiteConfig.enabled,
+            placement: fullSuiteConfig.placement,
+            notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
+            gateStatus: fullSuiteCurrentGateStatus,
+            gatePassed: fullSuiteGatePassed,
+            timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
+            timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
+            repeatedTimeoutBlockerAnalysis: fullSuiteTimeoutRepairTaskProposal.repeatedBlockerAnalysis,
+            timeoutRepairTaskCommand: fullSuiteTimeoutRepairTaskProposal.suggestedTaskId
+                ? fullSuiteRepairTaskCommand
+                : null,
+            timeoutRepairTaskMaterialized: fullSuiteTimeoutRepairTaskMaterialized,
+            timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
+            transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
+            transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
+            targetedDiagnosticRetryAvailable: fullSuiteTargetedDiagnosticEvidence.available,
+            targetedDiagnosticRetryReason: fullSuiteTargetedDiagnosticEvidence.reason,
+            configPath: fullSuiteSummary.config_path,
+            commandText: fullSuiteConfig.command,
+            timeoutForecastLine: fullSuiteTimeoutForecastLine,
+            command: fullSuiteCommand,
+            runMarkerRecoveryCommand: fullSuiteRunMarkerRecoveryCommand,
+            runMarkerCleanupCommand: fullSuiteRunMarkerCleanupCommand,
+            navigatorCommand,
+            nextReviewType: reviewLaunchPlan.next_review_type,
+            interruptedRun: interruptedFullSuiteRun,
+            unresolvedRunMarkerPath: unresolvedFullSuiteRunMarkerPath
+        });
+    };
     const validationDecisionRoute = resolveValidationDecisionRoute({
+        lifecycleGateIds: getActiveTaskLifecycleGateIds('validation', {
+            changes_exist: Array.isArray(preflight?.changed_files) && preflight.changed_files.length > 0,
+            optional_quality_checks_enabled: qualityChecklistReadiness?.enabled === true,
+            full_suite_after_compile_before_reviews:
+                fullSuiteConfig.enabled && fullSuiteConfig.placement === 'after_compile_before_reviews'
+        }),
         resolveQualityChecklistRoute: () => qualityChecklistReadiness
             ? resolveNextStepQualityChecklistRoute({
                 enabled: qualityChecklistReadiness.enabled,
@@ -3613,46 +3660,22 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             });
         },
         resolveAuditedNoOpState,
-        resolveFullSuiteValidationRoute: () => {
-            const fullSuiteRepairTaskCommand =
-                `${cliPrefix} gate materialize-full-suite-repair-task --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --full-suite-artifact-path "${toRepoDisplayPath(repoRoot, readinessArtifacts.paths.fullSuiteValidationPath)}" --repo-root "."`;
-            const fullSuiteRunMarkerRecoveryCommand =
-                `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-            const fullSuiteRunMarkerCleanupCommand =
-                `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --clear-dead-marker --operator-confirmed yes --repo-root "."`;
-            return resolveFullSuiteDecisionRoute({
-                enabled: fullSuiteConfig.enabled,
-                placement: fullSuiteConfig.placement,
-                notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
-                gateStatus: fullSuiteCurrentGateStatus,
-                gatePassed: fullSuiteGatePassed,
-                timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
-                timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
-                repeatedTimeoutBlockerAnalysis: fullSuiteTimeoutRepairTaskProposal.repeatedBlockerAnalysis,
-                timeoutRepairTaskCommand: fullSuiteTimeoutRepairTaskProposal.suggestedTaskId
-                    ? fullSuiteRepairTaskCommand
-                    : null,
-                timeoutRepairTaskMaterialized: fullSuiteTimeoutRepairTaskMaterialized,
-                timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
-                transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
-                transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
-                targetedDiagnosticRetryAvailable: fullSuiteTargetedDiagnosticEvidence.available,
-                targetedDiagnosticRetryReason: fullSuiteTargetedDiagnosticEvidence.reason,
-                configPath: fullSuiteSummary.config_path,
-                commandText: fullSuiteConfig.command,
-                timeoutForecastLine: fullSuiteTimeoutForecastLine,
-                command: fullSuiteCommand,
-                runMarkerRecoveryCommand: fullSuiteRunMarkerRecoveryCommand,
-                runMarkerCleanupCommand: fullSuiteRunMarkerCleanupCommand,
-                navigatorCommand,
-                nextReviewType: reviewLaunchPlan.next_review_type,
-                interruptedRun: interruptedFullSuiteRun,
-                unresolvedRunMarkerPath: unresolvedFullSuiteRunMarkerPath
-            });
-        }
+        resolveFullSuiteValidationRoute: resolveFullSuiteLifecycleRoute
     });
     if (validationDecisionRoute) {
         return buildDecisionRouteResult(validationDecisionRoute);
+    }
+
+    const reviewBoundaryDecisionRoute = resolveFirstActiveTaskLifecycleGate(
+        getActiveTaskLifecycleGateIds('review', {
+            reviews_required: requiredReviewTypes.length > 0,
+            full_suite_before_review_checkpoint:
+                fullSuiteConfig.enabled && fullSuiteConfig.placement === 'before_test_review'
+        }),
+        { 'full-suite-validation': resolveFullSuiteLifecycleRoute }
+    );
+    if (reviewBoundaryDecisionRoute) {
+        return buildDecisionRouteResult(reviewBoundaryDecisionRoute);
     }
 
     if (reviewLaunchPlan.next_review_type) {

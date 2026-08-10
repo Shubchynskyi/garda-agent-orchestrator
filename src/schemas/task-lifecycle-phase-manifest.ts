@@ -1,5 +1,3 @@
-import type { TaskEventLifecyclePhase } from '../gate-runtime/timeline/task-event-public-contract';
-
 export const TASK_LIFECYCLE_PHASE_MANIFEST_SCHEMA_VERSION = 1 as const;
 
 export const TASK_LIFECYCLE_PHASE_IDS = Object.freeze([
@@ -10,7 +8,7 @@ export const TASK_LIFECYCLE_PHASE_IDS = Object.freeze([
     'review',
     'closeout',
     'terminal'
-] as const satisfies readonly Exclude<TaskEventLifecyclePhase, 'unknown'>[]);
+] as const);
 
 export type TaskLifecyclePhaseId = (typeof TASK_LIFECYCLE_PHASE_IDS)[number];
 

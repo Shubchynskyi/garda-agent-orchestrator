@@ -135,7 +135,7 @@ describe('next-step closeout routing helpers', () => {
         assert.match(route.reason, /evidence_status=STALE/);
     });
 
-    it('routes to doc-impact first when doc-impact command does not claim project-memory evidence', () => {
+    it('preserves manifest project-memory-before-doc-impact order regardless of command text', () => {
         const route = resolvePostReviewCloseoutRouteFromState({
             requiredReviewsGatePassed: true,
             zeroDiffNoReviewCloseout: false,
@@ -162,8 +162,8 @@ describe('next-step closeout routing helpers', () => {
         });
 
         assert.equal(route.status, 'BLOCKED');
-        assert.equal(route.nextGate, 'doc-impact-gate');
-        assert.equal(route.commands[0].command, 'garda gate doc-impact-gate --decision "NO_DOC_UPDATES"');
+        assert.equal(route.nextGate, 'project-memory-impact');
+        assert.equal(route.commands[0].command, 'garda gate project-memory-impact');
     });
 
     it('builds project-memory closeout routing from flat post-review state', () => {

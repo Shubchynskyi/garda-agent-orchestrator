@@ -17,6 +17,10 @@ import {
 import type {
     NextStepDecisionRoutePayload
 } from './next-step-decision-route-groups';
+import {
+    getActiveTaskLifecycleGateIds,
+    resolveFirstActiveTaskLifecycleGate
+} from '../../runtime/task-lifecycle-phase-runtime';
 
 type ValidationRoute = NextStepDecisionRoutePayload;
 
@@ -233,6 +237,7 @@ export function resolveReviewCycleGuardDecisionRoute(options: {
 }
 
 export function resolveValidationDecisionRoute(options: {
+    lifecycleGateIds?: readonly string[];
     resolveQualityChecklistRoute: () => ValidationRoute | null;
     resolveBaselineOnlyPreImplementationRoute: () => BaselineOnlyRoute | null;
     resolveCompileGateRoute: () => ValidationRoute | null;
@@ -244,38 +249,50 @@ export function resolveValidationDecisionRoute(options: {
     };
     resolveFullSuiteValidationRoute: () => ValidationRoute | null;
 }): NextStepDecisionRoutePayload | null {
-    const qualityChecklistRoute = options.resolveQualityChecklistRoute();
-    if (qualityChecklistRoute) {
-        return qualityChecklistRoute;
-    }
-    const baselineOnlyPreImplementationRoute =
-        options.resolveBaselineOnlyPreImplementationRoute();
-    if (baselineOnlyPreImplementationRoute) {
-        return {
-            status: 'BLOCKED',
-            nextGate: baselineOnlyPreImplementationRoute.nextGate,
-            title: baselineOnlyPreImplementationRoute.title,
-            reason: baselineOnlyPreImplementationRoute.reason,
-            commands: []
-        };
-    }
-    const compileGateRoute = options.resolveCompileGateRoute();
-    if (compileGateRoute) {
-        return compileGateRoute;
-    }
-    const auditedNoOpState = options.resolveAuditedNoOpState();
-    if (auditedNoOpState.required && !auditedNoOpState.passed) {
+    const gateIds = options.lifecycleGateIds ?? getActiveTaskLifecycleGateIds('validation', {
+        changes_exist: true,
+        optional_quality_checks_enabled: true,
+        full_suite_after_compile_before_reviews: true
+    });
+    let baselineChecked = false;
+    let noOpChecked = false;
+    const resolveBaselineRoute = (): ValidationRoute | null => {
+        baselineChecked = true;
+        const route = options.resolveBaselineOnlyPreImplementationRoute();
+        return route
+            ? {
+                status: 'BLOCKED',
+                nextGate: route.nextGate,
+                title: route.title,
+                reason: route.reason,
+                commands: []
+            }
+            : null;
+    };
+    const resolveNoOpRoute = (): ValidationRoute | null => {
+        noOpChecked = true;
+        const state = options.resolveAuditedNoOpState();
+        if (!state.required || state.passed) {
+            return null;
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'record-no-op',
             title: 'Record audited zero-diff no-op evidence.',
             reason:
                 'The current preflight is BASELINE_ONLY with no reviewable diff and requires audited no-op evidence before review or completion gates can pass. ' +
-                `Record no-op evidence or implement changes and refresh preflight; current no-op evidence status: ${auditedNoOpState.evidenceStatus}.`,
-            commands: [
-                buildCommand('Record audited no-op evidence', auditedNoOpState.command)
-            ]
+                `Record no-op evidence or implement changes and refresh preflight; current no-op evidence status: ${state.evidenceStatus}.`,
+            commands: [buildCommand('Record audited no-op evidence', state.command)]
         };
+    };
+    const route = resolveFirstActiveTaskLifecycleGate(gateIds, {
+        'optional-quality-checklist': options.resolveQualityChecklistRoute,
+        'compile-gate': () => resolveBaselineRoute() ?? options.resolveCompileGateRoute(),
+        'full-suite-validation': () => resolveNoOpRoute() ?? options.resolveFullSuiteValidationRoute()
+    });
+    if (route) {
+        return route;
     }
-    return options.resolveFullSuiteValidationRoute();
+    return (!baselineChecked ? resolveBaselineRoute() : null)
+        ?? (!noOpChecked ? resolveNoOpRoute() : null);
 }
