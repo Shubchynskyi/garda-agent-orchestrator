@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 
 import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
 import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
+import { shouldAcceptCurrentPassReviewEvidence } from '../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
 import {
     buildReviewRemediationRecoveryRoute,
+    getAuthoritativeReviewRemediationDecisionViolations,
+    resolveAuthoritativeReviewRemediationDecision,
     type BuildReviewRemediationRecoveryRouteOptions,
     type ReviewRemediationCompletedReceipt,
     type ReviewRemediationReusableReceipt
@@ -147,6 +150,15 @@ function acceptedReceipt(reviewType: string): ReviewRemediationReusableReceipt {
     };
 }
 
+function freshReceipt(reviewType: string): ReviewRemediationReusableReceipt {
+    return {
+        review_type: reviewType,
+        reuse_status: 'ACCEPTED',
+        findings_satisfied: true,
+        evidence_kind: 'FRESH'
+    };
+}
+
 function completedReceipt(
     reviewType: string,
     evidence: ReturnType<typeof validationEvidence>
@@ -195,6 +207,143 @@ function routeOptions(
 }
 
 describe('review remediation selective recovery routing', () => {
+    it('allows fresh current-pass evidence through a reuse block without allowing reused evidence', () => {
+        const blockedReason = 'invalidated remediation lane requires a fresh review';
+
+        assert.equal(shouldAcceptCurrentPassReviewEvidence({
+            accepted: true,
+            reusedExistingReview: false
+        }, blockedReason), true);
+        assert.equal(shouldAcceptCurrentPassReviewEvidence({
+            accepted: true,
+            reusedExistingReview: true
+        }, blockedReason), false);
+        assert.equal(shouldAcceptCurrentPassReviewEvidence({
+            accepted: false,
+            reusedExistingReview: false
+        }, blockedReason), false);
+    });
+
+    it('emits one hash-bound REUSE, DELTA, or FULL decision for every effective lane', () => {
+        const profilePolicySnapshot = makeSnapshot();
+        const decision = resolveAuthoritativeReviewRemediationDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'test',
+            classification: {
+                source: 'delta',
+                delta: makeDelta('leaf_test'),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            },
+            requiredReviews: { code: true, refactor: true, test: true },
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reusableReceipts: [
+                acceptedReceipt('code'),
+                {
+                    review_type: 'refactor',
+                    reuse_status: 'REJECTED',
+                    findings_satisfied: true,
+                    reason: 'current context binding is stale'
+                },
+                acceptedReceipt('test')
+            ]
+        });
+
+        assert.equal(decision.status, 'READY');
+        assert.deepEqual(decision.lane_decisions.map((entry) => ({
+            review_type: entry.review_type,
+            mode: entry.mode,
+            depends_on: entry.depends_on
+        })), [
+            { review_type: 'code', mode: 'REUSE', depends_on: [] },
+            { review_type: 'refactor', mode: 'FULL', depends_on: ['code'] },
+            { review_type: 'test', mode: 'DELTA', depends_on: ['code', 'refactor'] }
+        ]);
+        assert.ok(decision.lane_decisions.every((entry) => /^[0-9a-f]{64}$/u.test(entry.reason_sha256)));
+        assert.match(decision.decision_sha256, /^[0-9a-f]{64}$/u);
+        assert.equal(decision.lane_decisions[1].reuse_eligible, true);
+        assert.equal(decision.lane_decisions[2].reuse_eligible, false);
+        assert.deepEqual(getAuthoritativeReviewRemediationDecisionViolations(decision, {
+            expectedTaskId: TASK_ID
+        }), []);
+
+        const tamperedDecision = structuredClone(decision);
+        tamperedDecision.lane_decisions[0].reason = 'forged reuse reason';
+        assert.match(
+            getAuthoritativeReviewRemediationDecisionViolations(tamperedDecision).join(' '),
+            /reason hash is invalid|decision hash is invalid/iu
+        );
+    });
+
+    it('falls back to FULL before reuse validation and blocks foreign or tampered delta trust', () => {
+        const profilePolicySnapshot = makeSnapshot();
+        const baseOptions = {
+            taskId: TASK_ID,
+            currentReviewType: 'test',
+            classification: {
+                source: 'delta' as const,
+                delta: makeDelta('leaf_test'),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            },
+            requiredReviews: { code: true, test: true },
+            reviewExecutionPolicyMode: 'strict_sequential' as const
+        };
+        const pending = resolveAuthoritativeReviewRemediationDecision(baseOptions);
+        assert.deepEqual(pending.lane_decisions.map((entry) => entry.mode), ['FULL', 'DELTA']);
+        assert.match(pending.lane_decisions[0].reason, /reuse validation has not accepted/iu);
+
+        const foreignDelta = makeDelta('leaf_test');
+        foreignDelta.task_id = 'T-foreign';
+        const foreign = resolveAuthoritativeReviewRemediationDecision({
+            ...baseOptions,
+            classification: { ...baseOptions.classification, delta: foreignDelta }
+        });
+        assert.equal(foreign.status, 'BLOCKED');
+        assert.deepEqual(foreign.lane_decisions.map((entry) => entry.mode), ['FULL', 'FULL']);
+        assert.match(foreign.blocked_reasons.join(' '), /foreign task or review type/iu);
+
+        const tamperedDelta = makeDelta('leaf_test');
+        tamperedDelta.classification_sha256 = hash('tampered');
+        const tampered = resolveAuthoritativeReviewRemediationDecision({
+            ...baseOptions,
+            classification: { ...baseOptions.classification, delta: tamperedDelta }
+        });
+        assert.equal(tampered.status, 'BLOCKED');
+        assert.match(tampered.blocked_reasons.join(' '), /classification_sha256/iu);
+    });
+
+    it('records fresh invalidated evidence as satisfied without misclassifying it as reuse', () => {
+        const profilePolicySnapshot = makeSnapshot();
+        const decision = resolveAuthoritativeReviewRemediationDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'test',
+            classification: {
+                source: 'delta',
+                delta: makeDelta('leaf_test'),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            },
+            requiredReviews: { code: true, test: true },
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reusableReceipts: [acceptedReceipt('code'), freshReceipt('test')]
+        });
+
+        assert.equal(decision.status, 'READY');
+        assert.deepEqual(decision.reused_review_types, ['code']);
+        assert.deepEqual(decision.satisfied_review_types, ['code', 'test']);
+        assert.deepEqual(decision.lane_decisions.map((entry) => ({
+            review_type: entry.review_type,
+            mode: entry.mode,
+            satisfied: entry.satisfied,
+            satisfaction_source: entry.satisfaction_source
+        })), [
+            { review_type: 'code', mode: 'REUSE', satisfied: true, satisfaction_source: 'REUSED' },
+            { review_type: 'test', mode: 'DELTA', satisfied: true, satisfaction_source: 'FRESH' }
+        ]);
+        assert.deepEqual(getAuthoritativeReviewRemediationDecisionViolations(decision), []);
+    });
+
     it('routes leaf remediation through focused validation and reruns only the current lane', () => {
         const beforeValidation = buildReviewRemediationRecoveryRoute(routeOptions('leaf_test'));
         assert.equal(beforeValidation.status, 'VALIDATION_REQUIRED');

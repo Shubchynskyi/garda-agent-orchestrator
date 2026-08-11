@@ -34,7 +34,175 @@ export interface ReviewRemediationReusableReceipt {
     review_type: string;
     reuse_status: 'ACCEPTED' | 'REJECTED';
     findings_satisfied: boolean;
+    evidence_kind?: 'REUSED' | 'FRESH';
     reason?: string | null;
+}
+
+export type ReviewRemediationDecisionMode = 'REUSE' | 'DELTA' | 'FULL';
+
+export interface ReviewRemediationRuntimeFixClassification {
+    category: string;
+    reason: string;
+    blocked_before_reuse: boolean;
+    invalidated_review_types: string[];
+}
+
+export type ReviewRemediationDecisionClassification =
+    | {
+        source: 'delta';
+        delta: ReviewRemediationDeltaClassification;
+        profilePolicySnapshot: unknown;
+        baselineProfilePolicySnapshotSha256: string;
+    }
+    | {
+        source: 'runtime_fix';
+        classification: ReviewRemediationRuntimeFixClassification;
+    };
+
+export interface ReviewRemediationLaneDecision {
+    review_type: string;
+    mode: ReviewRemediationDecisionMode;
+    reuse_eligible: boolean;
+    satisfied: boolean;
+    satisfaction_source: 'REUSED' | 'FRESH' | null;
+    invalidated: boolean;
+    depends_on: string[];
+    invalidated_downstream_review_types: string[];
+    reason_code: string;
+    reason: string;
+    reason_sha256: string;
+}
+
+export interface AuthoritativeReviewRemediationDecision {
+    schema_version: 1;
+    status: 'READY' | 'BLOCKED';
+    task_id: string;
+    current_review_type: string;
+    classification_source: ReviewRemediationDecisionClassification['source'];
+    classification_sha256: string;
+    category: string;
+    profile_policy_snapshot_sha256: string | null;
+    policy_id: string;
+    policy_legacy_fallback: boolean;
+    invalidated_review_types: string[];
+    preserved_review_types: string[];
+    reused_review_types: string[];
+    satisfied_review_types: string[];
+    rejected_reuse_review_types: string[];
+    dependency_edges: Array<{ review_type: string; depends_on: string[] }>;
+    lane_decisions: ReviewRemediationLaneDecision[];
+    blocked_reasons: string[];
+    decision_sha256: string;
+}
+
+export interface ResolveAuthoritativeReviewRemediationDecisionOptions {
+    taskId: string;
+    currentReviewType: string;
+    classification: ReviewRemediationDecisionClassification;
+    requiredReviews: Record<string, boolean>;
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
+    reviewDependencyGraph?: CompiledReviewDependencyGraph | null;
+    reusableReceipts?: readonly ReviewRemediationReusableReceipt[];
+}
+
+export function getAuthoritativeReviewRemediationDecisionViolations(
+    value: unknown,
+    options: { expectedTaskId?: string } = {}
+): string[] {
+    if (!isPlainRecord(value)) {
+        return ['authoritative remediation decision must be an object.'];
+    }
+    const violations: string[] = [];
+    if (value.schema_version !== 1) {
+        violations.push('authoritative remediation decision schema_version must be 1.');
+    }
+    if (!['READY', 'BLOCKED'].includes(String(value.status || ''))) {
+        violations.push('authoritative remediation decision status must be READY or BLOCKED.');
+    }
+    const taskId = String(value.task_id || '').trim();
+    if (!taskId || value.task_id !== taskId) {
+        violations.push('authoritative remediation decision task_id must be canonical.');
+    }
+    if (options.expectedTaskId && taskId !== options.expectedTaskId) {
+        violations.push(
+            `authoritative remediation decision belongs to task '${taskId || 'missing'}', not '${options.expectedTaskId}'.`
+        );
+    }
+    const laneValues = Array.isArray(value.lane_decisions) ? value.lane_decisions : [];
+    if (laneValues.length === 0) {
+        violations.push('authoritative remediation decision must contain lane_decisions.');
+    }
+    const seenReviewTypes = new Set<string>();
+    for (const laneValue of laneValues) {
+        if (!isPlainRecord(laneValue)) {
+            violations.push('authoritative remediation lane decision must be an object.');
+            continue;
+        }
+        const reviewType = String(laneValue.review_type || '').trim().toLowerCase();
+        if (!reviewType || laneValue.review_type !== reviewType || !/^[a-z][a-z0-9-]*$/u.test(reviewType)) {
+            violations.push('authoritative remediation lane review_type must be canonical.');
+        } else if (seenReviewTypes.has(reviewType)) {
+            violations.push(`authoritative remediation lane '${reviewType}' is duplicated.`);
+        } else {
+            seenReviewTypes.add(reviewType);
+        }
+        if (!['REUSE', 'DELTA', 'FULL'].includes(String(laneValue.mode || ''))) {
+            violations.push(`authoritative remediation lane '${reviewType || 'unknown'}' has an invalid mode.`);
+        }
+        if (
+            typeof laneValue.reuse_eligible !== 'boolean'
+            || typeof laneValue.invalidated !== 'boolean'
+            || typeof laneValue.satisfied !== 'boolean'
+        ) {
+            violations.push(
+                `authoritative remediation lane '${reviewType || 'unknown'}' must bind reuse, satisfaction, and invalidation booleans.`
+            );
+        }
+        if (![null, 'REUSED', 'FRESH'].includes(laneValue.satisfaction_source as null | string)) {
+            violations.push(
+                `authoritative remediation lane '${reviewType || 'unknown'}' has an invalid satisfaction source.`
+            );
+        }
+        if ((laneValue.satisfied === true) !== (laneValue.satisfaction_source !== null)) {
+            violations.push(
+                `authoritative remediation lane '${reviewType || 'unknown'}' has inconsistent satisfaction evidence.`
+            );
+        }
+        if (!Array.isArray(laneValue.depends_on) || !Array.isArray(laneValue.invalidated_downstream_review_types)) {
+            violations.push(
+                `authoritative remediation lane '${reviewType || 'unknown'}' must bind dependency impact arrays.`
+            );
+        }
+        if (!String(laneValue.reason_code || '').trim() || !String(laneValue.reason || '').trim()) {
+            violations.push(`authoritative remediation lane '${reviewType || 'unknown'}' must contain a reason.`);
+        }
+        const laneWithoutHash = { ...laneValue };
+        delete laneWithoutHash.reason_sha256;
+        const expectedReasonSha256 = sha256RedactedJsonPayload(laneWithoutHash);
+        if (String(laneValue.reason_sha256 || '').trim().toLowerCase() !== expectedReasonSha256) {
+            violations.push(`authoritative remediation lane '${reviewType || 'unknown'}' reason hash is invalid.`);
+        }
+    }
+    for (const field of [
+        'invalidated_review_types',
+        'preserved_review_types',
+        'reused_review_types',
+        'satisfied_review_types',
+        'rejected_reuse_review_types',
+        'dependency_edges',
+        'blocked_reasons'
+    ]) {
+        if (!Array.isArray(value[field])) {
+            violations.push(`authoritative remediation decision ${field} must be an array.`);
+        }
+    }
+    const decisionWithoutHash = { ...value };
+    delete decisionWithoutHash.decision_sha256;
+    const expectedDecisionSha256 = sha256RedactedJsonPayload(decisionWithoutHash);
+    if (String(value.decision_sha256 || '').trim().toLowerCase() !== expectedDecisionSha256) {
+        violations.push('authoritative remediation decision hash is invalid.');
+    }
+    return violations;
 }
 
 export interface ReviewRemediationCompletedReceipt {
@@ -76,6 +244,7 @@ export interface ReviewRemediationRecoveryRoute {
     review_required_types: string[];
     completed_review_types: string[];
     dependency_edges: Array<{ review_type: string; depends_on: string[] }>;
+    authoritative_decision: AuthoritativeReviewRemediationDecision;
     next_action: ReviewRemediationRecoveryNextAction | null;
     reason: string;
     routing_sha256: string;
@@ -176,41 +345,357 @@ function validationRouteForRequirement(
     return requirement === 'expanded_or_full' ? 'ordinary' : requirement;
 }
 
-function resolveReusableReviewTypes(options: {
-    receipts: readonly ReviewRemediationReusableReceipt[];
+function buildReasonSha256(decision: Omit<ReviewRemediationLaneDecision, 'reason_sha256'>): string {
+    return sha256RedactedJsonPayload(decision as unknown as Record<string, unknown>);
+}
+
+function buildBlockedDecision(options: {
+    taskId: string;
+    currentReviewType: string;
+    classificationSource: ReviewRemediationDecisionClassification['source'];
+    classificationSha256: string;
+    category: string;
+    profilePolicySnapshotSha256: string | null;
+    policyId: string;
+    policyLegacyFallback: boolean;
     requiredReviewTypes: readonly string[];
-    invalidatedReviewTypes: ReadonlySet<string>;
-}): { reused: string[]; rejected: string[] } {
-    const byReviewType = new Map<string, ReviewRemediationReusableReceipt>();
-    for (const receipt of options.receipts) {
-        const reviewType = normalizeReviewType(receipt.review_type, 'reusable receipt review_type');
-        if (!options.requiredReviewTypes.includes(reviewType)) {
-            throw new Error(`Reusable receipt '${reviewType}' is not a currently required review lane.`);
-        }
-        if (byReviewType.has(reviewType)) {
-            throw new Error(`Reusable receipt '${reviewType}' is duplicated.`);
-        }
-        if (!['ACCEPTED', 'REJECTED'].includes(receipt.reuse_status)) {
-            throw new Error(`Reusable receipt '${reviewType}' has unsupported reuse_status.`);
-        }
-        byReviewType.set(reviewType, receipt);
+    dependencyEdges: Array<{ review_type: string; depends_on: string[] }>;
+    blockedReasons: string[];
+}): AuthoritativeReviewRemediationDecision {
+    const reason = `Authoritative remediation decision is blocked: ${options.blockedReasons.join(' ')}`;
+    const laneDecisions = options.requiredReviewTypes.map((reviewType) => {
+        const laneWithoutHash: Omit<ReviewRemediationLaneDecision, 'reason_sha256'> = {
+            review_type: reviewType,
+            mode: 'FULL',
+            reuse_eligible: false,
+            satisfied: false,
+            satisfaction_source: null,
+            invalidated: true,
+            depends_on: options.dependencyEdges.find((edge) => edge.review_type === reviewType)?.depends_on ?? [],
+            invalidated_downstream_review_types: [],
+            reason_code: 'trust_boundary_blocked',
+            reason
+        };
+        return {
+            ...laneWithoutHash,
+            reason_sha256: buildReasonSha256(laneWithoutHash)
+        };
+    });
+    const decisionWithoutHash: Omit<AuthoritativeReviewRemediationDecision, 'decision_sha256'> = {
+        schema_version: 1,
+        status: 'BLOCKED',
+        task_id: options.taskId,
+        current_review_type: options.currentReviewType,
+        classification_source: options.classificationSource,
+        classification_sha256: options.classificationSha256,
+        category: options.category,
+        profile_policy_snapshot_sha256: options.profilePolicySnapshotSha256,
+        policy_id: options.policyId,
+        policy_legacy_fallback: options.policyLegacyFallback,
+        invalidated_review_types: [...options.requiredReviewTypes],
+        preserved_review_types: [],
+        reused_review_types: [],
+        satisfied_review_types: [],
+        rejected_reuse_review_types: [],
+        dependency_edges: options.dependencyEdges,
+        lane_decisions: laneDecisions,
+        blocked_reasons: options.blockedReasons
+    };
+    return {
+        ...decisionWithoutHash,
+        decision_sha256: sha256RedactedJsonPayload(decisionWithoutHash as unknown as Record<string, unknown>)
+    };
+}
+
+function normalizeRuntimeFixClassification(
+    classification: ReviewRemediationRuntimeFixClassification,
+    requiredReviewTypes: readonly string[]
+): {
+    category: string;
+    reason: string;
+    blocked: boolean;
+    invalidatedReviewTypes: string[];
+    classificationSha256: string;
+    violations: string[];
+} {
+    const violations: string[] = [];
+    const category = String(classification?.category || '').trim();
+    const reason = String(classification?.reason || '').trim();
+    if (!category || classification.category !== category) {
+        violations.push('runtime fix classification category must be canonical and non-empty.');
     }
-    const reused: string[] = [];
-    const rejected: string[] = [];
-    for (const reviewType of options.requiredReviewTypes) {
-        const receipt = byReviewType.get(reviewType);
-        if (
-            receipt
-            && receipt.reuse_status === 'ACCEPTED'
-            && receipt.findings_satisfied === true
-            && !options.invalidatedReviewTypes.has(reviewType)
-        ) {
-            reused.push(reviewType);
-        } else if (receipt) {
-            rejected.push(reviewType);
+    if (!reason || classification.reason !== reason) {
+        violations.push('runtime fix classification reason must be canonical and non-empty.');
+    }
+    const rawInvalidated = Array.isArray(classification?.invalidated_review_types)
+        ? classification.invalidated_review_types
+        : [];
+    const invalidatedReviewTypes: string[] = [];
+    for (const rawReviewType of rawInvalidated) {
+        try {
+            const reviewType = normalizeReviewType(rawReviewType, 'runtime fix invalidated review type');
+            if (!requiredReviewTypes.includes(reviewType)) {
+                violations.push(`runtime fix invalidated review type '${reviewType}' is not currently required.`);
+            } else if (invalidatedReviewTypes.includes(reviewType)) {
+                violations.push(`runtime fix invalidated review type '${reviewType}' is duplicated.`);
+            } else {
+                invalidatedReviewTypes.push(reviewType);
+            }
+        } catch (error: unknown) {
+            violations.push(error instanceof Error ? error.message : String(error));
         }
     }
-    return { reused, rejected };
+    const orderedInvalidated = requiredReviewTypes.filter((reviewType) => invalidatedReviewTypes.includes(reviewType));
+    return {
+        category,
+        reason,
+        blocked: classification?.blocked_before_reuse === true,
+        invalidatedReviewTypes: orderedInvalidated,
+        classificationSha256: sha256RedactedJsonPayload(classification as unknown as Record<string, unknown>),
+        violations
+    };
+}
+
+export function resolveAuthoritativeReviewRemediationDecision(
+    options: ResolveAuthoritativeReviewRemediationDecisionOptions
+): AuthoritativeReviewRemediationDecision {
+    const taskId = String(options.taskId || '').trim();
+    const currentReviewType = normalizeReviewType(options.currentReviewType, 'current review type');
+    const requiredReviewTypes = canonicalRequiredReviewTypes(
+        options.requiredReviews,
+        options.reviewExecutionPolicyMode,
+        options.reviewDependencyGraph
+    );
+    const dependencyEdges = requiredReviewTypes.map((reviewType) => ({
+        review_type: reviewType,
+        depends_on: getReviewExecutionDependencies(
+            reviewType,
+            options.requiredReviews,
+            options.reviewExecutionPolicyMode,
+            options.reviewDependencyGraph
+        ).filter((dependency) => requiredReviewTypes.includes(dependency))
+    }));
+    const blockedReasons: string[] = [];
+    if (!taskId || options.taskId !== taskId) {
+        blockedReasons.push('task id is not canonical.');
+    }
+    if (!requiredReviewTypes.includes(currentReviewType)) {
+        blockedReasons.push(`current review type '${currentReviewType}' is not currently required.`);
+    }
+
+    let category = 'unknown';
+    let classificationSha256 = sha256RedactedJsonPayload(options.classification as unknown as Record<string, unknown>);
+    let profilePolicySnapshotSha256: string | null = null;
+    let policyId = 'runtime_fix_full_fallback_v1';
+    let policyLegacyFallback = false;
+    let invalidatedReviewTypes: string[] = [];
+    let authenticatedDelta = false;
+
+    if (options.classification.source === 'delta') {
+        const delta = options.classification.delta;
+        const deltaViolations = getReviewRemediationDeltaClassificationViolations(delta);
+        classificationSha256 = String(delta?.classification_sha256 || '').trim().toLowerCase();
+        category = String(delta?.category || '').trim() || 'unknown';
+        if (deltaViolations.length > 0) {
+            blockedReasons.push(...deltaViolations);
+        }
+        if (delta?.task_id !== taskId || delta?.review_type !== currentReviewType) {
+            blockedReasons.push('remediation delta belongs to a foreign task or review type.');
+        }
+        try {
+            profilePolicySnapshotSha256 = resolveProfilePolicySnapshotSha256(
+                options.classification.profilePolicySnapshot
+            );
+            const baselineProfilePolicySnapshotSha256 = normalizeSha256(
+                options.classification.baselineProfilePolicySnapshotSha256,
+                'baseline profile policy snapshot hash'
+            );
+            if (profilePolicySnapshotSha256 !== baselineProfilePolicySnapshotSha256) {
+                blockedReasons.push('review remediation policy snapshot does not match the authenticated baseline.');
+            }
+            const policyResolution = resolveReviewRemediationRerunPolicyFromSnapshot(
+                options.classification.profilePolicySnapshot
+            );
+            policyId = policyResolution.policy.policy_id;
+            policyLegacyFallback = policyResolution.legacy_fallback;
+            if (blockedReasons.length === 0) {
+                const selection = resolveReviewRemediationRerunLanes({
+                    policy: policyResolution.policy,
+                    category: delta.category,
+                    currentReviewType,
+                    requiredReviews: options.requiredReviews,
+                    reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
+                    reviewDependencyGraph: options.reviewDependencyGraph
+                });
+                invalidatedReviewTypes = selection.ordered_rerun_lanes;
+                authenticatedDelta = true;
+            }
+        } catch (error: unknown) {
+            blockedReasons.push(error instanceof Error ? error.message : String(error));
+        }
+    } else {
+        const runtimeFix = normalizeRuntimeFixClassification(
+            options.classification.classification,
+            requiredReviewTypes
+        );
+        category = runtimeFix.category || category;
+        classificationSha256 = runtimeFix.classificationSha256;
+        invalidatedReviewTypes = runtimeFix.invalidatedReviewTypes;
+        blockedReasons.push(...runtimeFix.violations);
+        if (runtimeFix.blocked) {
+            blockedReasons.push(runtimeFix.reason || 'runtime remediation classification blocked reuse.');
+        }
+    }
+
+    const receiptByReviewType = new Map<string, ReviewRemediationReusableReceipt>();
+    for (const receipt of options.reusableReceipts ?? []) {
+        try {
+            const reviewType = normalizeReviewType(receipt.review_type, 'reusable receipt review_type');
+            if (!requiredReviewTypes.includes(reviewType)) {
+                blockedReasons.push(`reusable receipt '${reviewType}' is not a currently required review lane.`);
+            } else if (receiptByReviewType.has(reviewType)) {
+                blockedReasons.push(`reusable receipt '${reviewType}' is duplicated.`);
+            } else if (!['ACCEPTED', 'REJECTED'].includes(receipt.reuse_status)) {
+                blockedReasons.push(`reusable receipt '${reviewType}' has unsupported reuse_status.`);
+            } else if (receipt.evidence_kind && !['REUSED', 'FRESH'].includes(receipt.evidence_kind)) {
+                blockedReasons.push(`reusable receipt '${reviewType}' has unsupported evidence_kind.`);
+            } else {
+                receiptByReviewType.set(reviewType, receipt);
+            }
+        } catch (error: unknown) {
+            blockedReasons.push(error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    if (blockedReasons.length > 0) {
+        return buildBlockedDecision({
+            taskId,
+            currentReviewType,
+            classificationSource: options.classification.source,
+            classificationSha256,
+            category,
+            profilePolicySnapshotSha256,
+            policyId,
+            policyLegacyFallback,
+            requiredReviewTypes,
+            dependencyEdges,
+            blockedReasons
+        });
+    }
+
+    const invalidatedSet = new Set(invalidatedReviewTypes);
+    const reusedReviewTypes: string[] = [];
+    const satisfiedReviewTypes: string[] = [];
+    const rejectedReuseReviewTypes: string[] = [];
+    const laneDecisions = requiredReviewTypes.map((reviewType) => {
+        const invalidated = invalidatedSet.has(reviewType);
+        const receipt = receiptByReviewType.get(reviewType);
+        let mode: ReviewRemediationDecisionMode;
+        let reuseEligible: boolean;
+        let satisfied = false;
+        let satisfactionSource: ReviewRemediationLaneDecision['satisfaction_source'] = null;
+        let reasonCode: string;
+        let reason: string;
+        const acceptedEvidence = receipt?.reuse_status === 'ACCEPTED' && receipt.findings_satisfied === true;
+        const evidenceKind = receipt?.evidence_kind ?? 'REUSED';
+        if (invalidated) {
+            mode = authenticatedDelta ? 'DELTA' : 'FULL';
+            reuseEligible = false;
+            reasonCode = authenticatedDelta
+                ? 'authenticated_delta_invalidated_lane'
+                : 'runtime_fix_requires_full_fallback';
+            reason = authenticatedDelta
+                ? `Authenticated remediation delta '${category}' invalidated '${reviewType}'; bounded DELTA review is required.`
+                : `Runtime remediation classification '${category}' invalidated '${reviewType}', but no authenticated delta classification is bound; FULL review is required.`;
+            if (acceptedEvidence && evidenceKind === 'FRESH') {
+                satisfied = true;
+                satisfactionSource = 'FRESH';
+                satisfiedReviewTypes.push(reviewType);
+                reasonCode = authenticatedDelta
+                    ? 'authenticated_delta_fresh_review_satisfied'
+                    : 'runtime_full_fresh_review_satisfied';
+                reason = authenticatedDelta
+                    ? `Fresh authenticated review evidence satisfied bounded DELTA remediation for '${reviewType}'.`
+                    : `Fresh authenticated review evidence satisfied the FULL fallback for '${reviewType}'.`;
+            } else if (receipt) {
+                rejectedReuseReviewTypes.push(reviewType);
+            }
+        } else if (acceptedEvidence) {
+            reuseEligible = true;
+            satisfied = true;
+            satisfactionSource = evidenceKind;
+            satisfiedReviewTypes.push(reviewType);
+            if (evidenceKind === 'REUSED') {
+                mode = 'REUSE';
+                reasonCode = 'authoritative_reuse_accepted';
+                reason = `Authoritative reuse validation accepted satisfied current-cycle evidence for '${reviewType}'.`;
+                reusedReviewTypes.push(reviewType);
+            } else {
+                mode = 'FULL';
+                reasonCode = 'authoritative_fresh_review_satisfied';
+                reason = `Fresh authenticated FULL review evidence satisfied '${reviewType}' without reuse.`;
+            }
+        } else {
+            mode = 'FULL';
+            reuseEligible = true;
+            reasonCode = receipt ? 'authoritative_reuse_rejected' : 'authoritative_reuse_pending';
+            reason = receipt
+                ? `Authoritative reuse validation rejected '${reviewType}': ${String(receipt.reason || 'accepted satisfied reuse evidence is unavailable')}. FULL review is required.`
+                : `Authoritative reuse validation has not accepted '${reviewType}'; FULL is the fail-closed fallback until build-review-context proves reuse.`;
+            if (receipt) {
+                rejectedReuseReviewTypes.push(reviewType);
+            }
+        }
+        const dependsOn = dependencyEdges.find((edge) => edge.review_type === reviewType)?.depends_on ?? [];
+        const invalidatedDownstreamReviewTypes = invalidated
+            ? requiredReviewTypes.filter((candidate) => {
+                const candidateDependencies = dependencyEdges.find((edge) => edge.review_type === candidate)?.depends_on ?? [];
+                return candidate !== reviewType
+                    && invalidatedSet.has(candidate)
+                    && candidateDependencies.includes(reviewType);
+            })
+            : [];
+        const laneWithoutHash: Omit<ReviewRemediationLaneDecision, 'reason_sha256'> = {
+            review_type: reviewType,
+            mode,
+            reuse_eligible: reuseEligible,
+            satisfied,
+            satisfaction_source: satisfactionSource,
+            invalidated,
+            depends_on: dependsOn,
+            invalidated_downstream_review_types: invalidatedDownstreamReviewTypes,
+            reason_code: reasonCode,
+            reason
+        };
+        return {
+            ...laneWithoutHash,
+            reason_sha256: buildReasonSha256(laneWithoutHash)
+        };
+    });
+    const decisionWithoutHash: Omit<AuthoritativeReviewRemediationDecision, 'decision_sha256'> = {
+        schema_version: 1,
+        status: 'READY',
+        task_id: taskId,
+        current_review_type: currentReviewType,
+        classification_source: options.classification.source,
+        classification_sha256: classificationSha256,
+        category,
+        profile_policy_snapshot_sha256: profilePolicySnapshotSha256,
+        policy_id: policyId,
+        policy_legacy_fallback: policyLegacyFallback,
+        invalidated_review_types: requiredReviewTypes.filter((reviewType) => invalidatedSet.has(reviewType)),
+        preserved_review_types: requiredReviewTypes.filter((reviewType) => !invalidatedSet.has(reviewType)),
+        reused_review_types: reusedReviewTypes,
+        satisfied_review_types: satisfiedReviewTypes,
+        rejected_reuse_review_types: rejectedReuseReviewTypes,
+        dependency_edges: dependencyEdges,
+        lane_decisions: laneDecisions,
+        blocked_reasons: []
+    };
+    return {
+        ...decisionWithoutHash,
+        decision_sha256: sha256RedactedJsonPayload(decisionWithoutHash as unknown as Record<string, unknown>)
+    };
 }
 
 function resolveCompletedReviewTypes(
@@ -304,56 +789,33 @@ export function buildReviewRemediationRecoveryRoute(
         throw new Error('Review remediation recovery routing requires a canonical task id.');
     }
     const currentReviewType = normalizeReviewType(options.currentReviewType, 'current review type');
-    const deltaViolations = getReviewRemediationDeltaClassificationViolations(options.delta);
-    if (deltaViolations.length > 0) {
-        throw new Error(`Review remediation recovery delta is invalid: ${deltaViolations.join(' ')}`);
-    }
-    if (options.delta.task_id !== taskId || options.delta.review_type !== currentReviewType) {
-        throw new Error('Review remediation recovery delta belongs to a foreign task or review type.');
-    }
-
-    const profilePolicySnapshotSha256 = resolveProfilePolicySnapshotSha256(options.profilePolicySnapshot);
-    const baselineProfilePolicySnapshotSha256 = normalizeSha256(
-        options.baselineProfilePolicySnapshotSha256,
-        'baseline profile policy snapshot hash'
-    );
-    if (profilePolicySnapshotSha256 !== baselineProfilePolicySnapshotSha256) {
-        throw new Error('Review remediation recovery policy snapshot does not match the authenticated baseline.');
-    }
-
-    const requiredReviewTypes = canonicalRequiredReviewTypes(
-        options.requiredReviews,
-        options.reviewExecutionPolicyMode,
-        options.reviewDependencyGraph
-    );
-    const policyResolution = resolveReviewRemediationRerunPolicyFromSnapshot(options.profilePolicySnapshot);
-    const selection = resolveReviewRemediationRerunLanes({
-        policy: policyResolution.policy,
-        category: options.delta.category,
+    const authoritativeDecision = resolveAuthoritativeReviewRemediationDecision({
+        taskId,
         currentReviewType,
+        classification: {
+            source: 'delta',
+            delta: options.delta,
+            profilePolicySnapshot: options.profilePolicySnapshot,
+            baselineProfilePolicySnapshotSha256: options.baselineProfilePolicySnapshotSha256
+        },
         requiredReviews: options.requiredReviews,
         reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
-        reviewDependencyGraph: options.reviewDependencyGraph
+        reviewDependencyGraph: options.reviewDependencyGraph,
+        reusableReceipts: options.reusableReceipts
     });
-    const invalidatedReviewTypes = selection.ordered_rerun_lanes;
-    const invalidatedSet = new Set(invalidatedReviewTypes);
-    const preservedReviewTypes = requiredReviewTypes.filter((reviewType) => !invalidatedSet.has(reviewType));
-    const receiptResolution = resolveReusableReviewTypes({
-        receipts: options.reusableReceipts ?? [],
-        requiredReviewTypes,
-        invalidatedReviewTypes: invalidatedSet
-    });
-    const reusedSet = new Set(receiptResolution.reused);
+    if (authoritativeDecision.status === 'BLOCKED') {
+        throw new Error(
+            `Review remediation authoritative decision is blocked: ${authoritativeDecision.blocked_reasons.join(' ')}`
+        );
+    }
+    const profilePolicySnapshotSha256 = String(authoritativeDecision.profile_policy_snapshot_sha256);
+    const requiredReviewTypes = authoritativeDecision.lane_decisions.map((entry) => entry.review_type);
+    const invalidatedReviewTypes = authoritativeDecision.invalidated_review_types;
+    const preservedReviewTypes = authoritativeDecision.preserved_review_types;
+    const reusedSet = new Set(authoritativeDecision.reused_review_types);
     const reviewRequiredTypes = requiredReviewTypes.filter((reviewType) => !reusedSet.has(reviewType));
-    const dependencyEdges = reviewRequiredTypes.map((reviewType) => ({
-        review_type: reviewType,
-        depends_on: getReviewExecutionDependencies(
-            reviewType,
-            options.requiredReviews,
-            options.reviewExecutionPolicyMode,
-            options.reviewDependencyGraph
-        ).filter((dependency) => requiredReviewTypes.includes(dependency))
-    }));
+    const dependencyEdges = authoritativeDecision.dependency_edges
+        .filter((edge) => reviewRequiredTypes.includes(edge.review_type));
     const validationRequirement = buildReviewRemediationValidationRequirement(options.delta.category);
     const validationRoute = validationRouteForRequirement(validationRequirement);
     let validationEvidenceSha256: string | null = null;
@@ -408,7 +870,10 @@ export function buildReviewRemediationRecoveryRoute(
             nextAction = null;
             reason = 'Selective validation is satisfied and every required review lane is fresh or safely reused.';
         } else {
-            const satisfiedReviewTypes = new Set([...receiptResolution.reused, ...completedReviewTypes]);
+            const satisfiedReviewTypes = new Set([
+                ...authoritativeDecision.reused_review_types,
+                ...completedReviewTypes
+            ]);
             const nextReviewType = pendingReviewTypes.find((reviewType) => {
                 const edge = dependencyEdges.find((candidate) => candidate.review_type === reviewType);
                 return (edge?.depends_on ?? []).every((dependency) => satisfiedReviewTypes.has(dependency));
@@ -437,18 +902,19 @@ export function buildReviewRemediationRecoveryRoute(
         delta_category: options.delta.category,
         delta_classification_sha256: options.delta.classification_sha256,
         profile_policy_snapshot_sha256: profilePolicySnapshotSha256,
-        policy_id: policyResolution.policy.policy_id,
-        policy_legacy_fallback: policyResolution.legacy_fallback,
+        policy_id: authoritativeDecision.policy_id,
+        policy_legacy_fallback: authoritativeDecision.policy_legacy_fallback,
         validation_requirement: validationRequirement,
         validation_route: validationRoute,
         validation_evidence_sha256: validationEvidenceSha256,
         invalidated_review_types: invalidatedReviewTypes,
         preserved_review_types: preservedReviewTypes,
-        reused_review_types: receiptResolution.reused,
-        rejected_reuse_review_types: receiptResolution.rejected,
+        reused_review_types: authoritativeDecision.reused_review_types,
+        rejected_reuse_review_types: authoritativeDecision.rejected_reuse_review_types,
         review_required_types: reviewRequiredTypes,
         completed_review_types: completedReviewTypes,
         dependency_edges: dependencyEdges,
+        authoritative_decision: authoritativeDecision,
         next_action: nextAction,
         reason
     };

@@ -93,6 +93,7 @@ export interface BuildReviewContextCommandResult {
     ruleContextArtifactPath: string;
     tokenEconomyActive: boolean;
     reusedReviewEvidence: boolean;
+    acceptedReviewEvidenceKind: 'REUSED' | 'FRESH' | null;
     reusedReceiptPath: string | null;
     reusedReviewerExecutionMode: string | null;
     reusedReviewerIdentity: string | null;
@@ -278,6 +279,7 @@ export function buildAcceptedCurrentPassReviewContextCommandResult(options: {
         ruleContextArtifactPath: options.ruleContextArtifactPath || '',
         tokenEconomyActive: options.tokenEconomyActive,
         reusedReviewEvidence: options.reusedExistingReview,
+        acceptedReviewEvidenceKind: options.reusedExistingReview ? 'REUSED' : 'FRESH',
         reusedReceiptPath: options.reusedExistingReview ? options.receiptPath : null,
         reusedReviewerExecutionMode: options.reusedExistingReview ? options.reviewerExecutionMode : null,
         reusedReviewerIdentity: options.reusedExistingReview ? options.reviewerIdentity : null,
@@ -343,6 +345,7 @@ export function buildGeneratedReviewContextCommandResult(options: {
         ruleContextArtifactPath: options.ruleContextArtifactPath,
         tokenEconomyActive: options.tokenEconomyActive,
         reusedReviewEvidence: options.reviewReuseResult.reused,
+        acceptedReviewEvidenceKind: options.reviewReuseResult.reused ? 'REUSED' : null,
         reusedReceiptPath: options.reviewReuseResult.receiptPath,
         reusedReviewerExecutionMode: options.reviewReuseResult.reviewerExecutionMode,
         reusedReviewerIdentity: options.reviewReuseResult.reviewerIdentity,

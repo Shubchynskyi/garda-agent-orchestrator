@@ -12,6 +12,9 @@ import {
 import {
     computeReviewContextReuseHash
 } from '../../../../gates/review-reuse/review-reuse';
+import {
+    getAuthoritativeReviewRemediationDecisionViolations
+} from '../../../../gates/review-remediation/review-remediation-recovery-routing';
 import { inspectTaskEventFile } from '../../../../gate-runtime/task-events';
 import {
     buildAcceptedCurrentPassReviewContextCommandResult,
@@ -69,7 +72,7 @@ function hasFreshPassingReviewAfterBoundary(options: {
     });
 }
 
-function resolvePersistedRemediationReusePolicy(options: {
+export function resolvePersistedRemediationReusePolicy(options: {
     events: Record<string, unknown>[];
     taskId: string;
     reviewType: string;
@@ -110,6 +113,63 @@ function resolvePersistedRemediationReusePolicy(options: {
         ) {
             continue;
         }
+        if (details.authoritative_review_decision !== undefined) {
+            const authoritativeDecision = details.authoritative_review_decision;
+            const violations = getAuthoritativeReviewRemediationDecisionViolations(
+                authoritativeDecision,
+                { expectedTaskId: options.taskId }
+            );
+            if (violations.length > 0 || !isPlainRecord(authoritativeDecision)) {
+                return {
+                    blockedReason:
+                        `review reuse blocked because the persisted authoritative remediation decision `
+                        + `failed validation: ${violations.join(' ')}`,
+                    preservedScopeMismatchReason: ''
+                };
+            }
+            if (authoritativeDecision.status !== 'READY') {
+                return {
+                    blockedReason:
+                        `review reuse blocked because the persisted authoritative remediation decision is `
+                        + `${String(authoritativeDecision.status || 'unknown')}`,
+                    preservedScopeMismatchReason: ''
+                };
+            }
+            const laneDecision = Array.isArray(authoritativeDecision.lane_decisions)
+                ? authoritativeDecision.lane_decisions.find((entry) => (
+                    isPlainRecord(entry)
+                    && String(entry.review_type || '').trim().toLowerCase() === options.reviewType
+                ))
+                : undefined;
+            if (!isPlainRecord(laneDecision)) {
+                return {
+                    blockedReason:
+                        `review reuse blocked because the persisted authoritative remediation decision `
+                        + `does not contain required lane '${options.reviewType}'`,
+                    preservedScopeMismatchReason: ''
+                };
+            }
+            if (laneDecision.reuse_eligible !== true) {
+                if (hasFreshPassingReviewAfterBoundary({
+                    events: options.events,
+                    boundarySequence: taskEventSequence(event),
+                    taskId: options.taskId,
+                    reviewType: options.reviewType,
+                    preflightSha256
+                })) {
+                    return { blockedReason: '', preservedScopeMismatchReason: '' };
+                }
+                return {
+                    blockedReason: String(laneDecision.reason || '').trim()
+                        || `review reuse blocked by authoritative remediation lane '${options.reviewType}'`,
+                    preservedScopeMismatchReason: ''
+                };
+            }
+            return {
+                blockedReason: '',
+                preservedScopeMismatchReason: String(laneDecision.reason || '').trim()
+            };
+        }
         const category = String(details.remediation_category || '').trim() || 'unknown';
         const invalidatedReviewTypes = new Set(
             Array.isArray(details.invalidated_review_types)
@@ -142,6 +202,14 @@ function resolvePersistedRemediationReusePolicy(options: {
         };
     }
     return { blockedReason: '', preservedScopeMismatchReason: '' };
+}
+
+export function shouldAcceptCurrentPassReviewEvidence(
+    evidence: { accepted: boolean; reusedExistingReview: boolean } | null,
+    reviewReuseBlockedReason: string
+): boolean {
+    return evidence?.accepted === true
+        && (!reviewReuseBlockedReason || evidence.reusedExistingReview === false);
 }
 
 export async function runBuildReviewContextCommand(
@@ -211,7 +279,7 @@ export async function runBuildReviewContextCommand(
             previousReviewContextReuseSha256 = null;
         }
     }
-    const currentPassReviewEvidence = taskId && !effectiveReviewReuseBlockedReason
+    const currentPassReviewEvidence = taskId
         ? tryAcceptCurrentPassReviewEvidence({
             repoRoot,
             taskId,
@@ -222,7 +290,11 @@ export async function runBuildReviewContextCommand(
             timelineEventsSummary: timelineSummary
         })
         : null;
-    if (currentPassReviewEvidence?.accepted) {
+    const currentPassReviewEvidenceAccepted = shouldAcceptCurrentPassReviewEvidence(
+        currentPassReviewEvidence,
+        effectiveReviewReuseBlockedReason
+    );
+    if (currentPassReviewEvidenceAccepted && currentPassReviewEvidence) {
         await emitCurrentPassReviewContextReuseAccepted({
             repoRoot,
             taskId,
@@ -324,7 +396,7 @@ export async function runBuildReviewContextCommand(
         ruleContextArtifactPath: result.rule_context.artifact_path,
         tokenEconomyActive: result.token_economy_active,
         reviewReuseResult,
-        currentPassReviewEvidenceAccepted: currentPassReviewEvidence?.accepted === true,
+        currentPassReviewEvidenceAccepted,
         currentPassReviewEvidenceReason:
             effectiveReviewReuseBlockedReason
             || currentPassReviewEvidence?.reason

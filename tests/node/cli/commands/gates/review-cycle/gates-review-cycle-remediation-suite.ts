@@ -1366,6 +1366,11 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
             'utf8'
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+        const authoritativeDecision = remediationArtifact.authoritative_review_decision as Record<string, unknown>;
+        const authoritativeLaneDecisions = authoritativeDecision.lane_decisions as Array<Record<string, unknown>>;
+        const authoritativeLaneByType = new Map(
+            authoritativeLaneDecisions.map((lane) => [String(lane.review_type), lane])
+        );
         const evidence = classification.evidence as Record<string, unknown>;
         const expectedPreservedReviews = ['api', 'code', 'performance', 'refactor', 'security'];
         assert.equal(classification.category, 'test_coverage_only');
@@ -1377,6 +1382,26 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
         );
         assert.deepEqual(evidence.semantic_changed_files, [testFile]);
         assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
+        assert.equal(authoritativeDecision.status, 'READY');
+        assert.equal(authoritativeDecision.classification_source, 'runtime_fix');
+        assert.deepEqual(authoritativeDecision.invalidated_review_types, ['test']);
+        assert.equal(authoritativeLaneByType.get('test')?.mode, 'FULL');
+        assert.equal(authoritativeLaneByType.get('test')?.reuse_eligible, false);
+        assert.ok(expectedPreservedReviews.every((reviewType) => (
+            authoritativeLaneByType.get(reviewType)?.reuse_eligible === true
+        )));
+        assert.match(String(authoritativeDecision.decision_sha256), /^[0-9a-f]{64}$/u);
+        const timelineEvents = readTaskTimelineEvents(repoRoot, taskId);
+        const restartEventIndex = findLastTimelineEventIndex(
+            timelineEvents,
+            (event) => event.event_type === 'REVIEW_CYCLE_RESTARTED'
+        );
+        const restartEvent = timelineEvents[restartEventIndex];
+        assert.equal(
+            ((restartEvent?.details as Record<string, unknown>)
+                ?.authoritative_review_decision as Record<string, unknown>)?.decision_sha256,
+            authoritativeDecision.decision_sha256
+        );
         assert.deepEqual(
             [...resumedReuse.reusedReviewTypes].sort(),
             expectedPreservedReviews,
