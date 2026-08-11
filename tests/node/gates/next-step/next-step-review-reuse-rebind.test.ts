@@ -908,6 +908,19 @@ describe('gates/next-step review reuse rebind routing', () => {
         ]);
     });
 
+    it('rejects misleading none diagnostics for historical PASS lanes while authoritative reuse validation is pending', () => {
+        const reuseCandidates = buildReviewReuseCandidatesForDiagnostics(
+            "The existing 'code' PASS evidence is lane-domain current, but its exact review-context/reuse hash " +
+            'eligibility has not been validated for the current preflight. Reuse eligibility validation is still ' +
+            'required before treating that PASS evidence as reusable.',
+            ['code']
+        );
+
+        assert.deepEqual(reuseCandidates, [
+            'code (historical PASS evidence exists; authoritative reuse eligibility is pending build-review-context validation)'
+        ]);
+    });
+
     it('re-materializes lane-domain-current reused review evidence after a later compile', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

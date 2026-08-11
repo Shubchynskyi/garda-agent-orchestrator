@@ -1991,7 +1991,11 @@ function buildMinimalRecoveryChain(nextGate: string, commands: NextStepCommand[]
 
 function buildReuseCandidates(text: string, affectedReviewLanes: string[]): string[] {
     if (/\breuse eligibility validation\b.*\bbefore treating\b|\bbefore treating .*PASS evidence as reusable\b/iu.test(text)) {
-        return ['none indicated'];
+        return affectedReviewLanes.length > 0
+            ? affectedReviewLanes.map((reviewType) => (
+                `${reviewType} (historical PASS evidence exists; authoritative reuse eligibility is pending build-review-context validation)`
+            ))
+            : ['historical PASS evidence exists; authoritative reuse eligibility is pending build-review-context validation'];
     }
     if (!/\breview reuse\b|\bmaterialize reuse\b|\blane-domain current\b|\bdomain-limited remediation\b|\bexisting .*PASS evidence\b/iu.test(text)) {
         return ['none indicated'];
