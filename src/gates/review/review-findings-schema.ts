@@ -1138,12 +1138,16 @@ function focusedEvidenceExplainsTargetRelevance(
     );
     return evidence.some((entry) => {
         const normalizedObservation = entry.observation.replace(/\\/gu, '/');
+        const location = parseReviewEvidenceLocation(entry.location);
+        const locationNamesExactTarget = location?.filePath === normalizedTarget;
         const targetMarker = '\u0000focused-target\u0000';
         const observationWithTargetMarker = normalizedObservation.replace(exactTargetPattern, targetMarker);
-        if (observationWithTargetMarker === normalizedObservation) {
+        if (observationWithTargetMarker === normalizedObservation && !locationNamesExactTarget) {
             return false;
         }
-        const clauses = observationWithTargetMarker.split(
+        const clauses = (locationNamesExactTarget && observationWithTargetMarker === normalizedObservation
+            ? `${targetMarker} ${normalizedObservation}`
+            : observationWithTargetMarker).split(
             /(?:[\n.;!?]+|,?\s+\b(?:but|however|whereas|while)\b\s+)/u
         );
         return clauses.some((clause) => {

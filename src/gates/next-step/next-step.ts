@@ -341,10 +341,11 @@ import {
 } from './next-step-review-command-builders';
 export type { NextStepQualityChecklistSummary } from './next-step-quality-checklist-readiness';
 import {
-    buildDocImpactCommand,
+    buildDocImpactCommandPlan,
     buildDocImpactCompatibilityHint,
     buildProjectMemoryNextStepSummary,
     buildStaleCompletionFailureDocCloseoutAllowance,
+    isProjectMemoryEvidenceCurrentForCloseout,
     readPreflightCycleReadiness,
     type NextStepProjectMemorySummary
 } from './next-step-doc-closeout-readiness';
@@ -4451,6 +4452,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }
     }
 
+    const docImpactCommandPlan = buildDocImpactCommandPlan(
+        cliPrefix,
+        taskId,
+        preflightCommandPath,
+        preflight,
+        repoRoot,
+        effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
+    );
     const postReviewLifecycleDecisionRoute = resolvePostReviewLifecycleDecisionRouteFromState({
         repoRoot,
         eventsRoot,
@@ -4472,15 +4481,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
             zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
             docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
+            docImpactRequiresProjectMemoryBeforeAssessment:
+                docImpactCommandPlan.requiresProjectMemoryBeforeAssessment,
             docImpactCompatibilityHint: buildDocImpactCompatibilityHint(),
-            docImpactCommand: buildDocImpactCommand(
-                cliPrefix,
-                taskId,
-                preflightCommandPath,
-                preflight,
-                repoRoot,
-                effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
-            ),
+            docImpactCommand: docImpactCommandPlan.command,
             fullSuiteEnabled: fullSuiteConfig.enabled,
             fullSuiteGatePassed,
             fullSuiteTimeoutBlockerResolvedByRepairTask: fullSuiteTimeoutBlockerExhausted && fullSuiteTimeoutRepairTaskMaterialized,
@@ -4491,7 +4495,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             fullSuiteTimeoutForecastLine,
             fullSuiteCommand,
             projectMemoryRequired: projectMemoryEvidence.required,
-            projectMemoryEvidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+            projectMemoryEvidenceCurrent: isProjectMemoryEvidenceCurrentForCloseout({
+                eventsRoot,
+                taskId,
+                docImpactPath,
+                evidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT'
+            }),
             projectMemoryVisibleSummaryLine: projectMemoryEvidence.visible_summary_line,
             projectMemoryAffectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
             projectMemoryViolations: projectMemoryEvidence.violations,

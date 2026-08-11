@@ -1203,7 +1203,7 @@ test('validateReviewFindingsReport rejects unavailable F-000 attempts without ex
     }
 });
 
-test('validateReviewFindingsReport rejects unavailable F-000 evidence whose location names the target without relevance rationale', () => {
+test('validateReviewFindingsReport rejects forged unavailable F-000 evidence whose location names the target without relevance rationale', () => {
     const report = missingFocusedValidationReport();
     const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
     note.evidence = [evidence(
@@ -1220,6 +1220,22 @@ test('validateReviewFindingsReport rejects unavailable F-000 evidence whose loca
     assert.ok(result.violations.some((entry) => entry.includes(
         'name the exact focused command target and why it is relevant'
     )));
+});
+
+test('validateReviewFindingsReport accepts unavailable focused relevance split across location and observation', () => {
+    const report = missingFocusedValidationReport();
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.evidence = [evidence(
+        'tests/node/example.test.ts:42',
+        'This changed routing test directly covers the frozen behavior under review.'
+    )];
+
+    const result = validateReviewFindingsReport(report, {
+        ...validationOptions,
+        expectedChangedFilePaths: ['src/example.ts', 'tests/node/example.test.ts']
+    });
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
 });
 
 test('validateReviewFindingsReport rejects lexical-only focused target relevance claims', () => {

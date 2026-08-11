@@ -8,7 +8,12 @@ import {
     type TimelineEventEntry
 } from './completion-evidence';
 
-function docImpactClaimsProjectMemoryEvidence(docImpactEvidence?: Record<string, unknown> | null): boolean {
+export const PROJECT_MEMORY_AFTER_DOC_IMPACT_VIOLATION =
+    'Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.';
+
+export function docImpactClaimsProjectMemoryEvidence(
+    docImpactEvidence?: Record<string, unknown> | null
+): boolean {
     return docImpactEvidence?.project_memory_updated === true
         || docImpactEvidence?.project_memory_update_not_needed === true;
 }
@@ -63,7 +68,7 @@ export function validateProjectMemoryImpactForCompletion(input: {
         && impactEvent.sequence <= docImpactEvent.sequence
         && !docImpactClaimsProjectMemoryEvidence(input.docImpactEvidence)
     ) {
-        violations.push('Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.');
+        violations.push(PROJECT_MEMORY_AFTER_DOC_IMPACT_VIOLATION);
     }
     if (input.fullSuiteValidationEnabled) {
         const fullSuiteEvent = findLatestTimelineEvent(

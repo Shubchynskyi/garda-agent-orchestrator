@@ -25,6 +25,7 @@ export interface RequiredReviewsCheckCloseoutOptions {
 
 export interface DocImpactCloseoutOptions {
     docImpactGatePassed: boolean;
+    requiresProjectMemoryBeforeAssessment?: boolean;
     compatibilityHint: string;
     command: CloseoutRoutingCommand;
 }
@@ -68,6 +69,7 @@ export interface PostReviewCloseoutRouteState {
     zeroDiffNoReviewCloseout: boolean;
     requiredReviewsCommand: string;
     docImpactGatePassed: boolean;
+    docImpactRequiresProjectMemoryBeforeAssessment?: boolean;
     docImpactCompatibilityHint: string;
     docImpactCommand: string;
     fullSuiteEnabled: boolean;
@@ -122,6 +124,7 @@ export function resolvePostReviewCloseoutRouteFromState(
         },
         docImpact: {
             docImpactGatePassed: state.docImpactGatePassed,
+            requiresProjectMemoryBeforeAssessment: state.docImpactRequiresProjectMemoryBeforeAssessment,
             compatibilityHint: state.docImpactCompatibilityHint,
             command: closeoutCommand('Run doc impact gate', state.docImpactCommand)
         },
@@ -207,9 +210,17 @@ export function resolvePostReviewCloseoutRoute(
                     commands: [options.fullSuite.command]
                 };
             },
-            'project-memory-impact': () => options.projectMemory.evidenceCurrent
-                ? null
-                : buildProjectMemoryImpactRoute(options),
+            'project-memory-impact': () => {
+                if (
+                    !options.docImpact.docImpactGatePassed
+                    && options.docImpact.requiresProjectMemoryBeforeAssessment !== true
+                ) {
+                    return null;
+                }
+                return options.projectMemory.evidenceCurrent
+                    ? null
+                    : buildProjectMemoryImpactRoute(options);
+            },
             'doc-impact-gate': () => options.docImpact.docImpactGatePassed
                 ? null
                 : {

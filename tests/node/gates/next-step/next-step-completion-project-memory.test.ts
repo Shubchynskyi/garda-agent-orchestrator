@@ -35,6 +35,9 @@ import {
     seedReviewGatePass,
     seedDocImpactPass} from './next-step-completion-fixtures';
 
+const PROJECT_MEMORY_ORDER_VIOLATION =
+    'Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.';
+
 function formatProjectMemorySummaryForTest(
     projectMemory: ReturnType<typeof buildProjectMemoryNextStepSummary>
 ): string {
@@ -61,6 +64,15 @@ function formatProjectMemorySummaryForTest(
         review: {
             review_execution_policy_mode: 'strict_sequential',
             review_execution_policy_source: 'preflight',
+            review_finding_policy_id: 'custom',
+            review_finding_policy_source: 'test-fixture',
+            review_finding_policy_actions: {
+                critical: 'fix_now',
+                high: 'fix_now',
+                medium: 'create_follow_up',
+                low: 'create_follow_up',
+                residual_risk: 'create_follow_up'
+            },
             required_reviews: [],
             launchable_review_types: [],
             blocked_review_lanes: [],
@@ -159,6 +171,63 @@ describe('gates/next-step', () => {
 
         assert.ok(result.commands[0].command.includes('gate completion-gate'));
 
+    });
+
+    it('recovers a stale project-memory order-only completion failure without refreshing unchanged preflight or review evidence', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'check' });
+        seedProjectMemory(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedProjectMemoryImpact(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PROJECT_MEMORY_IMPACT_ASSESSED');
+        seedDocImpactPass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            violations: [PROJECT_MEMORY_ORDER_VIOLATION]
+        });
+
+        const recovery = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(recovery.next_gate, 'project-memory-impact', recovery.reason);
+        assert.doesNotMatch(recovery.commands[0].command, /classify-change/);
+
+        seedProjectMemoryImpact(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PROJECT_MEMORY_IMPACT_ASSESSED');
+
+        const resumed = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(resumed.next_gate, 'completion-gate', resumed.reason);
+    });
+
+    it('rejects stale doc-impact binding before order-only recovery and fails closed', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'check' });
+        seedProjectMemory(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedProjectMemoryImpact(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PROJECT_MEMORY_IMPACT_ASSESSED');
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        const docImpactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`);
+        const staleDocImpact = {
+            ...JSON.parse(fs.readFileSync(docImpactPath, 'utf8')) as Record<string, unknown>,
+            preflight_hash_sha256: '0'.repeat(64)
+        };
+        writeJson(docImpactPath, staleDocImpact);
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', staleDocImpact);
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            violations: [PROJECT_MEMORY_ORDER_VIOLATION]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'project-memory-impact', result.reason);
+        assert.match(result.commands[0]?.command || '', /classify-change|restart-review-cycle/);
     });
 
     it('labels accepted updated project-memory overflow as advisory when compact was not refreshed', () => {
@@ -758,53 +827,14 @@ describe('gates/next-step', () => {
 
         fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
 
-        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS },
+            { changedFiles: ['src/gates/project-memory-impact.ts'] }
+        );
 
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/gates/project-memory-impact.ts']);
-
-        writeJson(preflightPath, {
-
-            task_id: TASK_ID,
-
-            detection_source: snapshot.detection_source,
-
-            mode: 'FULL_PATH',
-
-            scope_category: 'code',
-
-            metrics: {
-
-                changed_lines_total: snapshot.changed_lines_total,
-
-                changed_files_sha256: snapshot.changed_files_sha256,
-
-                scope_content_sha256: snapshot.scope_content_sha256,
-
-                scope_sha256: snapshot.scope_sha256
-
-            },
-
-            required_reviews: { ...ALL_REVIEW_FLAGS },
-
-            changed_files: ['src/gates/project-memory-impact.ts'],
-
-            review_execution_policy: {
-
-                mode: 'strict_sequential',
-
-                visible_summary_line: 'Review execution policy: strict_sequential'
-
-            }
-
-        });
-
-        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-
-            output_path: normalizeForTimeline(preflightPath)
-
-        });
-
-        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
 
         writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
 
