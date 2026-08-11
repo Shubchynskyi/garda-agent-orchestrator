@@ -5,7 +5,10 @@ import { KNOWN_REVIEW_TYPES } from '../../cli/commands/profile/profile-model';
 import { readProfilesData } from '../../cli/commands/profile/profile-data';
 import { buildProfileFindingPolicyProjection } from '../../cli/commands/profile/profile-finding-policy';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
-import { resolveReviewFollowUpPolicy } from '../../policy/profile-resolver';
+import {
+    resolveReviewFollowUpPolicy,
+    resolveReviewFollowUpTaskProfileAssignment
+} from '../../policy/profile-resolver';
 import { loadReviewTriggerPolicy } from '../../policy/review-trigger-policy';
 import { getKnownReviewTypeLabel } from '../review-type-setting-text';
 import type { ReportDataUnavailableEntry, ReportProfileRow, ReportProfilesTab } from './types';
@@ -20,11 +23,15 @@ function pathsConfigPath(repoRoot: string): string {
 
 function buildProfileRows(data: ProfilesData): ReportProfileRow[] {
     const rows: ReportProfileRow[] = [];
+    const availableProfiles = [
+        ...Object.keys(data.built_in_profiles),
+        ...Object.keys(data.user_profiles)
+    ];
     for (const [name, entry] of Object.entries(data.built_in_profiles)) {
-        rows.push(buildProfileRow(name, 'built_in', data.active_profile, entry));
+        rows.push(buildProfileRow(name, 'built_in', data.active_profile, entry, availableProfiles));
     }
     for (const [name, entry] of Object.entries(data.user_profiles)) {
-        rows.push(buildProfileRow(name, 'user', data.active_profile, entry));
+        rows.push(buildProfileRow(name, 'user', data.active_profile, entry, availableProfiles));
     }
     return rows;
 }
@@ -33,10 +40,16 @@ function buildProfileRow(
     name: string,
     source: ReportProfileRow['source'],
     activeProfile: string,
-    entry: ProfileEntry
+    entry: ProfileEntry,
+    availableProfiles: readonly string[]
 ): ReportProfileRow {
     const findingPolicy = buildProfileFindingPolicyProjection(name, entry);
     const followUpPolicy = resolveReviewFollowUpPolicy(entry.review_follow_up_policy, name);
+    const followUpTaskProfileAssignment = resolveReviewFollowUpTaskProfileAssignment(
+        followUpPolicy.policy,
+        name,
+        availableProfiles
+    );
     return {
         name,
         source,
@@ -56,6 +69,10 @@ function buildProfileRow(
             task_profile: { ...followUpPolicy.policy.task_profile }
         },
         review_follow_up_policy_diagnostics: [...followUpPolicy.diagnostics],
+        review_follow_up_task_profile_assignment: {
+            ...followUpTaskProfileAssignment,
+            diagnostics: [...followUpTaskProfileAssignment.diagnostics]
+        },
         token_economy: { ...entry.token_economy },
         skills: { ...entry.skills }
     };

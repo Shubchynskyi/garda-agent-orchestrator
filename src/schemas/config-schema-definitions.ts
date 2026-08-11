@@ -833,20 +833,35 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
                 materialization_mode: { type: 'string', enum: ['per_finding', 'grouped_by_parent'] },
                 task_profile: {
                     type: 'object',
-                    properties: {
-                        mode: {
-                            type: 'string',
-                            enum: ['one_level_lighter', 'inherit_parent', 'fixed_profile']
+                    oneOf: [
+                        {
+                            type: 'object',
+                            properties: {
+                                mode: { const: 'one_level_lighter' },
+                                fixed_profile: { type: 'null' }
+                            },
+                            required: ['mode', 'fixed_profile'],
+                            additionalProperties: false
                         },
-                        fixed_profile: {
-                            anyOf: [
-                                { type: 'string', minLength: 1, maxLength: 64 },
-                                { type: 'null' }
-                            ]
+                        {
+                            type: 'object',
+                            properties: {
+                                mode: { const: 'inherit_parent' },
+                                fixed_profile: { type: 'null' }
+                            },
+                            required: ['mode', 'fixed_profile'],
+                            additionalProperties: false
+                        },
+                        {
+                            type: 'object',
+                            properties: {
+                                mode: { const: 'fixed_profile' },
+                                fixed_profile: { type: 'string', minLength: 1, maxLength: 64 }
+                            },
+                            required: ['mode', 'fixed_profile'],
+                            additionalProperties: false
                         }
-                    },
-                    required: ['mode', 'fixed_profile'],
-                    additionalProperties: false
+                    ]
                 }
             },
             required: ['schema_version', 'materialization_mode'],

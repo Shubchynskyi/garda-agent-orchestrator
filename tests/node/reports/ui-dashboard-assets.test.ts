@@ -1067,6 +1067,18 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     policy_id: 'custom',
                     findings: { critical: 'fix_now', high: 'fix_now', medium: 'create_follow_up', low: 'ignore' },
                     residual_risk: 'create_follow_up'
+                },
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'grouped_by_parent',
+                    task_profile: { mode: 'one_level_lighter', fixed_profile: null }
+                },
+                review_follow_up_task_profile_assignment: {
+                    parent_profile: 'custom-review',
+                    profile: 'custom-review',
+                    source: 'safe_inherit_parent',
+                    configured_mode: 'one_level_lighter',
+                    diagnostics: ['Custom profiles safely inherit the parent.']
                 }
             },
             {
@@ -1134,12 +1146,88 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(russianHtml, /<option value="ignore">Принять без отдельной задачи<\/option>/u);
     assert.match(russianHtml, /<option value="custom" selected>Пользовательский<\/option>/u);
     assert.match(russianHtml, /Замечание сохраняется, но не блокирует задачу/u);
+    assert.match(html, /class="empty profile-follow-up-task-profile-effective"><strong>Current value:<\/strong> <code>custom-review<\/code> \(Same as parent\)/u);
+    assert.match(russianHtml, /class="empty profile-follow-up-task-profile-effective"><strong>Текущее значение:<\/strong> <code>custom-review<\/code> \(Как у родителя\)/u);
     assert.match(html, /data-profile-policy-action="copy" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="reset" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="apply" data-profile-name="custom-review"/u);
     assert.match(UI_DASHBOARD_CLIENT_PROFILES, /presetInput\.value = 'custom'/u);
     assert.match(UI_DASHBOARD_STYLES, /\.profile-finding-policy-grid \.profile-finding-critical/u);
     assert.doesNotMatch(html, /data-profile-trigger|profileTrigger|review_trigger/u);
+});
+
+test('follow-up task profile controls toggle fixed selection and serialize the selected mode', () => {
+    type BrowserElement = {
+        value: string;
+        disabled: boolean;
+        dataset: Record<string, string>;
+        listeners: Record<string, () => void>;
+        addEventListener: (event: string, listener: () => void) => void;
+        closest: () => { dataset: { profileName: string } };
+    };
+    const profileName = 'balanced';
+    const createElement = (value = ''): BrowserElement => ({
+        value,
+        disabled: false,
+        dataset: {},
+        listeners: {},
+        addEventListener(event: string, listener: () => void) {
+            this.listeners[event] = listener;
+        },
+        closest: () => ({ dataset: { profileName } })
+    });
+    const description = createElement('Balanced profile');
+    const depth = createElement('2');
+    const mode = createElement('one_level_lighter');
+    const fixedProfile = createElement('fast');
+    fixedProfile.disabled = true;
+    const elementsById: Record<string, BrowserElement> = {
+        [`profile-${profileName}-description`]: description,
+        [`profile-${profileName}-depth`]: depth,
+        [`profile-${profileName}-follow-up-mode`]: mode,
+        [`profile-${profileName}-follow-up-fixed-profile`]: fixedProfile
+    };
+    const context: Record<string, unknown> = {
+        currentProfilesPayload: {
+            review_types: [],
+            profiles: [{
+                name: profileName,
+                review_follow_up_policy: { materialization_mode: 'grouped_by_parent' }
+            }]
+        },
+        profilesNode: {
+            querySelector: (selector: string) => selector.includes('follow-up-mode') ? mode : null
+        },
+        document: {
+            getElementById: (id: string) => elementsById[id] || null
+        },
+        serialized: [] as string[]
+    };
+
+    vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nattachProfileFollowUpTaskProfileHandlers();`,
+        context
+    );
+
+    mode.value = 'fixed_profile';
+    mode.listeners.change();
+    assert.equal(fixedProfile.disabled, false);
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+
+    mode.value = 'inherit_parent';
+    mode.listeners.change();
+    assert.equal(fixedProfile.disabled, true);
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+
+    const [fixedPayload, inheritedPayload] = (context.serialized as string[]).map((value) => JSON.parse(value));
+    assert.deepEqual(fixedPayload.review_follow_up_policy.task_profile, {
+        mode: 'fixed_profile',
+        fixed_profile: 'fast'
+    });
+    assert.deepEqual(inheritedPayload.review_follow_up_policy.task_profile, {
+        mode: 'inherit_parent',
+        fixed_profile: null
+    });
 });
 
 test('task detail renders skipped quality-check cadence as a neutral localized state', () => {

@@ -22,7 +22,11 @@ import type {
     OptionalSkillSelectionPolicyMode
 } from '../../runtime/optional-skill-selection';
 import type { ScopeBudgetStatusSnapshot } from '../../core/scope-budget-status';
-import type { ReviewFindingPolicy, ReviewFollowUpPolicy } from '../../policy/profile-resolver';
+import type {
+    ReviewFindingPolicy,
+    ReviewFollowUpPolicy,
+    ReviewFollowUpTaskProfileAssignment
+} from '../../policy/profile-resolver';
 import type { ReviewTriggerPolicy } from '../../policy/review-trigger-policy';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
@@ -350,6 +354,7 @@ export interface ReportProfileRow {
     };
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
+    review_follow_up_task_profile_assignment: ReviewFollowUpTaskProfileAssignment;
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }

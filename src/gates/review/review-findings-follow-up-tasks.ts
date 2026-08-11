@@ -226,11 +226,9 @@ function resolveParentTaskProfile(repoRoot: string, taskId: string): string | nu
 }
 
 function resolveFollowUpTaskProfileContext(
-    repoRoot: string,
-    taskId: string,
+    parentProfile: string | null,
     snapshot: Record<string, unknown> | null
 ): Pick<FollowUpMaterializationContext, 'parent_profile' | 'task_profile' | 'task_profile_source' | 'diagnostics'> {
-    const parentProfile = resolveParentTaskProfile(repoRoot, taskId);
     const assignment = snapshot && isPlainRecord(snapshot.review_follow_up_task_profile_assignment)
         ? snapshot.review_follow_up_task_profile_assignment
         : null;
@@ -270,7 +268,8 @@ function resolveFollowUpMaterializationContext(
     taskId: string
 ): FollowUpMaterializationContext {
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
-    const initialTaskProfileContext = resolveFollowUpTaskProfileContext(repoRoot, taskId, null);
+    const parentProfile = resolveParentTaskProfile(repoRoot, taskId);
+    const initialTaskProfileContext = resolveFollowUpTaskProfileContext(parentProfile, null);
     const fallback: FollowUpMaterializationContext = {
         mode: 'per_finding',
         ...initialTaskProfileContext,
@@ -288,7 +287,7 @@ function resolveFollowUpMaterializationContext(
     const snapshot = read.value && isPlainRecord(read.value.profile_policy_snapshot)
         ? read.value.profile_policy_snapshot
         : null;
-    const taskProfileContext = resolveFollowUpTaskProfileContext(repoRoot, taskId, snapshot);
+    const taskProfileContext = resolveFollowUpTaskProfileContext(parentProfile, snapshot);
     const policy = snapshot && isPlainRecord(snapshot.review_follow_up_policy)
         ? snapshot.review_follow_up_policy
         : null;

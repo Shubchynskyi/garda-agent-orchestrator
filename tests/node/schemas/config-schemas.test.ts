@@ -296,6 +296,36 @@ test('template profiles.json validates against schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('profiles schema enforces follow-up task profile mode and fixed profile combinations', () => {
+    const template = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const buildCandidate = (mode: string, fixedProfile: string | null): Record<string, unknown> => {
+        const candidate = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+        const builtInProfiles = candidate.built_in_profiles as Record<string, Record<string, unknown>>;
+        const followUpPolicy = builtInProfiles.balanced.review_follow_up_policy as Record<string, unknown>;
+        followUpPolicy.task_profile = { mode, fixed_profile: fixedProfile };
+        return candidate;
+    };
+
+    for (const [mode, fixedProfile] of [
+        ['one_level_lighter', null],
+        ['inherit_parent', null],
+        ['fixed_profile', 'fast']
+    ] as const) {
+        const result = validateAgainstSchema(buildCandidate(mode, fixedProfile), profilesSchema);
+        assert.equal(result.valid, true, `Expected ${mode}/${String(fixedProfile)} to be valid: ${JSON.stringify(result.errors)}`);
+    }
+
+    for (const [mode, fixedProfile] of [
+        ['one_level_lighter', 'fast'],
+        ['inherit_parent', 'fast'],
+        ['fixed_profile', null]
+    ] as const) {
+        const result = validateAgainstSchema(buildCandidate(mode, fixedProfile), profilesSchema);
+        assert.equal(result.valid, false, `Expected ${mode}/${String(fixedProfile)} to be rejected.`);
+        assert.ok(result.errors.some((error) => error.path.includes('task_profile')));
+    }
+});
+
 test('profiles schema preserves boolean and auto catalog review state encoding', () => {
     const data = readTemplateConfig('profiles.json') as Record<string, unknown>;
     const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;

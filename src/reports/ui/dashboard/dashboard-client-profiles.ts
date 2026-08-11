@@ -157,6 +157,10 @@ function followUpTaskProfileModeLabel(mode) {
   };
   return t(translationKeys[mode] || mode);
 }
+function followUpTaskProfileSourceLabel(source) {
+  if (source === 'safe_inherit_parent') return followUpTaskProfileModeLabel('inherit_parent');
+  return followUpTaskProfileModeLabel(source);
+}
 function renderFollowUpTaskProfileSection(profile, disabled) {
   const policy = profile.review_follow_up_policy || {};
   const taskProfile = policy.task_profile || { mode: 'one_level_lighter', fixed_profile: null };
@@ -165,6 +169,9 @@ function renderFollowUpTaskProfileSection(profile, disabled) {
     ? currentProfilesPayload.profiles
     : [];
   const fixedProfile = taskProfile.fixed_profile || profile.name;
+  const assignment = profile.review_follow_up_task_profile_assignment || {};
+  const effectiveProfile = assignment.profile || profile.name;
+  const assignmentSource = assignment.source || mode;
   const disabledAttr = disabled ? ' disabled' : '';
   const fixedDisabledAttr = disabled || mode !== 'fixed_profile' ? ' disabled' : '';
   return '<fieldset class="profile-follow-up-task-profile"><legend>' + safe(t('profileFollowUpTaskProfileTitle')) + '</legend>'
@@ -177,6 +184,7 @@ function renderFollowUpTaskProfileSection(profile, disabled) {
     + profiles.map(candidate => '<option value="' + safe(candidate.name) + '"' + (candidate.name === fixedProfile ? ' selected' : '') + '>' + safe(candidate.name) + '</option>').join('')
     + '</select></label>'
     + '</div>'
+    + '<p class="empty profile-follow-up-task-profile-effective"><strong>' + safe(t('currentValueColumn')) + ':</strong> <code>' + safe(effectiveProfile) + '</code> (' + safe(followUpTaskProfileSourceLabel(assignmentSource)) + ')</p>'
     + '</fieldset>';
 }
 function renderAddProfileForm(payload, disabled) {

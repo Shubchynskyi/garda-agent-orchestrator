@@ -47,7 +47,7 @@ function readJson(filePath: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
 }
 
-function seedTaskQueue(repoRoot: string): void {
+function seedTaskQueue(repoRoot: string, taskId = TASK_ID, profile = 'strict'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '# TASK.md',
         '',
@@ -55,15 +55,15 @@ function seedTaskQueue(repoRoot: string): void {
         '',
         '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
         '|---|---|---|---|---|---|---|---|---|',
-        `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/review-follow-up-tasks | Parent task | gpt-5.5 | 2026-07-13 | strict | Parent notes. |`,
+        `| ${taskId} | IN_PROGRESS | P1 | workflow/review-follow-up-tasks | Parent task | gpt-5.5 | 2026-07-13 | ${profile} | Parent notes. |`,
         ''
     ].join('\n'), 'utf8');
 }
 
-function makeRepo(): string {
+function makeRepo(taskId = TASK_ID, profile = 'strict'): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-followups-'));
     tempRoots.push(repoRoot);
-    seedTaskQueue(repoRoot);
+    seedTaskQueue(repoRoot, taskId, profile);
     return repoRoot;
 }
 
@@ -97,21 +97,23 @@ function seedReviewArtifacts(repoRoot: string, options: {
     validationStatus?: 'accepted' | 'rejected';
     reviewType?: string;
     followUpSeverity?: 'critical' | 'high' | 'medium' | 'low';
+    taskId?: string;
 } = {}): SeededReviewArtifacts {
+    const taskId = options.taskId || TASK_ID;
     const reviewType = options.reviewType || REVIEW_TYPE;
     const followUpSeverity = options.followUpSeverity || 'medium';
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
-    const reviewArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}.md`);
-    const validationArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-findings-validation.json`);
-    const dispositionArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-findings-disposition.json`);
-    const receiptPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-receipt.json`);
-    const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
-    const compileGatePath = path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`);
+    const reviewArtifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+    const validationArtifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}-findings-validation.json`);
+    const dispositionArtifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}-findings-disposition.json`);
+    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const compileGatePath = path.join(reviewsRoot, `${taskId}-compile-gate.json`);
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(reviewArtifactPath, 'review output\n', 'utf8');
     const preflightSha256 = fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null;
     const compileGate = fs.existsSync(compileGatePath) ? readJson(compileGatePath) : null;
-    const taskEventsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+    const taskEventsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
     const compileTimelineTimestamp = fs.existsSync(taskEventsPath)
         ? fs.readFileSync(taskEventsPath, 'utf8')
             .split(/\r?\n/u)
@@ -121,12 +123,12 @@ function seedReviewArtifacts(repoRoot: string, options: {
             .at(-1)?.timestamp_utc
         : null;
     const compileGateTimestamp = String(compileTimelineTimestamp || compileGate?.timestamp_utc || '').trim() || null;
-    const reviewContextPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-review-context.json`);
+    const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     let reviewContextSha256: string | null = null;
     if (preflightSha256 && compileGateTimestamp) {
-        const reviewTreeStateSha256 = sha256JsonPayload({ task_id: TASK_ID, review_type: reviewType });
+        const reviewTreeStateSha256 = sha256JsonPayload({ task_id: taskId, review_type: reviewType });
         writeJson(reviewContextPath, {
-            task_id: TASK_ID,
+            task_id: taskId,
             review_type: reviewType,
             preflight_path: normalizeForArtifact(preflightPath),
             preflight_sha256: preflightSha256,
@@ -217,7 +219,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
     const validationArtifact = {
         schema_version: 1,
         artifact_type: 'review_findings_validation',
-        task_id: TASK_ID,
+        task_id: taskId,
         review_type: reviewType,
         validation_result: validationResult,
         validation_result_sha256: sha256JsonPayload(validationResult)
@@ -244,7 +246,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
     const dispositionArtifact = {
         schema_version: 1,
         artifact_type: 'review_findings_disposition',
-        task_id: TASK_ID,
+        task_id: taskId,
         review_type: reviewType,
         derivation_source: 'garda_locked_policy_evaluation',
         source_validation: {
@@ -312,7 +314,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
 
     const receipt = {
         schema_version: 2,
-        task_id: TASK_ID,
+        task_id: taskId,
         review_type: reviewType,
         preflight_sha256: preflightSha256,
         review_context_sha256: reviewContextSha256,
@@ -350,13 +352,13 @@ function seedReviewArtifacts(repoRoot: string, options: {
     const groupedPolicy = isGroupedFollowUpPolicy(preflightPath);
     if (groupedPolicy && reviewContextSha256 && options.includeGroupedAttestation !== false) {
         const reviewerIdentity = `agent:${reviewType}-reviewer`;
-        seedCompletedReviewerLaunchAndInvocation(repoRoot, TASK_ID, reviewType, reviewerIdentity);
+        seedCompletedReviewerLaunchAndInvocation(repoRoot, taskId, reviewType, reviewerIdentity);
         const taskEventsPath = path.join(
             repoRoot,
             'garda-agent-orchestrator',
             'runtime',
             'task-events',
-            `${TASK_ID}.jsonl`
+            `${taskId}.jsonl`
         );
         const invocationEvent = fs.readFileSync(taskEventsPath, 'utf8')
             .split(/\r?\n/u)
@@ -380,7 +382,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
                 task_sequence: invocationIntegrity.task_sequence,
                 prev_event_sha256: invocationIntegrity.prev_event_sha256,
                 event_sha256: invocationIntegrity.event_sha256,
-                task_id: TASK_ID,
+                task_id: taskId,
                 review_type: reviewType,
                 reviewer_execution_mode: 'delegated_subagent',
                 reviewer_identity: reviewerIdentity,
@@ -428,12 +430,34 @@ function seedGroupedPreflight(
     compileTimestamp = '2026-07-17T12:30:00.000Z',
     artifactTimestamp = compileTimestamp
 ): void {
+    seedGroupedPreflightForTask(repoRoot, TASK_ID, {
+        parent_profile: 'strict',
+        profile: 'balanced',
+        source: 'one_level_lighter',
+        configured_mode: 'one_level_lighter',
+        diagnostics: ["Follow-up task profile lowered from 'strict' to 'balanced'."]
+    }, compileTimestamp, artifactTimestamp);
+}
+
+function seedGroupedPreflightForTask(
+    repoRoot: string,
+    taskId: string,
+    assignment: {
+        parent_profile: string;
+        profile: string;
+        source: 'one_level_lighter' | 'inherit_parent' | 'fixed_profile' | 'safe_inherit_parent';
+        configured_mode: 'one_level_lighter' | 'inherit_parent' | 'fixed_profile';
+        diagnostics: string[];
+    },
+    compileTimestamp = '2026-07-17T12:30:00.000Z',
+    artifactTimestamp = compileTimestamp
+): void {
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
-    const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     writeJson(
         preflightPath,
         {
-            task_id: TASK_ID,
+            task_id: taskId,
             profile_policy_snapshot: {
                 schema_version: 1,
                 lock_timestamp_utc: '2026-07-17T12:00:00.000Z',
@@ -442,22 +466,18 @@ function seedGroupedPreflight(
                     schema_version: 1,
                     materialization_mode: 'grouped_by_parent',
                     task_profile: {
-                        mode: 'one_level_lighter',
-                        fixed_profile: null
+                        mode: assignment.configured_mode,
+                        fixed_profile: assignment.configured_mode === 'fixed_profile' ? assignment.profile : null
                     }
                 },
                 review_follow_up_task_profile_assignment: {
-                    parent_profile: 'strict',
-                    profile: 'balanced',
-                    source: 'one_level_lighter',
-                    configured_mode: 'one_level_lighter',
-                    diagnostics: ["Follow-up task profile lowered from 'strict' to 'balanced'."]
+                    ...assignment
                 }
             }
         }
     );
-    writeJson(path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`), {
-        task_id: TASK_ID,
+    writeJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`), {
+        task_id: taskId,
         status: 'PASSED',
         timestamp_utc: artifactTimestamp,
         preflight_path: normalizeForArtifact(preflightPath),
@@ -467,7 +487,7 @@ function seedGroupedPreflight(
         path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events'),
         { recursive: true }
     );
-    appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_PASSED', 'PASS', {}, compileTimestamp);
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', 'PASS', {}, compileTimestamp);
 }
 
 describe('review findings follow-up task materialization', () => {
@@ -644,6 +664,97 @@ describe('review findings follow-up task materialization', () => {
         assert.equal(nextCycle.status, 'MATERIALIZED', nextCycle.output_lines.join('\n'));
         assert.deepEqual(nextCycle.created_task_ids, [`${TASK_ID}-F2`]);
         assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 2);
+    });
+
+    it('materializes inherited, fixed, safe fallback, and nested frozen child profiles', () => {
+        const scenarios = [
+            {
+                taskId: 'T-FOLLOWUP-INHERIT',
+                parentProfile: 'strict',
+                expectedProfile: 'strict',
+                source: 'inherit_parent' as const,
+                configuredMode: 'inherit_parent' as const
+            },
+            {
+                taskId: 'T-FOLLOWUP-FIXED',
+                parentProfile: 'strict',
+                expectedProfile: 'fast',
+                source: 'fixed_profile' as const,
+                configuredMode: 'fixed_profile' as const
+            },
+            {
+                taskId: 'T-FOLLOWUP-CUSTOM',
+                parentProfile: 'custom-review',
+                expectedProfile: 'custom-review',
+                source: 'safe_inherit_parent' as const,
+                configuredMode: 'one_level_lighter' as const
+            },
+            {
+                taskId: 'T-FOLLOWUP-NESTED-F1',
+                parentProfile: 'balanced',
+                expectedProfile: 'fast',
+                source: 'one_level_lighter' as const,
+                configuredMode: 'one_level_lighter' as const
+            }
+        ];
+
+        for (const scenario of scenarios) {
+            const repoRoot = makeRepo(scenario.taskId, scenario.parentProfile);
+            seedGroupedPreflightForTask(repoRoot, scenario.taskId, {
+                parent_profile: scenario.parentProfile,
+                profile: scenario.expectedProfile,
+                source: scenario.source,
+                configured_mode: scenario.configuredMode,
+                diagnostics: [`Resolved ${scenario.source}.`]
+            });
+            const artifacts = seedReviewArtifacts(repoRoot, { taskId: scenario.taskId });
+
+            const materialized = materializeReviewFindingsFollowUpTasks({
+                repoRoot,
+                taskId: scenario.taskId,
+                reviewType: REVIEW_TYPE,
+                dispositionArtifactPath: artifacts.dispositionArtifactPath
+            });
+
+            assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+            const childTaskId = `${scenario.taskId}-F1`;
+            const childRow = rowFor(repoRoot, childTaskId);
+            assert.ok(childRow);
+            assert.equal(childRow.profile, scenario.expectedProfile);
+            assert.match(childRow.notes, new RegExp(`review_follow_up_task_profile=${scenario.expectedProfile}`, 'u'));
+            assert.match(childRow.notes, new RegExp(`review_follow_up_task_profile_source=${scenario.source}`, 'u'));
+            const artifact = readJson(materialized.artifact_path);
+            const materializationPolicy = artifact.materialization_policy as Record<string, unknown>;
+            assert.equal(materializationPolicy.task_profile, scenario.expectedProfile);
+            assert.equal(materializationPolicy.task_profile_source, scenario.source);
+        }
+    });
+
+    it('recovers from a missing canonical lower profile with the frozen safe fallback', () => {
+        const taskId = 'T-FOLLOWUP-SAFE-FALLBACK';
+        const parentProfile = 'custom-review';
+        const repoRoot = makeRepo(taskId, parentProfile);
+        seedGroupedPreflightForTask(repoRoot, taskId, {
+            parent_profile: parentProfile,
+            profile: parentProfile,
+            source: 'safe_inherit_parent',
+            configured_mode: 'one_level_lighter',
+            diagnostics: ['No canonical lower profile exists; safely inherited the parent profile.']
+        });
+        const artifacts = seedReviewArtifacts(repoRoot, { taskId });
+
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        const childRow = rowFor(repoRoot, `${taskId}-F1`);
+        assert.ok(childRow);
+        assert.equal(childRow.profile, parentProfile);
+        assert.match(childRow.notes, /review_follow_up_task_profile_source=safe_inherit_parent/u);
     });
 
     it('keeps representative large grouped materialization bounded and deterministic', () => {

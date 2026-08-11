@@ -64,6 +64,13 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                 review_follow_up_policy: {
                     task_profile: { mode: string; fixed_profile: string | null };
                 };
+                review_follow_up_task_profile_assignment: {
+                    parent_profile: string;
+                    profile: string;
+                    source: string;
+                    configured_mode: string;
+                    diagnostics: string[];
+                };
             }>;
         };
         assert.equal(list.enabled, true);
@@ -73,6 +80,15 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(list.finding_policy_presets.strict.policy_id, 'strict');
         assert.ok(list.review_types.some((reviewType) => reviewType.id === 'test'));
         assert.ok(list.profiles.some((profile) => profile.name === 'balanced' && profile.protected));
+        const balancedProfile = list.profiles.find((profile) => profile.name === 'balanced');
+        assert.ok(balancedProfile);
+        assert.deepEqual(balancedProfile.review_follow_up_task_profile_assignment, {
+            parent_profile: 'balanced',
+            profile: 'fast',
+            source: 'one_level_lighter',
+            configured_mode: 'one_level_lighter',
+            diagnostics: ["Follow-up task profile lowered from 'balanced' to 'fast'."]
+        });
 
         const createPayload = {
             operation: 'create',
@@ -242,6 +258,19 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             createdData.user_profiles['custom-review'].review_follow_up_policy.task_profile.fixed_profile,
             'fast'
         );
+        const updatedList = await (await fetch(`${server.url}api/profiles`)).json() as {
+            profiles: Array<{
+                name: string;
+                review_follow_up_task_profile_assignment: {
+                    profile: string;
+                    source: string;
+                };
+            }>;
+        };
+        const customProfile = updatedList.profiles.find((profile) => profile.name === 'custom-review');
+        assert.ok(customProfile);
+        assert.equal(customProfile.review_follow_up_task_profile_assignment.profile, 'fast');
+        assert.equal(customProfile.review_follow_up_task_profile_assignment.source, 'fixed_profile');
         assert.match(fs.readFileSync(create.audit_path, 'utf8'), /"action_id":"profile:create:custom-review"/u);
 
         const unsafePolicyResponse = await fetch(`${server.url}api/profiles`, {
