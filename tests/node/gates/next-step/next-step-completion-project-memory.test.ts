@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 import { initGitRepo } from '../git-fixtures';
 import {
     assessProjectMemoryImpact,
@@ -37,6 +38,7 @@ import {
 
 const PROJECT_MEMORY_ORDER_VIOLATION =
     'Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.';
+const nodeRequire = createRequire(__filename);
 
 function formatProjectMemorySummaryForTest(
     projectMemory: ReturnType<typeof buildProjectMemoryNextStepSummary>
@@ -171,6 +173,49 @@ describe('gates/next-step', () => {
 
         assert.ok(result.commands[0].command.includes('gate completion-gate'));
 
+    });
+
+    it('parses the closeout task timeline once per next-step resolution', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'check' });
+        seedProjectMemory(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedProjectMemoryImpact(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PROJECT_MEMORY_IMPACT_ASSESSED');
+
+        const timelinePath = path.resolve(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${TASK_ID}.jsonl`
+        );
+        const mutableFs = nodeRequire('node:fs') as typeof fs;
+        const originalReadFileSync = mutableFs.readFileSync;
+        let closeoutTimelineReads = 0;
+        mutableFs.readFileSync = ((file: Parameters<typeof fs.readFileSync>[0], ...args: unknown[]) => {
+            if (
+                typeof file === 'string'
+                && path.resolve(file) === timelinePath
+                && String(new Error().stack || '').includes('next-step-doc-closeout-readiness')
+            ) {
+                closeoutTimelineReads += 1;
+            }
+            return originalReadFileSync(file as never, ...(args as never[]));
+        }) as typeof fs.readFileSync;
+        try {
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'completion-gate', result.reason);
+        } finally {
+            mutableFs.readFileSync = originalReadFileSync;
+        }
+
+        assert.equal(closeoutTimelineReads, 1);
     });
 
     it('recovers a stale project-memory order-only completion failure without refreshing unchanged preflight or review evidence', () => {

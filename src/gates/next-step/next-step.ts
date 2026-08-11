@@ -346,6 +346,7 @@ import {
     buildProjectMemoryNextStepSummary,
     buildStaleCompletionFailureDocCloseoutAllowance,
     isProjectMemoryEvidenceCurrentForCloseout,
+    readNextStepCloseoutTimelineSnapshot,
     readPreflightCycleReadiness,
     type NextStepProjectMemorySummary
 } from './next-step-doc-closeout-readiness';
@@ -2987,6 +2988,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     }
 
     const docImpactPath = readinessArtifacts.paths.docImpactPath;
+    const closeoutTimelineSnapshot = readNextStepCloseoutTimelineSnapshot(eventsRoot, taskId);
     const preflightWorkspaceReadiness = preflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: null,
@@ -3010,9 +3012,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             allowDocsOnlyDelta: false
         })
         : { ready: false, reason: 'No current preflight exists.' };
-    const preflightCycleReadiness = readPreflightCycleReadiness(
-        eventsRoot,
-        taskId,
+    const staleCompletionFailureDocCloseoutAllowance =
         buildStaleCompletionFailureDocCloseoutAllowance(
             repoRoot,
             eventsRoot,
@@ -3020,8 +3020,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             preflightPath,
             preflightSha256,
             preflightWorkspaceReadiness,
-            docImpactPath
-        )
+            docImpactPath,
+            closeoutTimelineSnapshot
+        );
+    const preflightCycleReadiness = readPreflightCycleReadiness(
+        eventsRoot,
+        taskId,
+        {
+            ...staleCompletionFailureDocCloseoutAllowance,
+            timelineSnapshot: closeoutTimelineSnapshot
+        }
     );
     const failedCurrentReviewStateForPreflight = reviewLaunchPlan.next_review_type
         ? reviewStates.find((candidate) => (
@@ -4499,7 +4507,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 eventsRoot,
                 taskId,
                 docImpactPath,
-                evidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT'
+                evidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+                timelineSnapshot: closeoutTimelineSnapshot
             }),
             projectMemoryVisibleSummaryLine: projectMemoryEvidence.visible_summary_line,
             projectMemoryAffectedMemoryFiles: projectMemoryEvidence.affected_memory_files,

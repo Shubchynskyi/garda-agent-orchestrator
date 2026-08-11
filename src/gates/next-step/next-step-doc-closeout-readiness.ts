@@ -28,7 +28,8 @@ import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
 import {
-    collectOrderedTimelineEvents
+    collectOrderedTimelineEvents,
+    type TimelineEventEntry
 } from '../completion/completion-evidence';
 import {
     PROJECT_MEMORY_AFTER_DOC_IMPACT_VIOLATION,
@@ -77,6 +78,13 @@ export interface PreflightCycleReadiness {
 export interface PreflightCycleReadinessOptions {
     allowStaleCompletionFailureForDocCloseout?: boolean;
     staleCompletionFailureDocCloseoutReason?: string;
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot;
+}
+
+export interface NextStepCloseoutTimelineSnapshot {
+    timelinePath: string;
+    events: TimelineEventEntry[];
+    errors: string[];
 }
 
 function hasPassedDocImpactArtifact(docImpactPath: string | null | undefined): boolean {
@@ -105,13 +113,34 @@ function readPassedDocImpactArtifact(
         : null;
 }
 
-function collectCloseoutTimelineEvents(
+export function readNextStepCloseoutTimelineSnapshot(
     eventsRoot: string,
     taskId: string
-): ReturnType<typeof collectOrderedTimelineEvents> {
+): NextStepCloseoutTimelineSnapshot {
+    const timelinePath = path.resolve(eventsRoot, `${taskId}.jsonl`);
     const errors: string[] = [];
-    const events = collectOrderedTimelineEvents(path.join(eventsRoot, `${taskId}.jsonl`), errors);
-    return errors.length === 0 ? events : [];
+    const events = collectOrderedTimelineEvents(timelinePath, errors);
+    return {
+        timelinePath,
+        events,
+        errors
+    };
+}
+
+function collectCloseoutTimelineEvents(
+    eventsRoot: string,
+    taskId: string,
+    snapshot?: NextStepCloseoutTimelineSnapshot
+): TimelineEventEntry[] {
+    const expectedTimelinePath = path.resolve(eventsRoot, `${taskId}.jsonl`);
+    const resolvedSnapshotPath = snapshot
+        ? path.resolve(snapshot.timelinePath)
+        : null;
+    if (snapshot && resolvedSnapshotPath === expectedTimelinePath) {
+        return snapshot.errors.length === 0 ? snapshot.events : [];
+    }
+    const currentSnapshot = readNextStepCloseoutTimelineSnapshot(eventsRoot, taskId);
+    return currentSnapshot.errors.length === 0 ? currentSnapshot.events : [];
 }
 
 export function isProjectMemoryEvidenceCurrentForCloseout(input: {
@@ -119,6 +148,7 @@ export function isProjectMemoryEvidenceCurrentForCloseout(input: {
     taskId: string;
     docImpactPath: string;
     evidenceCurrent: boolean;
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot;
 }): boolean {
     if (!input.evidenceCurrent) {
         return false;
@@ -127,7 +157,11 @@ export function isProjectMemoryEvidenceCurrentForCloseout(input: {
     if (!docImpact || docImpactClaimsProjectMemoryEvidence(docImpact)) {
         return true;
     }
-    const events = collectCloseoutTimelineEvents(input.eventsRoot, input.taskId);
+    const events = collectCloseoutTimelineEvents(
+        input.eventsRoot,
+        input.taskId,
+        input.timelineSnapshot
+    );
     const latestProjectMemoryImpact = findLatestTimelineEvent(
         events,
         (entry) => entry.event_type === PROJECT_MEMORY_IMPACT_ASSESSED_EVENT
@@ -146,7 +180,8 @@ function getProjectMemoryOrderOnlyRecoveryReason(
     taskId: string,
     preflightPath: string,
     preflightSha256: string | null,
-    docImpactPath: string
+    docImpactPath: string,
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot
 ): string | null {
     const docImpact = readPassedDocImpactArtifact(docImpactPath);
     if (
@@ -156,7 +191,7 @@ function getProjectMemoryOrderOnlyRecoveryReason(
     ) {
         return null;
     }
-    const events = collectCloseoutTimelineEvents(eventsRoot, taskId);
+    const events = collectCloseoutTimelineEvents(eventsRoot, taskId, timelineSnapshot);
     const latestPreflight = findLatestTimelineEvent(
         events,
         (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
@@ -255,7 +290,8 @@ function getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
     taskId: string,
     preflightPath: string,
     preflightSha256: string | null,
-    docImpactPath: string | null | undefined
+    docImpactPath: string | null | undefined,
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot
 ): string[] {
     if (!docImpactPath) {
         return [];
@@ -297,10 +333,8 @@ function getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
     if (docsUpdated.some((entry) => !isOrdinaryDocumentationDeltaPath(entry, classificationConfig))) {
         return [];
     }
-    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    const timelineErrors: string[] = [];
-    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
-    if (timelineErrors.length > 0 || events.length === 0) {
+    const events = collectCloseoutTimelineEvents(eventsRoot, taskId, timelineSnapshot);
+    if (events.length === 0) {
         return [];
     }
     const latestPreflight = findLatestTimelineEvent(
@@ -341,7 +375,8 @@ export function buildStaleCompletionFailureDocCloseoutAllowance(
     preflightPath: string,
     preflightSha256: string | null,
     preflightWorkspaceReadiness: PreflightWorkspaceReadiness,
-    docImpactPath: string
+    docImpactPath: string,
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot
 ): PreflightCycleReadinessOptions {
     if (!preflightWorkspaceReadiness.ready) {
         return {};
@@ -351,7 +386,8 @@ export function buildStaleCompletionFailureDocCloseoutAllowance(
         taskId,
         preflightPath,
         preflightSha256,
-        docImpactPath
+        docImpactPath,
+        timelineSnapshot
     );
     if (projectMemoryOrderRecoveryReason) {
         return {
@@ -366,7 +402,8 @@ export function buildStaleCompletionFailureDocCloseoutAllowance(
             taskId,
             preflightPath,
             preflightSha256,
-            docImpactPath
+            docImpactPath,
+            timelineSnapshot
         );
         if (docImpactUpdatedFiles.length > 0) {
             return {
@@ -403,10 +440,8 @@ export function readPreflightCycleReadiness(
     taskId: string,
     options: PreflightCycleReadinessOptions = {}
 ): PreflightCycleReadiness {
-    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    const timelineErrors: string[] = [];
-    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
-    if (timelineErrors.length > 0 || events.length === 0) {
+    const events = collectCloseoutTimelineEvents(eventsRoot, taskId, options.timelineSnapshot);
+    if (events.length === 0) {
         return {
             ready: true,
             reason: 'Timeline ordering could not be checked by next-step; downstream gates will report timeline integrity.'
