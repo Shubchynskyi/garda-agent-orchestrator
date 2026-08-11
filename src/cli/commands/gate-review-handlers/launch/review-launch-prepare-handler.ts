@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
     buildReviewReceiptReviewerProvenance,
     assertReviewLifecycleGuard,
+    assertRequiredUpstreamReviewDependencies,
     assertReviewTreeStateFresh,
     assertValidTaskId,
     emitReviewerLaunchInputPinnedEventAsync,
@@ -55,6 +56,15 @@ import {
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
 export type PrepareReviewerLaunchHandler = (gateArgv: string[]) => Promise<void>;
+export type PrepareReviewerLaunchDependencyOptions = Parameters<
+    typeof assertRequiredUpstreamReviewDependencies
+>[0];
+
+export function assertPrepareReviewerLaunchDependencyReadiness(
+    options: PrepareReviewerLaunchDependencyOptions
+): void {
+    assertRequiredUpstreamReviewDependencies(options);
+}
 
 // Keep prepare-reviewer-launch dependency injection explicit while shared launch command rendering stays in reviewer-launch-command-templates.
 export interface PrepareReviewerLaunchHandlerDependencies {
@@ -228,6 +238,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    assertPrepareReviewerLaunchDependencyReadiness({
+        taskId,
+        preflightPath,
+        preflightPayload,
+        reviewType,
+        timelineEvents,
+        taskModePath: String(options.taskModePath || '').trim()
+    });
     assertReviewContextContractOrThrow({
         taskId,
         reviewType,
@@ -285,8 +305,6 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     }
 
     const launchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(launchArtifactPath);
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    const timelineEvents = readDependencyTimelineEvents(timelinePath);
     const routingEvent = findMatchingRoutingEvent(
         timelineEvents,
         reviewType,

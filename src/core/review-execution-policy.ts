@@ -188,7 +188,16 @@ export function computeReviewLaunchPlan(params: {
     dependencyGraph?: CompiledReviewDependencyGraph | null;
     reviewStates: readonly ReviewLaunchEvidenceState[];
 }): ReviewLaunchPlan {
-    const requiredReviewTypes = params.requiredReviewTypes.map(normalizeReviewType);
+    const normalizedRequiredReviewTypes = params.requiredReviewTypes.map(normalizeReviewType);
+    const requiredReviewTypeSet = new Set(normalizedRequiredReviewTypes);
+    const graphOrderedReviewTypes = params.dependencyGraph?.preparation_order
+        .map(normalizeReviewType)
+        .filter((reviewType) => requiredReviewTypeSet.has(reviewType)) || [];
+    const graphOrderedReviewTypeSet = new Set(graphOrderedReviewTypes);
+    const requiredReviewTypes = [
+        ...graphOrderedReviewTypes,
+        ...normalizedRequiredReviewTypes.filter((reviewType) => !graphOrderedReviewTypeSet.has(reviewType))
+    ];
     const stateByType = new Map(
         params.reviewStates.map((state) => [normalizeReviewType(state.review_type), state])
     );

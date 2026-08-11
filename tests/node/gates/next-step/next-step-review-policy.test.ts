@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewDependencyGraphDeclaration } from '../../../../src/core/review-dependency-graph';
 import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
 import type { FullSuiteValidationPlacement } from '../../../../src/core/workflow-config';
 import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
@@ -189,7 +190,8 @@ function buildEffectiveSnapshotFixture(
         enabled: false,
         placement: 'after_compile_before_reviews' as const
     },
-    includeDependencyGraph = true
+    includeDependencyGraph = true,
+    reviewDependencyGraph: ReviewDependencyGraphDeclaration | null = null
 ) {
     const taskMode = JSON.parse(
         fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), 'utf8')
@@ -212,13 +214,19 @@ function buildEffectiveSnapshotFixture(
         changedFiles: ['src/app.ts'],
         taskTriggers: {},
         reviewExecutionPolicyMode: reviewPolicyMode,
-        reviewDependencyGraph: null,
+        reviewDependencyGraph,
         fullSuiteValidation,
         includeDependencyGraph
     });
 }
 
-function seedFrozenGraphPreflight(repoRoot: string): {
+function seedFrozenGraphPreflight(
+    repoRoot: string,
+    options: {
+        reviewDependencyGraph?: ReviewDependencyGraphDeclaration | null;
+        fullSuiteValidation?: { enabled: boolean; placement: FullSuiteValidationPlacement };
+    } = {}
+): {
     preflightPath: string;
     snapshot: Record<string, unknown>;
 } {
@@ -228,8 +236,8 @@ function seedFrozenGraphPreflight(repoRoot: string): {
         mode: 'test_after_code' as const,
         configured: true,
         visible_summary_line: 'Review execution policy: test_after_code',
-        review_dependency_graph: null,
-        full_suite_validation: {
+        review_dependency_graph: options.reviewDependencyGraph ?? null,
+        full_suite_validation: options.fullSuiteValidation || {
             enabled: true,
             placement: 'before_test_review' as const
         }
@@ -248,7 +256,9 @@ function seedFrozenGraphPreflight(repoRoot: string): {
         repoRoot,
         requiredReviews,
         frozenPolicy.mode,
-        frozenPolicy.full_suite_validation
+        frozenPolicy.full_suite_validation,
+        true,
+        options.reviewDependencyGraph ?? null
     );
     const preflightPath = writePreflight(repoRoot, TASK_ID, requiredReviews, {
         seedPostPreflight: false,
@@ -917,6 +927,55 @@ describe('gates/next-step', () => {
             () => resolveNextStep({ taskId: TASK_ID, repoRoot }),
             /does not match the latest PREFLIGHT_CLASSIFIED timeline binding/u
         );
+    });
+
+    it('routes next-step through the frozen graph preparation order and dependency edges', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        seedFrozenGraphPreflight(repoRoot, {
+            reviewDependencyGraph: {
+                preparation_order: [
+                    'test',
+                    'code',
+                    'db',
+                    'security',
+                    'refactor',
+                    'api',
+                    'performance',
+                    'infra',
+                    'dependency'
+                ],
+                dependencies: {
+                    test: [],
+                    code: ['test'],
+                    db: [],
+                    security: [],
+                    refactor: [],
+                    api: [],
+                    performance: [],
+                    infra: [],
+                    dependency: []
+                }
+            },
+            fullSuiteValidation: {
+                enabled: false,
+                placement: 'before_test_review'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.review.next_review_type, 'test');
+        assert.deepEqual(result.review.launchable_review_types, ['test']);
+        assert.deepEqual(result.review.blocked_review_lanes, [{
+            review_type: 'code',
+            blocked_by: ['test'],
+            reason: 'Waiting for current-cycle test review artifacts and receipts to pass.'
+        }]);
+        assert.match(text, /ReviewLaunchableBatch: test/u);
+        assert.match(text, /BlockedReviewLanes: code blocked by test/u);
     });
 
     it('rejects a latest preflight timeline event with its frozen snapshot binding missing', () => {
