@@ -1,14 +1,22 @@
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
 import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
-import { shouldAcceptCurrentPassReviewEvidence } from '../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
+import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import {
+    resolvePersistedRemediationReusePolicy,
+    shouldAcceptCurrentPassReviewEvidence
+} from '../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
 import {
     buildReviewRemediationRecoveryRoute,
     getAuthoritativeReviewRemediationDecisionViolations,
     resolveAuthoritativeReviewRemediationDecision,
+    type AuthoritativeReviewRemediationDecision,
     type BuildReviewRemediationRecoveryRouteOptions,
     type ReviewRemediationCompletedReceipt,
     type ReviewRemediationReusableReceipt
@@ -29,6 +37,94 @@ const REVIEWS_ROOT = 'garda-agent-orchestrator/runtime/reviews';
 
 function hash(value: string): string {
     return createHash('sha256').update(value).digest('hex');
+}
+
+interface PersistedReusePolicyFixture {
+    root: string;
+    bundleRoot: string;
+    preflightPath: string;
+    preflightSha256: string;
+    timelinePath: string;
+}
+
+function makePersistedReusePolicyFixture(): PersistedReusePolicyFixture {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-persisted-remediation-policy-'));
+    const bundleRoot = path.join(root, 'garda-agent-orchestrator');
+    const reviewsRoot = path.join(bundleRoot, 'runtime', 'reviews');
+    const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+    const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+    const preflightContents = '{"schema_version":1}\n';
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(preflightPath, preflightContents, 'utf8');
+    return {
+        root,
+        bundleRoot,
+        preflightPath,
+        preflightSha256: hash(preflightContents),
+        timelinePath
+    };
+}
+
+function appendRestartDecision(
+    fixture: PersistedReusePolicyFixture,
+    decision: AuthoritativeReviewRemediationDecision
+): void {
+    appendTaskEvent(
+        fixture.bundleRoot,
+        TASK_ID,
+        'REVIEW_CYCLE_RESTARTED',
+        'PASS',
+        'Review cycle restarted.',
+        {
+            task_id: TASK_ID,
+            event_type: 'REVIEW_CYCLE_RESTARTED',
+            status: 'PASSED',
+            preflight_sha256: fixture.preflightSha256,
+            authoritative_review_decision: decision
+        }
+    );
+}
+
+function appendRecordedReview(
+    fixture: PersistedReusePolicyFixture,
+    reusedExistingReview: boolean
+): void {
+    appendTaskEvent(
+        fixture.bundleRoot,
+        TASK_ID,
+        'REVIEW_RECORDED',
+        'PASS',
+        'Review recorded.',
+        {
+            task_id: TASK_ID,
+            review_type: 'test',
+            preflight_sha256: fixture.preflightSha256,
+            reused_existing_review: reusedExistingReview,
+            review_findings_disposition: {
+                verdict: 'pass_no_findings'
+            }
+        }
+    );
+}
+
+function readPersistedPolicyEvents(fixture: PersistedReusePolicyFixture): Record<string, unknown>[] {
+    return fs.readFileSync(fixture.timelinePath, 'utf8')
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function resolvePersistedPolicy(
+    fixture: PersistedReusePolicyFixture,
+    reviewType: string
+): { blockedReason: string; preservedScopeMismatchReason: string } {
+    return resolvePersistedRemediationReusePolicy({
+        events: readPersistedPolicyEvents(fixture),
+        taskId: TASK_ID,
+        reviewType,
+        preflightPath: fixture.preflightPath,
+        timelinePath: fixture.timelinePath
+    });
 }
 
 function makeSnapshot(): Record<string, unknown> {
@@ -222,6 +318,131 @@ describe('review remediation selective recovery routing', () => {
             accepted: false,
             reusedExistingReview: false
         }, blockedReason), false);
+    });
+
+    it('applies a valid persisted authoritative REUSE decision from the task-event timeline', () => {
+        const fixture = makePersistedReusePolicyFixture();
+        try {
+            const profilePolicySnapshot = makeSnapshot();
+            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+                taskId: TASK_ID,
+                currentReviewType: 'test',
+                classification: {
+                    source: 'delta',
+                    delta: makeDelta('leaf_test'),
+                    profilePolicySnapshot,
+                    baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+                },
+                requiredReviews: { code: true, test: true },
+                reviewExecutionPolicyMode: 'strict_sequential',
+                reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('test')]
+            }));
+
+            const result = resolvePersistedPolicy(fixture, 'code');
+            assert.equal(result.blockedReason, '');
+            assert.match(result.preservedScopeMismatchReason, /authoritative reuse validation accepted/iu);
+        } finally {
+            fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
+    });
+
+    it('uses the latest matching persisted decision and rejects a missing required lane', () => {
+        const fixture = makePersistedReusePolicyFixture();
+        try {
+            const profilePolicySnapshot = makeSnapshot();
+            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+                taskId: TASK_ID,
+                currentReviewType: 'test',
+                classification: {
+                    source: 'delta',
+                    delta: makeDelta('leaf_test'),
+                    profilePolicySnapshot,
+                    baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+                },
+                requiredReviews: { code: true, test: true },
+                reviewExecutionPolicyMode: 'strict_sequential',
+                reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('test')]
+            }));
+            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+                taskId: TASK_ID,
+                currentReviewType: 'code',
+                classification: {
+                    source: 'delta',
+                    delta: makeDelta('leaf_test', 'code'),
+                    profilePolicySnapshot,
+                    baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+                },
+                requiredReviews: { code: true },
+                reviewExecutionPolicyMode: 'strict_sequential',
+                reusableReceipts: [acceptedReceipt('code')]
+            }));
+
+            assert.match(
+                resolvePersistedPolicy(fixture, 'test').blockedReason,
+                /does not contain required lane 'test'/iu
+            );
+        } finally {
+            fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a tampered persisted authoritative decision', () => {
+        const fixture = makePersistedReusePolicyFixture();
+        try {
+            const profilePolicySnapshot = makeSnapshot();
+            const decision = resolveAuthoritativeReviewRemediationDecision({
+                taskId: TASK_ID,
+                currentReviewType: 'test',
+                classification: {
+                    source: 'delta',
+                    delta: makeDelta('leaf_test'),
+                    profilePolicySnapshot,
+                    baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+                },
+                requiredReviews: { code: true, test: true },
+                reviewExecutionPolicyMode: 'strict_sequential',
+                reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('test')]
+            });
+            decision.lane_decisions[0].reason = 'tampered persisted reason';
+            appendRestartDecision(fixture, decision);
+
+            assert.match(
+                resolvePersistedPolicy(fixture, 'code').blockedReason,
+                /persisted authoritative remediation decision failed validation/iu
+            );
+        } finally {
+            fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
+    });
+
+    it('requires fresh post-restart evidence to bypass an invalidated persisted lane', () => {
+        const fixture = makePersistedReusePolicyFixture();
+        try {
+            const profilePolicySnapshot = makeSnapshot();
+            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+                taskId: TASK_ID,
+                currentReviewType: 'test',
+                classification: {
+                    source: 'delta',
+                    delta: makeDelta('leaf_test'),
+                    profilePolicySnapshot,
+                    baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+                },
+                requiredReviews: { code: true, test: true },
+                reviewExecutionPolicyMode: 'strict_sequential',
+                reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('test')]
+            }));
+            appendRecordedReview(fixture, true);
+            assert.match(resolvePersistedPolicy(fixture, 'test').blockedReason, /bounded DELTA review is required/iu);
+
+            appendRecordedReview(fixture, false);
+            assert.deepEqual(resolvePersistedPolicy(fixture, 'test'), {
+                blockedReason: '',
+                preservedScopeMismatchReason: ''
+            });
+        } finally {
+            fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
     });
 
     it('emits one hash-bound REUSE, DELTA, or FULL decision for every effective lane', () => {
