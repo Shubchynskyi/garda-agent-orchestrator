@@ -27,6 +27,9 @@ function profileReviewInputId(profileName, reviewType) {
 function profileFindingInputId(profileName, field) {
   return profileInputId(profileName, 'finding-' + field);
 }
+function profileFollowUpInputId(profileName, field) {
+  return profileInputId(profileName, 'follow-up-' + field);
+}
 function renderProfileResult(result) {
   currentProfileActionResult = result;
   if (!profilesStatusNode) return;
@@ -146,6 +149,36 @@ function renderFindingPolicySection(profile, disabled) {
     + '<div class="profile-card-footer"><button type="button" data-profile-policy-action="apply" data-profile-name="' + safe(profile.name) + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('apply')) + '</button></div>'
     + '</fieldset>';
 }
+function followUpTaskProfileModeLabel(mode) {
+  const translationKeys = {
+    one_level_lighter: 'profileFollowUpTaskProfileOneLevelLighter',
+    inherit_parent: 'profileFollowUpTaskProfileInheritParent',
+    fixed_profile: 'profileFollowUpTaskProfileFixed'
+  };
+  return t(translationKeys[mode] || mode);
+}
+function renderFollowUpTaskProfileSection(profile, disabled) {
+  const policy = profile.review_follow_up_policy || {};
+  const taskProfile = policy.task_profile || { mode: 'one_level_lighter', fixed_profile: null };
+  const mode = taskProfile.mode || 'one_level_lighter';
+  const profiles = currentProfilesPayload && Array.isArray(currentProfilesPayload.profiles)
+    ? currentProfilesPayload.profiles
+    : [];
+  const fixedProfile = taskProfile.fixed_profile || profile.name;
+  const disabledAttr = disabled ? ' disabled' : '';
+  const fixedDisabledAttr = disabled || mode !== 'fixed_profile' ? ' disabled' : '';
+  return '<fieldset class="profile-follow-up-task-profile"><legend>' + safe(t('profileFollowUpTaskProfileTitle')) + '</legend>'
+    + '<p class="empty profile-follow-up-task-profile-help">' + safe(t('profileFollowUpTaskProfileHelp')) + '</p>'
+    + '<div class="profile-fields">'
+    + '<label><span>' + safe(t('profileFollowUpTaskProfileMode')) + '</span><select id="' + safe(profileFollowUpInputId(profile.name, 'mode')) + '"' + disabledAttr + '>'
+    + ['one_level_lighter', 'inherit_parent', 'fixed_profile'].map(option => '<option value="' + safe(option) + '"' + (option === mode ? ' selected' : '') + '>' + safe(followUpTaskProfileModeLabel(option)) + '</option>').join('')
+    + '</select></label>'
+    + '<label><span>' + safe(t('profileFollowUpTaskProfileFixedProfile')) + '</span><select id="' + safe(profileFollowUpInputId(profile.name, 'fixed-profile')) + '"' + fixedDisabledAttr + '>'
+    + profiles.map(candidate => '<option value="' + safe(candidate.name) + '"' + (candidate.name === fixedProfile ? ' selected' : '') + '>' + safe(candidate.name) + '</option>').join('')
+    + '</select></label>'
+    + '</div>'
+    + '</fieldset>';
+}
 function renderAddProfileForm(payload, disabled) {
   const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
   const activeProfile = payload.active_profile || (profiles[0] && profiles[0].name) || '';
@@ -230,6 +263,7 @@ function renderProfileCard(profile, disabled) {
     + '</select></label>'
     + '</div>'
     + renderFindingPolicySection(profile, disabled)
+    + renderFollowUpTaskProfileSection(profile, disabled)
     + renderProfilePolicyGrid(profile, disabled)
     + '<div class="profile-card-footer"><button type="button" data-profile-action="save" data-profile-name="' + safe(profile.name) + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div>'
     + '</article>';
@@ -263,11 +297,28 @@ function readProfileForm(profileName) {
     const input = document.getElementById(profileReviewInputId(profileName, reviewType.id));
     reviewPolicy[reviewType.id] = profilePolicyFromSubmitValue(input ? input.value : 'auto');
   }
+  const followUpModeInput = document.getElementById(profileFollowUpInputId(profileName, 'mode'));
+  const fixedProfileInput = document.getElementById(profileFollowUpInputId(profileName, 'fixed-profile'));
+  const followUpMode = followUpModeInput ? followUpModeInput.value : 'one_level_lighter';
+  const currentProfile = currentProfilesPayload && Array.isArray(currentProfilesPayload.profiles)
+    ? currentProfilesPayload.profiles.find(profile => profile.name === profileName)
+    : null;
+  const materializationMode = currentProfile && currentProfile.review_follow_up_policy
+    ? currentProfile.review_follow_up_policy.materialization_mode
+    : 'per_finding';
   return {
     profile_name: profileName,
     description: description ? description.value : '',
     depth: depth ? depth.value : '2',
-    review_policy: reviewPolicy
+    review_policy: reviewPolicy,
+    review_follow_up_policy: {
+      schema_version: 1,
+      materialization_mode: materializationMode,
+      task_profile: {
+        mode: followUpMode,
+        fixed_profile: followUpMode === 'fixed_profile' && fixedProfileInput ? fixedProfileInput.value : null
+      }
+    }
   };
 }
 async function submitProfileAction(payload) {
@@ -355,6 +406,16 @@ function attachProfilePolicyVisualHandlers() {
     });
   }
 }
+function attachProfileFollowUpTaskProfileHandlers() {
+  const modeSelect = profilesNode.querySelector('.profile-follow-up-task-profile select[id$="-follow-up-mode"]');
+  if (!modeSelect) return;
+  modeSelect.addEventListener('change', () => {
+    const card = modeSelect.closest('[data-profile-name]');
+    const profileName = card ? card.dataset.profileName || '' : '';
+    const fixedSelect = document.getElementById(profileFollowUpInputId(profileName, 'fixed-profile'));
+    if (fixedSelect) fixedSelect.disabled = modeSelect.value !== 'fixed_profile';
+  });
+}
 function setFindingPolicyInputs(profileName, policy) {
   const findings = policy && policy.findings ? policy.findings : {};
   const values = {
@@ -432,6 +493,7 @@ function renderProfiles(payload) {
     + '</section>';
   attachProfileTabHandlers();
   attachProfilePolicyVisualHandlers();
+  attachProfileFollowUpTaskProfileHandlers();
   attachProfileFindingPolicyHandlers();
   attachProfileActionHandlers();
 }

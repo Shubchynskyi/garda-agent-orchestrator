@@ -827,10 +827,27 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
         review_finding_policy: REVIEW_FINDING_POLICY_SCHEMA,
         review_follow_up_policy: {
             type: 'object',
-            description: 'Deferred finding task materialization mode.',
+            description: 'Deferred finding task materialization and child-profile policy.',
             properties: {
                 schema_version: { type: 'integer', const: 1 },
-                materialization_mode: { type: 'string', enum: ['per_finding', 'grouped_by_parent'] }
+                materialization_mode: { type: 'string', enum: ['per_finding', 'grouped_by_parent'] },
+                task_profile: {
+                    type: 'object',
+                    properties: {
+                        mode: {
+                            type: 'string',
+                            enum: ['one_level_lighter', 'inherit_parent', 'fixed_profile']
+                        },
+                        fixed_profile: {
+                            anyOf: [
+                                { type: 'string', minLength: 1, maxLength: 64 },
+                                { type: 'null' }
+                            ]
+                        }
+                    },
+                    required: ['mode', 'fixed_profile'],
+                    additionalProperties: false
+                }
             },
             required: ['schema_version', 'materialization_mode'],
             additionalProperties: false

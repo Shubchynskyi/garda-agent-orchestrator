@@ -27,7 +27,11 @@ import {
 } from '../../../cli/commands/profile/profile-finding-policy';
 import type { ProfileEntry, ProfilesData } from '../../../cli/commands/profile/profile-types';
 import { joinOrchestratorPath } from '../../../gates/shared/helpers';
-import { REVIEW_FINDING_POLICY_PRESETS } from '../../../policy/profile-resolver';
+import {
+    REVIEW_FINDING_POLICY_PRESETS,
+    resolveReviewFollowUpPolicy,
+    type ReviewFollowUpPolicy
+} from '../../../policy/profile-resolver';
 import { buildProfilesTab } from '../../report-data-contract';
 import { appendUiActionAudit, resolveBundleRoot } from './action-common';
 import {
@@ -51,6 +55,7 @@ interface UiProfileRequest {
     description?: unknown;
     depth?: unknown;
     review_policy?: unknown;
+    review_follow_up_policy?: unknown;
     policy_preset?: unknown;
     policy_copy_from?: unknown;
     policy_reset?: unknown;
@@ -134,6 +139,23 @@ function normalizeReviewPolicy(value: unknown, fallback: Record<string, boolean 
         throw new Error(`review_policy.${reviewType} must be required, auto, or disabled.`);
     }
     return normalized;
+}
+
+function normalizeReviewFollowUpPolicy(value: unknown, fallback: ReviewFollowUpPolicy): ReviewFollowUpPolicy {
+    if (value === undefined) {
+        return {
+            ...fallback,
+            task_profile: { ...fallback.task_profile }
+        };
+    }
+    const resolved = resolveReviewFollowUpPolicy(value, 'local-ui-profile-edit');
+    if (resolved.diagnostics.some((diagnostic) => /invalid|malformed/u.test(diagnostic))) {
+        throw new Error(resolved.diagnostics.join(' '));
+    }
+    return {
+        ...resolved.policy,
+        task_profile: { ...resolved.policy.task_profile }
+    };
 }
 
 function loadShippedProfiles(repoRoot: string): ProfilesData | null {
@@ -232,7 +254,11 @@ function buildProfileEntryFromPayload(
         ...prepared,
         description: normalizeDescription(payload.description, fallbackDescription || prepared.description),
         depth: normalizeDepth(payload.depth, prepared.depth),
-        review_policy: normalizeReviewPolicy(payload.review_policy, prepared.review_policy)
+        review_policy: normalizeReviewPolicy(payload.review_policy, prepared.review_policy),
+        review_follow_up_policy: normalizeReviewFollowUpPolicy(
+            payload.review_follow_up_policy,
+            prepared.review_follow_up_policy || resolveReviewFollowUpPolicy(undefined, 'local-ui-profile-edit').policy
+        )
     };
 }
 

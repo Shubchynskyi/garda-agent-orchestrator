@@ -51,7 +51,10 @@ function buildProfileRow(
             ...findingPolicy.migration,
             diagnostics: findingPolicy.diagnostics
         },
-        review_follow_up_policy: { ...followUpPolicy.policy },
+        review_follow_up_policy: {
+            ...followUpPolicy.policy,
+            task_profile: { ...followUpPolicy.policy.task_profile }
+        },
         review_follow_up_policy_diagnostics: [...followUpPolicy.diagnostics],
         token_economy: { ...entry.token_economy },
         skills: { ...entry.skills }

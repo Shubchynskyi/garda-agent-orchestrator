@@ -19,6 +19,9 @@ export interface SchemaValidationResult {
 }
 
 function validateType(value: unknown, expected: string, jsonPath: string): SchemaValidationError | null {
+    if (expected === 'null') {
+        return value === null ? null : { path: jsonPath, message: `Expected null, got ${typeof value}.` };
+    }
     if (expected === 'array') {
         return Array.isArray(value) ? null : { path: jsonPath, message: `Expected array, got ${typeof value}.` };
     }

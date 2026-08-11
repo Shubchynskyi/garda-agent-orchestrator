@@ -29,7 +29,11 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "grouped_by_parent"
+        "materialization_mode": "grouped_by_parent",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
       },
       "token_economy": {
         "enabled": true,
@@ -69,7 +73,11 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "per_finding"
+        "materialization_mode": "per_finding",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
       },
       "token_economy": {
         "enabled": true,
@@ -109,7 +117,11 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "per_finding"
+        "materialization_mode": "per_finding",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
       },
       "token_economy": {
         "enabled": true,
@@ -149,7 +161,11 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "per_finding"
+        "materialization_mode": "per_finding",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
       },
       "token_economy": {
         "enabled": true,

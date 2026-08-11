@@ -95,6 +95,9 @@ interface FollowUpObligation {
 
 export interface FollowUpMaterializationContext {
     mode: ReviewFollowUpMaterializationMode;
+    parent_profile: string | null;
+    task_profile: string | null;
+    task_profile_source: string;
     snapshot_hash: string | null;
     cycle_id: string | null;
     preflight_sha256: string | null;
@@ -213,25 +216,79 @@ function normalizeHash(value: unknown): string | null {
     return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
 }
 
+function resolveParentTaskProfile(repoRoot: string, taskId: string): string | null {
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
+    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
+        return null;
+    }
+    const parsed = parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8'));
+    return parsed.rows.find((row) => row.taskId === taskId)?.profile?.trim().toLowerCase() || null;
+}
+
+function resolveFollowUpTaskProfileContext(
+    repoRoot: string,
+    taskId: string,
+    snapshot: Record<string, unknown> | null
+): Pick<FollowUpMaterializationContext, 'parent_profile' | 'task_profile' | 'task_profile_source' | 'diagnostics'> {
+    const parentProfile = resolveParentTaskProfile(repoRoot, taskId);
+    const assignment = snapshot && isPlainRecord(snapshot.review_follow_up_task_profile_assignment)
+        ? snapshot.review_follow_up_task_profile_assignment
+        : null;
+    const assignedParent = assignment ? normalizeText(assignment.parent_profile).toLowerCase() : '';
+    const assignedProfile = assignment ? normalizeText(assignment.profile).toLowerCase() : '';
+    const source = assignment ? normalizeText(assignment.source).toLowerCase() : '';
+    if (
+        assignedParent
+        && assignedProfile
+        && ['one_level_lighter', 'inherit_parent', 'fixed_profile', 'safe_inherit_parent'].includes(source)
+    ) {
+        return {
+            parent_profile: assignedParent,
+            task_profile: assignedProfile,
+            task_profile_source: source,
+            diagnostics: parentProfile && parentProfile !== assignedParent
+                ? [
+                    `Current TASK.md parent profile '${parentProfile}' differs from frozen profile '${assignedParent}'; ` +
+                    `follow-up profile remains frozen as '${assignedProfile}'.`
+                ]
+                : []
+        };
+    }
+    return {
+        parent_profile: parentProfile,
+        task_profile: parentProfile,
+        task_profile_source: 'legacy_safe_inherit_parent',
+        diagnostics: [
+            'Legacy or missing follow-up task profile assignment inherited the parent TASK.md profile.'
+        ]
+    };
+}
+
 function resolveFollowUpMaterializationContext(
     repoRoot: string,
     reviewsRoot: string,
     taskId: string
 ): FollowUpMaterializationContext {
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const initialTaskProfileContext = resolveFollowUpTaskProfileContext(repoRoot, taskId, null);
     const fallback: FollowUpMaterializationContext = {
         mode: 'per_finding',
+        ...initialTaskProfileContext,
         snapshot_hash: null,
         cycle_id: null,
         preflight_sha256: null,
         compile_gate_timestamp: null,
         group_fingerprint: null,
-        diagnostics: ['Legacy or missing profile snapshot review_follow_up_policy defaulted to per_finding.']
+        diagnostics: [
+            ...initialTaskProfileContext.diagnostics,
+            'Legacy or missing profile snapshot review_follow_up_policy defaulted to per_finding.'
+        ]
     };
     const read = readJsonFile(preflightPath, 'Preflight artifact');
     const snapshot = read.value && isPlainRecord(read.value.profile_policy_snapshot)
         ? read.value.profile_policy_snapshot
         : null;
+    const taskProfileContext = resolveFollowUpTaskProfileContext(repoRoot, taskId, snapshot);
     const policy = snapshot && isPlainRecord(snapshot.review_follow_up_policy)
         ? snapshot.review_follow_up_policy
         : null;
@@ -269,18 +326,21 @@ function resolveFollowUpMaterializationContext(
     if (mode === 'grouped_by_parent' && (!snapshotHash || !cycleId)) {
         return {
             mode,
+            ...taskProfileContext,
             snapshot_hash: snapshotHash,
             cycle_id: null,
             preflight_sha256: compilePreflightSha256,
             compile_gate_timestamp: compileTimestamp || null,
             group_fingerprint: null,
             diagnostics: [
+                ...taskProfileContext.diagnostics,
                 'Grouped follow-up policy requires snapshot_hash and a current preflight-bound compile cycle; materialization is blocked.'
             ]
         };
     }
     return {
         mode,
+        ...taskProfileContext,
         snapshot_hash: snapshotHash,
         cycle_id: cycleId,
         preflight_sha256: compilePreflightSha256,
@@ -294,7 +354,7 @@ function resolveFollowUpMaterializationContext(
                 materialization_mode: mode
             })
             : null,
-        diagnostics: []
+        diagnostics: [...taskProfileContext.diagnostics]
     };
 }
 
@@ -1056,6 +1116,8 @@ function buildTaskNotes(params: {
     dispositionArtifactSha256: string;
     dispositionResultSha256: string;
     receiptSha256: string;
+    taskProfile: string;
+    taskProfileSource: string;
 }): string {
     const item = params.obligation.disposition_item;
     return sanitizeTaskCell([
@@ -1068,6 +1130,8 @@ function buildTaskNotes(params: {
         `receipt_sha256=${params.receiptSha256};`,
         `disposition_sha256=${params.dispositionArtifactSha256};`,
         `disposition_result_sha256=${params.dispositionResultSha256};`,
+        `review_follow_up_task_profile=${params.taskProfile};`,
+        `review_follow_up_task_profile_source=${params.taskProfileSource};`,
         `review_follow_up_fingerprint=${params.obligation.fingerprint}.`
     ].join(' '), 'Review follow-up task.', 1200);
 }
@@ -1156,7 +1220,9 @@ function buildGroupedTaskNotes(params: {
         'Grouped deferred review findings and residual risks for one task-owned review cycle.',
         `review_follow_up_group_fingerprint=${params.context.group_fingerprint}.`,
         `review_follow_up_snapshot_sha256=${params.context.snapshot_hash}.`,
-        `review_follow_up_cycle=${params.context.cycle_id}.`
+        `review_follow_up_cycle=${params.context.cycle_id}.`,
+        `review_follow_up_task_profile=${params.context.task_profile}.`,
+        `review_follow_up_task_profile_source=${params.context.task_profile_source}.`
     ].join(' ');
     const laneBindings = [...bindings.values()]
         .sort((left, right) => left.reviewType.localeCompare(right.reviewType))
@@ -1283,6 +1349,7 @@ function materializeTaskQueueRows(params: {
                     rollback_content: null
                 };
             }
+            const childTaskProfile = params.materializationContext.task_profile || parentRow.profile;
 
             if (params.materializationContext.mode === 'grouped_by_parent') {
                 const groupFingerprint = params.materializationContext.group_fingerprint;
@@ -1399,7 +1466,7 @@ function materializeTaskQueueRows(params: {
                     'Address grouped deferred review findings and residual risks',
                     sanitizeTaskCell(parentRow.owner, 'gpt-5.5', 80),
                     nowIso().slice(0, 10),
-                    sanitizeTaskCell(parentRow.profile, 'balanced', 40),
+                    sanitizeTaskCell(childTaskProfile, parentRow.profile || 'balanced', 40),
                     groupedNotes
                 ].join(' | ')} |`;
                 const nextParentNotes = appendParentFollowUpNote(parentRow.notes, [groupedTaskId], params.artifactPath);
@@ -1480,7 +1547,7 @@ function materializeTaskQueueRows(params: {
                     buildTaskTitle(params.reviewType, obligation),
                     sanitizeTaskCell(parentRow.owner, 'gpt-5.5', 80),
                     today,
-                    sanitizeTaskCell(parentRow.profile, 'balanced', 40),
+                    sanitizeTaskCell(childTaskProfile, parentRow.profile || 'balanced', 40),
                     buildTaskNotes({
                         parentTaskId: params.parentTaskId,
                         reviewType: params.reviewType,
@@ -1489,7 +1556,9 @@ function materializeTaskQueueRows(params: {
                         validationResultSha256: params.validationResultSha256,
                         dispositionArtifactSha256: params.dispositionArtifactSha256,
                         dispositionResultSha256: params.dispositionResultSha256,
-                        receiptSha256: params.receiptSha256
+                        receiptSha256: params.receiptSha256,
+                        taskProfile: childTaskProfile,
+                        taskProfileSource: params.materializationContext.task_profile_source
                     })
                 ];
                 return `| ${row.join(' | ')} |`;
@@ -2386,7 +2455,8 @@ export function materializeReviewFindingsFollowUpTasks(
         created_task_ids: [...new Set(queueResult.created.map((item) => item.task_id))],
         reused_task_ids: [...new Set(queueResult.reused.map((item) => item.task_id))],
         violations: [],
-        output_lines: formatOutput({
+        output_lines: [
+            ...formatOutput({
             repoRoot,
             taskId,
             status,
@@ -2405,6 +2475,11 @@ export function materializeReviewFindingsFollowUpTasks(
                         : 'Disposition artifact contained no create_follow_up obligations.')),
             artifactPath,
             violations: []
-        })
+            }),
+            `FollowUpTaskProfile: ${materializationContext.task_profile || '<unavailable>'} ` +
+            `(source=${materializationContext.task_profile_source}, ` +
+            `parent=${materializationContext.parent_profile || '<unavailable>'})`,
+            ...materializationContext.diagnostics.map((diagnostic) => `FollowUpTaskProfileDiagnostic: ${diagnostic}`)
+        ]
     };
 }

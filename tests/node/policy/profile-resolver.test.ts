@@ -21,6 +21,8 @@ import {
     formatEffectivePolicyJson,
     applyProfileGuardrails,
     formatProfileGuardrailDiagnostics,
+    resolveReviewFollowUpPolicy,
+    resolveReviewFollowUpTaskProfileAssignment,
     type ReviewCapabilities,
     type TokenEconomyConfig,
     type SkillPacksConfig,
@@ -28,6 +30,66 @@ import {
     type ProfileTokenEconomy,
     type ProfileSkills
 } from '../../../src/policy/profile-resolver';
+
+test('follow-up task profile assignment follows the built-in lowering ladder', () => {
+    const available = ['strict', 'balanced', 'fast', 'docs-only'];
+    const policy = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'grouped_by_parent',
+        task_profile: { mode: 'one_level_lighter', fixed_profile: null }
+    }, 'strict').policy;
+
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(policy, 'strict', available).profile, 'balanced');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(policy, 'balanced', available).profile, 'fast');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(policy, 'fast', available).profile, 'fast');
+});
+
+test('follow-up task profile assignment supports inherit and fixed modes', () => {
+    const available = ['strict', 'balanced', 'fast', 'custom-profile'];
+    const inherited = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'inherit_parent', fixed_profile: null }
+    }, 'strict').policy;
+    const fixed = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'fixed_profile', fixed_profile: 'fast' }
+    }, 'strict').policy;
+
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(inherited, 'strict', available).profile, 'strict');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(fixed, 'strict', available).profile, 'fast');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(fixed, 'strict', available).source, 'fixed_profile');
+});
+
+test('one-level lowering fails closed for custom and docs-only profiles', () => {
+    const available = ['strict', 'balanced', 'fast', 'docs-only', 'custom-profile'];
+    const policy = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'one_level_lighter', fixed_profile: null }
+    }, 'custom-profile').policy;
+
+    for (const parent of ['custom-profile', 'docs-only']) {
+        const assignment = resolveReviewFollowUpTaskProfileAssignment(policy, parent, available);
+        assert.equal(assignment.profile, parent);
+        assert.equal(assignment.source, 'safe_inherit_parent');
+        assert.match(assignment.diagnostics.join('\n'), /instead of guessing/iu);
+    }
+});
+
+test('invalid fixed follow-up profile fails closed visibly', () => {
+    const policy = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'fixed_profile', fixed_profile: 'missing-profile' }
+    }, 'strict').policy;
+    const assignment = resolveReviewFollowUpTaskProfileAssignment(policy, 'strict', ['strict', 'balanced', 'fast']);
+
+    assert.equal(assignment.profile, 'strict');
+    assert.equal(assignment.source, 'safe_inherit_parent');
+    assert.match(assignment.diagnostics.join('\n'), /unavailable/iu);
+});
 
 
 function makeTempBundle(configs: {

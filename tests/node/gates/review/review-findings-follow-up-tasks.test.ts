@@ -440,7 +440,18 @@ function seedGroupedPreflight(
                 snapshot_hash: 'a'.repeat(64),
                 review_follow_up_policy: {
                     schema_version: 1,
-                    materialization_mode: 'grouped_by_parent'
+                    materialization_mode: 'grouped_by_parent',
+                    task_profile: {
+                        mode: 'one_level_lighter',
+                        fixed_profile: null
+                    }
+                },
+                review_follow_up_task_profile_assignment: {
+                    parent_profile: 'strict',
+                    profile: 'balanced',
+                    source: 'one_level_lighter',
+                    configured_mode: 'one_level_lighter',
+                    diagnostics: ["Follow-up task profile lowered from 'strict' to 'balanced'."]
                 }
             }
         }
@@ -530,15 +541,20 @@ describe('review findings follow-up task materialization', () => {
         const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
         assert.ok(childRow);
         assert.equal(childRow.status, 'TODO');
+        assert.equal(childRow.profile, 'balanced');
         assert.match(childRow.notes, /review_follow_up_group_fingerprint=[0-9a-f]{64}/u);
         assert.match(childRow.notes, /review_follow_up_snapshot_sha256=a{64}/u);
         assert.match(childRow.notes, /review_follow_up_lane_binding=code:1:[0-9a-f]{64}:[0-9a-f]{64}\./u);
+        assert.match(childRow.notes, /review_follow_up_task_profile=balanced/u);
+        assert.match(childRow.notes, /review_follow_up_task_profile_source=one_level_lighter/u);
         assert.ok(childRow.notes.includes(
             `review_follow_up_lane_artifact=code:\`${normalizeForArtifact(path.relative(repoRoot, materialized.artifact_path))}\`.`
         ));
 
         const artifact = readJson(materialized.artifact_path);
         assert.equal((artifact.materialization_policy as Record<string, unknown>).mode, 'grouped_by_parent');
+        assert.equal((artifact.materialization_policy as Record<string, unknown>).task_profile, 'balanced');
+        assert.equal((artifact.materialization_policy as Record<string, unknown>).task_profile_source, 'one_level_lighter');
         assert.equal((artifact.summary as Record<string, unknown>).created_task_count, 1);
 
         const dispositionArtifact = readJson(artifacts.dispositionArtifactPath);

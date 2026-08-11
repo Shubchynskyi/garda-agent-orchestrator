@@ -421,15 +421,38 @@ function validateReviewFindingPolicy(input: unknown, fieldName: string): Record<
 
 function validateReviewFollowUpPolicy(input: unknown, fieldName: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, fieldName);
-    const knownKeys = ['schema_version', 'materialization_mode'] as const;
+    const knownKeys = ['schema_version', 'materialization_mode', 'task_profile'] as const;
     assertNoUnknownKeys(raw, knownKeys, fieldName);
     const mode = normalizeNonEmptyString(raw.materialization_mode, `${fieldName}.materialization_mode`);
     if (mode !== 'per_finding' && mode !== 'grouped_by_parent') {
         throw new Error(`${fieldName}.materialization_mode must be one of: per_finding, grouped_by_parent.`);
     }
+    const taskProfileRaw = raw.task_profile === undefined
+        ? { mode: 'one_level_lighter', fixed_profile: null }
+        : ensurePlainObject(raw.task_profile, `${fieldName}.task_profile`);
+    assertNoUnknownKeys(taskProfileRaw, ['mode', 'fixed_profile'], `${fieldName}.task_profile`);
+    const taskProfileMode = normalizeNonEmptyString(taskProfileRaw.mode, `${fieldName}.task_profile.mode`);
+    if (!['one_level_lighter', 'inherit_parent', 'fixed_profile'].includes(taskProfileMode)) {
+        throw new Error(
+            `${fieldName}.task_profile.mode must be one of: one_level_lighter, inherit_parent, fixed_profile.`
+        );
+    }
+    const fixedProfile = taskProfileRaw.fixed_profile === null || taskProfileRaw.fixed_profile === undefined
+        ? null
+        : normalizeNonEmptyString(taskProfileRaw.fixed_profile, `${fieldName}.task_profile.fixed_profile`).toLowerCase();
+    if (taskProfileMode === 'fixed_profile' && fixedProfile === null) {
+        throw new Error(`${fieldName}.task_profile.fixed_profile is required when mode is fixed_profile.`);
+    }
+    if (taskProfileMode !== 'fixed_profile' && fixedProfile !== null) {
+        throw new Error(`${fieldName}.task_profile.fixed_profile must be null unless mode is fixed_profile.`);
+    }
     return {
         schema_version: normalizeInteger(raw.schema_version, `${fieldName}.schema_version`, { minimum: 1, maximum: 1 }),
-        materialization_mode: mode
+        materialization_mode: mode,
+        task_profile: {
+            mode: taskProfileMode,
+            fixed_profile: fixedProfile
+        }
     };
 }
 

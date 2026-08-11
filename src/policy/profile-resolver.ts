@@ -71,14 +71,35 @@ export interface ReviewFindingPolicyResolution {
 }
 
 export type ReviewFollowUpMaterializationMode = 'per_finding' | 'grouped_by_parent';
+export type ReviewFollowUpTaskProfileMode = 'one_level_lighter' | 'inherit_parent' | 'fixed_profile';
+
+export interface ReviewFollowUpTaskProfilePolicy {
+    mode: ReviewFollowUpTaskProfileMode;
+    fixed_profile: string | null;
+}
 
 export interface ReviewFollowUpPolicy {
     schema_version: 1;
     materialization_mode: ReviewFollowUpMaterializationMode;
+    task_profile: ReviewFollowUpTaskProfilePolicy;
 }
 
 export interface ReviewFollowUpPolicyResolution {
     policy: ReviewFollowUpPolicy;
+    diagnostics: string[];
+}
+
+export type ReviewFollowUpTaskProfileAssignmentSource =
+    | 'one_level_lighter'
+    | 'inherit_parent'
+    | 'fixed_profile'
+    | 'safe_inherit_parent';
+
+export interface ReviewFollowUpTaskProfileAssignment {
+    parent_profile: string;
+    profile: string;
+    source: ReviewFollowUpTaskProfileAssignmentSource;
+    configured_mode: ReviewFollowUpTaskProfileMode;
     diagnostics: string[];
 }
 
@@ -236,10 +257,24 @@ const REVIEW_FOLLOW_UP_MATERIALIZATION_MODES = new Set<ReviewFollowUpMaterializa
     'per_finding',
     'grouped_by_parent'
 ]);
+const REVIEW_FOLLOW_UP_TASK_PROFILE_MODES = new Set<ReviewFollowUpTaskProfileMode>([
+    'one_level_lighter',
+    'inherit_parent',
+    'fixed_profile'
+]);
+const BUILT_IN_FOLLOW_UP_PROFILE_LADDER: Readonly<Record<string, string>> = Object.freeze({
+    strict: 'balanced',
+    balanced: 'fast',
+    fast: 'fast'
+});
 
 export const DEFAULT_REVIEW_FOLLOW_UP_POLICY: Readonly<ReviewFollowUpPolicy> = Object.freeze({
     schema_version: 1,
-    materialization_mode: 'per_finding'
+    materialization_mode: 'per_finding',
+    task_profile: Object.freeze({
+        mode: 'one_level_lighter',
+        fixed_profile: null
+    })
 });
 
 export const REVIEW_FINDING_POLICY_PRESETS: Readonly<Record<'soft' | 'balanced' | 'strict', ReviewFindingPolicy>> = Object.freeze({
@@ -564,11 +599,17 @@ export function resolveReviewFollowUpPolicy(
     policyInput: unknown,
     profileName: string
 ): ReviewFollowUpPolicyResolution {
-    const legacyDefault = { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY };
+    const legacyDefault: ReviewFollowUpPolicy = {
+        ...DEFAULT_REVIEW_FOLLOW_UP_POLICY,
+        task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
+    };
     if (policyInput === undefined) {
         return {
             policy: legacyDefault,
-            diagnostics: [`Profile '${profileName}' is missing review_follow_up_policy; defaulted compatibly to per_finding.`]
+            diagnostics: [
+                `Profile '${profileName}' is missing review_follow_up_policy; defaulted compatibly to per_finding ` +
+                'with one_level_lighter follow-up task profiles.'
+            ]
         };
     }
     if (!isPlainRecord(policyInput)) {
@@ -577,7 +618,7 @@ export function resolveReviewFollowUpPolicy(
             diagnostics: [`Profile '${profileName}' has invalid review_follow_up_policy; defaulted to per_finding.`]
         };
     }
-    const allowedKeys = new Set(['schema_version', 'materialization_mode']);
+    const allowedKeys = new Set(['schema_version', 'materialization_mode', 'task_profile']);
     const mode = policyInput.materialization_mode;
     if (
         policyInput.schema_version !== 1
@@ -587,12 +628,130 @@ export function resolveReviewFollowUpPolicy(
     ) {
         return {
             policy: legacyDefault,
-            diagnostics: [`Profile '${profileName}' has malformed review_follow_up_policy; defaulted to per_finding.`]
+            diagnostics: [
+                `Profile '${profileName}' has malformed review_follow_up_policy; defaulted to per_finding ` +
+                'with one_level_lighter follow-up task profiles.'
+            ]
+        };
+    }
+    const taskProfileInput = policyInput.task_profile;
+    if (taskProfileInput === undefined) {
+        return {
+            policy: {
+                schema_version: 1,
+                materialization_mode: mode as ReviewFollowUpMaterializationMode,
+                task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
+            },
+            diagnostics: [
+                `Profile '${profileName}' resolved a legacy review_follow_up_policy; ` +
+                `materialization_mode=${mode}, task_profile.mode=one_level_lighter by default.`
+            ]
+        };
+    }
+    const safeTaskProfile: ReviewFollowUpTaskProfilePolicy = {
+        mode: 'inherit_parent',
+        fixed_profile: null
+    };
+    if (!isPlainRecord(taskProfileInput)) {
+        return {
+            policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode, task_profile: safeTaskProfile },
+            diagnostics: [
+                `Profile '${profileName}' has invalid review_follow_up_policy.task_profile; ` +
+                'resolved fail-closed to inherit_parent.'
+            ]
+        };
+    }
+    const taskProfileMode = taskProfileInput.mode;
+    const fixedProfile = taskProfileInput.fixed_profile === null || taskProfileInput.fixed_profile === undefined
+        ? null
+        : (typeof taskProfileInput.fixed_profile === 'string' ? taskProfileInput.fixed_profile.trim().toLowerCase() : '');
+    const taskProfileKeys = new Set(['mode', 'fixed_profile']);
+    const taskProfileMalformed = typeof taskProfileMode !== 'string'
+        || !REVIEW_FOLLOW_UP_TASK_PROFILE_MODES.has(taskProfileMode as ReviewFollowUpTaskProfileMode)
+        || Object.keys(taskProfileInput).some((key) => !taskProfileKeys.has(key))
+        || (taskProfileMode === 'fixed_profile' && !fixedProfile)
+        || (taskProfileMode !== 'fixed_profile' && fixedProfile !== null);
+    if (taskProfileMalformed) {
+        return {
+            policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode, task_profile: safeTaskProfile },
+            diagnostics: [
+                `Profile '${profileName}' has malformed review_follow_up_policy.task_profile; ` +
+                'resolved fail-closed to inherit_parent.'
+            ]
+        };
+    }
+    const taskProfile: ReviewFollowUpTaskProfilePolicy = {
+        mode: taskProfileMode as ReviewFollowUpTaskProfileMode,
+        fixed_profile: fixedProfile
+    };
+    return {
+        policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode, task_profile: taskProfile },
+        diagnostics: [
+            `Profile '${profileName}' review_follow_up_policy resolved: materialization_mode=${mode}, ` +
+            `task_profile.mode=${taskProfile.mode}` +
+            `${taskProfile.fixed_profile ? `, task_profile.fixed_profile=${taskProfile.fixed_profile}` : ''}.`
+        ]
+    };
+}
+
+export function resolveReviewFollowUpTaskProfileAssignment(
+    policy: ReviewFollowUpPolicy,
+    parentProfile: string,
+    availableProfiles: readonly string[]
+): ReviewFollowUpTaskProfileAssignment {
+    const normalizedParent = parentProfile.trim().toLowerCase();
+    const available = new Set(availableProfiles.map((profile) => profile.trim().toLowerCase()).filter(Boolean));
+    const configuredMode = policy.task_profile.mode;
+    if (configuredMode === 'inherit_parent') {
+        return {
+            parent_profile: normalizedParent,
+            profile: normalizedParent,
+            source: 'inherit_parent',
+            configured_mode: configuredMode,
+            diagnostics: [`Follow-up task profile inherited parent profile '${normalizedParent}'.`]
+        };
+    }
+    if (configuredMode === 'fixed_profile') {
+        const fixedProfile = policy.task_profile.fixed_profile;
+        if (fixedProfile && available.has(fixedProfile)) {
+            return {
+                parent_profile: normalizedParent,
+                profile: fixedProfile,
+                source: 'fixed_profile',
+                configured_mode: configuredMode,
+                diagnostics: [`Follow-up task profile fixed to '${fixedProfile}'.`]
+            };
+        }
+        return {
+            parent_profile: normalizedParent,
+            profile: normalizedParent,
+            source: 'safe_inherit_parent',
+            configured_mode: configuredMode,
+            diagnostics: [
+                `Configured fixed follow-up task profile '${fixedProfile || '<missing>'}' is unavailable; ` +
+                `resolved fail-closed to parent profile '${normalizedParent}'.`
+            ]
+        };
+    }
+    const lighterProfile = BUILT_IN_FOLLOW_UP_PROFILE_LADDER[normalizedParent];
+    if (lighterProfile && available.has(lighterProfile)) {
+        return {
+            parent_profile: normalizedParent,
+            profile: lighterProfile,
+            source: 'one_level_lighter',
+            configured_mode: configuredMode,
+            diagnostics: [`Follow-up task profile lowered from '${normalizedParent}' to '${lighterProfile}'.`]
         };
     }
     return {
-        policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode },
-        diagnostics: [`Profile '${profileName}' review_follow_up_policy resolved: materialization_mode=${mode}.`]
+        parent_profile: normalizedParent,
+        profile: normalizedParent,
+        source: 'safe_inherit_parent',
+        configured_mode: configuredMode,
+        diagnostics: [
+            `Profile '${normalizedParent}' has no canonical lighter built-in profile; ` +
+            'follow-up task profile inherited the parent instead of guessing an order.'
+        ]
     };
 }
 
@@ -1160,6 +1319,10 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
 
     lines.push('ReviewFollowUpPolicy:');
     lines.push(`  materialization_mode: ${policy.review_follow_up_policy.materialization_mode}`);
+    lines.push(`  task_profile.mode: ${policy.review_follow_up_policy.task_profile.mode}`);
+    lines.push(
+        `  task_profile.fixed_profile: ${policy.review_follow_up_policy.task_profile.fixed_profile || '<none>'}`
+    );
     if (policy.review_follow_up_policy_diagnostics.length > 0) {
         lines.push('  diagnostics:');
         for (const diagnostic of policy.review_follow_up_policy_diagnostics) {

@@ -61,6 +61,9 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                 protected: boolean;
                 active: boolean;
                 review_policy: Record<string, boolean | 'auto'>;
+                review_follow_up_policy: {
+                    task_profile: { mode: string; fixed_profile: string | null };
+                };
             }>;
         };
         assert.equal(list.enabled, true);
@@ -82,6 +85,14 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                 test: 'auto',
                 performance: 'disabled',
                 security: true
+            },
+            review_follow_up_policy: {
+                schema_version: 1,
+                materialization_mode: 'grouped_by_parent',
+                task_profile: {
+                    mode: 'fixed_profile',
+                    fixed_profile: 'fast'
+                }
             }
         };
         const createPreviewResponse = await fetch(`${server.url}api/profiles`, {
@@ -210,13 +221,27 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         const create = await createResponse.json() as { status: string; audit_path: string };
         assert.equal(create.status, 'executed');
         const createdData = JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')) as {
-            user_profiles: Record<string, { depth: number; review_policy: Record<string, unknown> }>;
+            user_profiles: Record<string, {
+                depth: number;
+                review_policy: Record<string, unknown>;
+                review_follow_up_policy: {
+                    task_profile: { mode: string; fixed_profile: string | null };
+                };
+            }>;
         };
         assert.equal(createdData.user_profiles['custom-review'].depth, 3);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.code, true);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.test, 'auto');
         assert.equal(createdData.user_profiles['custom-review'].review_policy.performance, false);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.security, true);
+        assert.equal(
+            createdData.user_profiles['custom-review'].review_follow_up_policy.task_profile.mode,
+            'fixed_profile'
+        );
+        assert.equal(
+            createdData.user_profiles['custom-review'].review_follow_up_policy.task_profile.fixed_profile,
+            'fast'
+        );
         assert.match(fs.readFileSync(create.audit_path, 'utf8'), /"action_id":"profile:create:custom-review"/u);
 
         const unsafePolicyResponse = await fetch(`${server.url}api/profiles`, {
