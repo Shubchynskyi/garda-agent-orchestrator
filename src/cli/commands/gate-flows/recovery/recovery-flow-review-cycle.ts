@@ -87,6 +87,32 @@ function getDependencyBlockReason(error: unknown, reviewType: string): string | 
     return message.trim();
 }
 
+export function buildReviewEvidenceOnlyRestartPlan(
+    invalidatedReviewTypes: readonly string[],
+    remediationReviewType: string
+): {
+    launchRequiredReviewTypes: string[];
+    pendingReviewTypes: string[];
+    pendingReason: string;
+    nextStep: string;
+} {
+    const normalizedInvalidatedReviewTypes = [...new Set(invalidatedReviewTypes
+        .map((reviewType) => String(reviewType || '').trim().toLowerCase())
+        .filter(Boolean))];
+    const restartReviewTypes = normalizedInvalidatedReviewTypes.length > 0
+        ? normalizedInvalidatedReviewTypes
+        : [String(remediationReviewType || '').trim().toLowerCase()].filter(Boolean);
+    const reviewLaneSummary = restartReviewTypes.join(', ');
+    return {
+        launchRequiredReviewTypes: [...restartReviewTypes],
+        pendingReviewTypes: [...restartReviewTypes],
+        pendingReason: 'failed delegated reviewer evidence invalidated the failed lane and every frozen-graph downstream lane',
+        nextStep: restartReviewTypes.length === 1
+            ? `Rerun next-step to materialize preserved review evidence and prepare one fresh '${reviewLaneSummary}' reviewer launch.`
+            : `Rerun next-step to materialize preserved review evidence and prepare fresh reviewer launches for invalidated lanes: ${reviewLaneSummary}.`
+    };
+}
+
 export async function runRestartReviewCycleCommand(
     options: RestartReviewCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -347,6 +373,11 @@ export async function runRestartReviewCycleCommand(
             }
             const requiredReviews = previousPreflight.preflight.required_reviews as Record<string, boolean>;
             const requiredReviewTypes = collectRequiredReviewTypes(requiredReviews);
+            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(previousPreflight.preflight);
+            const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+                previousPreflight.preflight,
+                reviewExecutionPolicyMode
+            );
             if (!requiredReviewTypes.includes(remediationReviewType)) {
                 throw new Error(
                     `review-evidence-only restart review type '${remediationReviewType}' is not required by the current preflight.`
@@ -407,13 +438,16 @@ export async function runRestartReviewCycleCommand(
                     testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
                     testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes,
                     reviewEvidenceOnly: true,
-                    remediationReviewType
+                    remediationReviewType,
+                    reviewDependencyGraph
                 }
             );
-            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(previousPreflight.preflight);
             const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, previousPreflight);
-            const nextStep =
-                `Rerun next-step to materialize preserved review evidence and prepare one fresh '${remediationReviewType}' reviewer launch.`;
+            const evidenceOnlyRestartPlan = buildReviewEvidenceOnlyRestartPlan(
+                remediationFixClassification.invalidated_review_types,
+                remediationReviewType
+            );
+            const nextStep = evidenceOnlyRestartPlan.nextStep;
             const remediationArtifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
                 schema_version: 1,
                 task_id: resolvedTaskId,
@@ -442,10 +476,10 @@ export async function runRestartReviewCycleCommand(
                 review_reuse: {
                     review_execution_policy: reviewExecutionPolicyMode,
                     prepared_review_types: [],
-                    launch_required_review_types: [remediationReviewType],
+                    launch_required_review_types: evidenceOnlyRestartPlan.launchRequiredReviewTypes,
                     reused_review_types: remediationFixClassification.preserved_review_types,
-                    pending_review_types: [remediationReviewType],
-                    pending_reason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes'
+                    pending_review_types: evidenceOnlyRestartPlan.pendingReviewTypes,
+                    pending_reason: evidenceOnlyRestartPlan.pendingReason
                 }
             });
             const restartArtifactPath = appendRestartCompletedEvidence({
@@ -474,10 +508,10 @@ export async function runRestartReviewCycleCommand(
                     review_contexts_refresh_status: 'deferred_to_navigator',
                     review_execution_policy_mode: reviewExecutionPolicyMode,
                     prepared_review_types: [],
-                    launch_required_review_types: [remediationReviewType],
+                    launch_required_review_types: evidenceOnlyRestartPlan.launchRequiredReviewTypes,
                     reused_review_types: remediationFixClassification.preserved_review_types,
-                    pending_review_types: [remediationReviewType],
-                    pending_reason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes'
+                    pending_review_types: evidenceOnlyRestartPlan.pendingReviewTypes,
+                    pending_reason: evidenceOnlyRestartPlan.pendingReason
                 }
             });
             return {
@@ -501,10 +535,10 @@ export async function runRestartReviewCycleCommand(
                     effectiveDepth,
                     reviewExecutionPolicyMode,
                     preparedResults: [],
-                    launchRequiredReviewTypes: [remediationReviewType],
+                    launchRequiredReviewTypes: evidenceOnlyRestartPlan.launchRequiredReviewTypes,
                     reusedReviewTypes: remediationFixClassification.preserved_review_types,
-                    pendingReviewTypes: [remediationReviewType],
-                    pendingReason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes',
+                    pendingReviewTypes: evidenceOnlyRestartPlan.pendingReviewTypes,
+                    pendingReason: evidenceOnlyRestartPlan.pendingReason,
                     nextStep,
                     preflightMode: previousPreflight.preflight.mode,
                     preflightScopeCategory: previousPreflight.preflight.scope_category,
@@ -618,7 +652,8 @@ export async function runRestartReviewCycleCommand(
             {
                 testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
                 testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes,
-                changedFileStats: remediationWorkspaceSnapshot.changed_file_stats
+                changedFileStats: remediationWorkspaceSnapshot.changed_file_stats,
+                reviewDependencyGraph
             }
         );
         const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));

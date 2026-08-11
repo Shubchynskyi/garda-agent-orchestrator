@@ -5,8 +5,10 @@ import {
     bindFullSuiteValidationBarrier,
     compileReviewDependencyGraph,
     getCompiledReviewDependencyGraphViolations,
+    getReviewDependencyTimelineOrderViolations,
     normalizeReviewDependencyGraphDeclaration,
-    resolveCompiledReviewDependencyGraphFromPreflight
+    resolveCompiledReviewDependencyGraphFromPreflight,
+    resolveReviewDependencyDownstreamReachability
 } from '../../../src/core/review-dependency-graph';
 import { validateProfilesConfig } from '../../../src/schemas/config-artifacts';
 import { profilesSchema, validateAgainstSchema } from '../../../src/schemas/config-schemas';
@@ -179,6 +181,181 @@ describe('review dependency graph compilation', () => {
             test: ['architecture-boundary']
         });
         assert.deepEqual(graph.preparation_batches, [['code'], ['architecture-boundary'], ['test']]);
+        assert.deepEqual(resolveReviewDependencyDownstreamReachability(graph, ['code']), {
+            seed_review_ids: ['code'],
+            affected_review_ids: ['code', 'architecture-boundary', 'test']
+        });
+        assert.deepEqual(resolveReviewDependencyDownstreamReachability(graph, ['architecture-boundary']), {
+            seed_review_ids: ['architecture-boundary'],
+            affected_review_ids: ['architecture-boundary', 'test']
+        });
+        assert.deepEqual(resolveReviewDependencyDownstreamReachability(graph, ['test']), {
+            seed_review_ids: ['test'],
+            affected_review_ids: ['test']
+        });
+        assert.throws(
+            () => resolveReviewDependencyDownstreamReachability(graph, ['security']),
+            /missing from the frozen graph: security/u
+        );
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 1, details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 2, details: { review_type: 'architecture-boundary' } },
+            { event_type: 'REVIEW_RECORDED', sequence: 3, details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 4, details: { review_type: 'test' } },
+            { event_type: 'REVIEW_RECORDED', sequence: 5, details: { review_type: 'architecture-boundary' } }
+        ]), [
+            {
+                code: 'downstream_started_early',
+                downstream_review_id: 'architecture-boundary',
+                upstream_review_id: 'code',
+                downstream_phase_sequence: 2,
+                upstream_record_sequence: 3
+            },
+            {
+                code: 'downstream_started_early',
+                downstream_review_id: 'test',
+                upstream_review_id: 'architecture-boundary',
+                downstream_phase_sequence: 4,
+                upstream_record_sequence: 5
+            }
+        ]);
+    });
+
+    it('rejects a late reuse rebind that was not accepted before downstream review started', () => {
+        const graph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'REVIEW_RECORDED', sequence: 4, details: { review_type: 'code' } },
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 10, details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 11, details: { review_type: 'architecture-boundary' } },
+            {
+                event_type: 'REVIEW_RECORDED',
+                sequence: 12,
+                details: { review_type: 'code', reused_existing_review: true }
+            }
+        ]), [{
+            code: 'downstream_started_early',
+            downstream_review_id: 'architecture-boundary',
+            upstream_review_id: 'code',
+            downstream_phase_sequence: 11,
+            upstream_record_sequence: 12
+        }]);
+    });
+
+    it('rejects downstream review ordering when the latest upstream result has blocking findings', () => {
+        const graph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 1, details: {} },
+            {
+                event_type: 'REVIEW_RECORDED',
+                sequence: 2,
+                details: {
+                    review_type: 'code',
+                    review_findings_disposition: {
+                        blocking_count: 1,
+                        verdict: 'fail_for_fix_now'
+                    }
+                }
+            },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 3, details: { review_type: 'architecture-boundary' } }
+        ]), [{
+            code: 'unaccepted_upstream_record',
+            downstream_review_id: 'architecture-boundary',
+            upstream_review_id: 'code',
+            downstream_phase_sequence: 3,
+            upstream_record_sequence: 2
+        }]);
+    });
+
+    it('selects latest timeline evidence by task sequence instead of array order', () => {
+        const graph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 1, details: {} },
+            { event_type: 'REVIEW_RECORDED', sequence: 4, details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 3, details: { review_type: 'architecture-boundary' } },
+            { event_type: 'REVIEW_RECORDED', sequence: 2, details: { review_type: 'code' } }
+        ]), [{
+            code: 'downstream_started_early',
+            downstream_review_id: 'architecture-boundary',
+            upstream_review_id: 'code',
+            downstream_phase_sequence: 3,
+            upstream_record_sequence: 4
+        }]);
+    });
+
+    it('retains an earlier current-cycle ordering violation after a later valid phase starts', () => {
+        const graph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 1, details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 2, details: { review_type: 'architecture-boundary' } },
+            { event_type: 'REVIEW_RECORDED', sequence: 3, details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 4, details: { review_type: 'architecture-boundary' } }
+        ]), [{
+            code: 'downstream_started_early',
+            downstream_review_id: 'architecture-boundary',
+            upstream_review_id: 'code',
+            downstream_phase_sequence: 2,
+            upstream_record_sequence: 3
+        }]);
+    });
+
+    it('does not carry a remediated dependency-order violation across compile cycles', () => {
+        const graph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 1, details: { review_type: 'architecture-boundary' } },
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 2, details: {} },
+            { event_type: 'REVIEW_RECORDED', sequence: 3, details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 4, details: { review_type: 'architecture-boundary' } }
+        ]), []);
     });
 
     it('injects full-suite placement as a gate barrier instead of a review lane', () => {

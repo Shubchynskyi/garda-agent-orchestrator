@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
 import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
 import {
     buildReviewRemediationRecoveryRoute,
@@ -35,16 +36,16 @@ function makeSnapshot(): Record<string, unknown> {
     };
 }
 
-function makeDelta(category: ReviewRemediationDeltaCategory): ReviewRemediationDeltaClassification {
+function makeDelta(category: ReviewRemediationDeltaCategory, reviewType = 'test'): ReviewRemediationDeltaClassification {
     const core: Omit<ReviewRemediationDeltaClassification, 'classification_sha256'> = {
         schema_version: 1,
         task_id: TASK_ID,
-        review_type: 'test',
+        review_type: reviewType,
         status: 'CLASSIFIED',
         category,
         reason: `fixture category ${category}`,
         baseline: {
-            artifact_path: `${REVIEWS_ROOT}/${TASK_ID}-test-remediation-baseline.json`,
+            artifact_path: `${REVIEWS_ROOT}/${TASK_ID}-${reviewType}-remediation-baseline.json`,
             artifact_sha256: hash('baseline'),
             review_tree_state_sha256: hash('tree'),
             delta_base_snapshot_sha256: hash('delta-base')
@@ -134,7 +135,8 @@ const reviewCommands = {
     code: { command: 'node review-code.js' },
     security: { command: 'node review-security.js' },
     refactor: { command: 'node review-refactor.js' },
-    test: { command: 'node review-test.js' }
+    test: { command: 'node review-test.js' },
+    'architecture-boundary': { command: 'node review-architecture-boundary.js' }
 };
 
 function acceptedReceipt(reviewType: string): ReviewRemediationReusableReceipt {
@@ -238,6 +240,45 @@ describe('review remediation selective recovery routing', () => {
             afterRefactor.dependency_edges.find((entry) => entry.review_type === 'test')?.depends_on,
             ['code', 'refactor']
         );
+    });
+
+    it('invalidates custom downstream lanes while keeping an independent accepted lane reusable', () => {
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'security', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'security', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const route = buildReviewRemediationRecoveryRoute(routeOptions('leaf_test', {
+            currentReviewType: 'code',
+            delta: makeDelta('leaf_test', 'code'),
+            requiredReviews: { code: true, security: true, 'architecture-boundary': true, test: true },
+            reviewExecutionPolicyMode: 'parallel_all',
+            reviewDependencyGraph,
+            reusableReceipts: [
+                acceptedReceipt('code'),
+                acceptedReceipt('security'),
+                acceptedReceipt('architecture-boundary'),
+                acceptedReceipt('test')
+            ]
+        }));
+
+        assert.deepEqual(route.invalidated_review_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(route.preserved_review_types, ['security']);
+        assert.deepEqual(route.reused_review_types, ['security']);
+        assert.deepEqual(route.review_required_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(route.dependency_edges, [
+            { review_type: 'code', depends_on: [] },
+            { review_type: 'architecture-boundary', depends_on: ['code'] },
+            { review_type: 'test', depends_on: ['architecture-boundary'] }
+        ]);
     });
 
     it('routes broad impact to ordinary validation and invalidates only currently required lanes', () => {

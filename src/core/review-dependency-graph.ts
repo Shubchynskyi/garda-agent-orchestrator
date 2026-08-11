@@ -54,6 +54,31 @@ export interface CompileReviewDependencyGraphOptions {
     };
 }
 
+export interface ReviewDependencyReachability {
+    seed_review_ids: readonly string[];
+    affected_review_ids: readonly string[];
+}
+
+export interface ReviewDependencyTimelineEventLike {
+    event_type: string;
+    sequence: number;
+    details?: Record<string, unknown> | null;
+}
+
+export type ReviewDependencyTimelineOrderViolationCode =
+    | 'missing_upstream_record'
+    | 'unaccepted_upstream_record'
+    | 'stale_upstream_record'
+    | 'downstream_started_early';
+
+export interface ReviewDependencyTimelineOrderViolation {
+    code: ReviewDependencyTimelineOrderViolationCode;
+    downstream_review_id: string;
+    upstream_review_id: string;
+    downstream_phase_sequence: number;
+    upstream_record_sequence: number | null;
+}
+
 export function bindFullSuiteValidationBarrier<
     T extends { enabled: boolean; placement: FullSuiteValidationPlacement }
 >(
@@ -68,6 +93,203 @@ export function bindFullSuiteValidationBarrier<
         enabled: dependencyGraph.full_suite_barrier.enabled,
         placement: dependencyGraph.full_suite_barrier.placement
     };
+}
+
+/**
+ * Expands changed review lanes through the immutable dependency DAG.
+ * Dependencies point from a downstream lane to its direct upstream lanes, so
+ * invalidation walks the reverse edge direction and returns graph-order output.
+ */
+export function resolveReviewDependencyDownstreamReachability(
+    dependencyGraph: CompiledReviewDependencyGraph,
+    seedReviewIds: readonly string[]
+): ReviewDependencyReachability {
+    const graphViolations = getCompiledReviewDependencyGraphViolations(dependencyGraph);
+    if (graphViolations.length > 0) {
+        throw new Error(`Cannot resolve review dependency reachability from an invalid graph: ${graphViolations.join('; ')}`);
+    }
+    const graphNodes = new Set(dependencyGraph.preparation_order);
+    const normalizedSeeds = [...new Set(seedReviewIds.map((reviewId) => String(reviewId || '').trim().toLowerCase()))];
+    const unknownSeeds = normalizedSeeds.filter((reviewId) => !graphNodes.has(reviewId));
+    if (unknownSeeds.length > 0) {
+        throw new Error(
+            `Cannot resolve review dependency reachability for lanes missing from the frozen graph: ${unknownSeeds.join(', ')}.`
+        );
+    }
+
+    const affected = new Set(normalizedSeeds);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const reviewId of dependencyGraph.preparation_order) {
+            if (affected.has(reviewId)) {
+                continue;
+            }
+            if ((dependencyGraph.dependencies[reviewId] || []).some((dependency) => affected.has(dependency))) {
+                affected.add(reviewId);
+                changed = true;
+            }
+        }
+    }
+    return Object.freeze({
+        seed_review_ids: Object.freeze(dependencyGraph.preparation_order.filter((reviewId) => normalizedSeeds.includes(reviewId))),
+        affected_review_ids: Object.freeze(dependencyGraph.preparation_order.filter((reviewId) => affected.has(reviewId)))
+    });
+}
+
+function normalizeTimelineReviewId(event: ReviewDependencyTimelineEventLike): string {
+    return String(event.details?.review_type ?? event.details?.reviewType ?? '').trim().toLowerCase();
+}
+
+function findLatestTimelineEventLike(
+    events: readonly ReviewDependencyTimelineEventLike[],
+    predicate: (event: ReviewDependencyTimelineEventLike) => boolean
+): ReviewDependencyTimelineEventLike | null {
+    let latest: ReviewDependencyTimelineEventLike | null = null;
+    for (const event of events) {
+        if (predicate(event) && (latest == null || event.sequence > latest.sequence)) {
+            latest = event;
+        }
+    }
+    return latest;
+}
+
+function isAcceptedReviewTimelineRecord(event: ReviewDependencyTimelineEventLike): boolean {
+    const details = event.details;
+    const validation = isPlainRecord(details?.review_findings_validation)
+        ? details.review_findings_validation
+        : null;
+    if (validation?.accepted === false) {
+        return false;
+    }
+    const coverage = isPlainRecord(details?.review_coverage)
+        ? details.review_coverage
+        : null;
+    const coverageStatus = String(coverage?.status ?? '').trim().toUpperCase();
+    if (coverageStatus !== '' && coverageStatus !== 'PASS') {
+        return false;
+    }
+
+    const disposition = isPlainRecord(details?.review_findings_disposition)
+        ? details.review_findings_disposition
+        : null;
+    if (disposition) {
+        const blockingCount = Number(disposition.blocking_count);
+        if (Number.isInteger(blockingCount) && blockingCount >= 0) {
+            return blockingCount === 0;
+        }
+        const verdict = String(disposition.verdict ?? '').trim().toLowerCase();
+        if (verdict !== '') {
+            return !verdict.includes('fail');
+        }
+        return false;
+    }
+
+    // Older task timelines and compact fixtures predate findings disposition.
+    // Preserve compatibility unless they carry explicit negative evidence.
+    const explicitVerdict = String(
+        details?.review_verdict ?? details?.verdict_token ?? details?.verdict ?? ''
+    ).trim().toLowerCase();
+    return explicitVerdict === '' || !explicitVerdict.includes('fail');
+}
+
+/**
+ * Validates launch-time ordering against the same frozen DAG used by launch
+ * routing. It deliberately does not replace receipt, scope, or provenance
+ * checks; consumers add those independent trust checks separately.
+ */
+export function getReviewDependencyTimelineOrderViolations(
+    dependencyGraph: CompiledReviewDependencyGraph,
+    events: readonly ReviewDependencyTimelineEventLike[]
+): ReviewDependencyTimelineOrderViolation[] {
+    const graphViolations = getCompiledReviewDependencyGraphViolations(dependencyGraph);
+    if (graphViolations.length > 0) {
+        throw new Error(`Cannot validate review dependency timeline order from an invalid graph: ${graphViolations.join('; ')}`);
+    }
+    const latestCompileSequence = findLatestTimelineEventLike(
+        events,
+        (event) => event.event_type === 'COMPILE_GATE_PASSED'
+    )?.sequence ?? null;
+    const typedReviewPhasesPresent = events.some((event) => (
+        event.event_type === 'REVIEW_PHASE_STARTED' && normalizeTimelineReviewId(event) !== ''
+    ));
+    const latestUntypedReviewPhase = typedReviewPhasesPresent
+        ? null
+        : findLatestTimelineEventLike(events, (event) => event.event_type === 'REVIEW_PHASE_STARTED');
+    const violations: ReviewDependencyTimelineOrderViolation[] = [];
+
+    for (const downstreamReviewId of dependencyGraph.preparation_order) {
+        const typedDownstreamPhases = events.filter((event) => (
+            event.event_type === 'REVIEW_PHASE_STARTED'
+            && normalizeTimelineReviewId(event) === downstreamReviewId
+            && (latestCompileSequence == null || event.sequence >= latestCompileSequence)
+        ));
+        const downstreamPhases = typedDownstreamPhases.length > 0
+            ? typedDownstreamPhases
+            : latestUntypedReviewPhase
+                && (latestCompileSequence == null || latestUntypedReviewPhase.sequence >= latestCompileSequence)
+                ? [latestUntypedReviewPhase]
+                : [];
+        if (downstreamPhases.length === 0) {
+            continue;
+        }
+        for (const downstreamPhase of downstreamPhases) {
+            for (const upstreamReviewId of dependencyGraph.dependencies[downstreamReviewId] || []) {
+                const upstreamRecord = findLatestTimelineEventLike(events, (event) => (
+                    event.event_type === 'REVIEW_RECORDED'
+                    && normalizeTimelineReviewId(event) === upstreamReviewId
+                ));
+                if (!upstreamRecord) {
+                    violations.push({
+                        code: 'missing_upstream_record',
+                        downstream_review_id: downstreamReviewId,
+                        upstream_review_id: upstreamReviewId,
+                        downstream_phase_sequence: downstreamPhase.sequence,
+                        upstream_record_sequence: null
+                    });
+                    continue;
+                }
+                if (!isAcceptedReviewTimelineRecord(upstreamRecord)) {
+                    violations.push({
+                        code: 'unaccepted_upstream_record',
+                        downstream_review_id: downstreamReviewId,
+                        upstream_review_id: upstreamReviewId,
+                        downstream_phase_sequence: downstreamPhase.sequence,
+                        upstream_record_sequence: upstreamRecord.sequence
+                    });
+                    continue;
+                }
+                if (latestCompileSequence != null && upstreamRecord.sequence < latestCompileSequence) {
+                    violations.push({
+                        code: 'stale_upstream_record',
+                        downstream_review_id: downstreamReviewId,
+                        upstream_review_id: upstreamReviewId,
+                        downstream_phase_sequence: downstreamPhase.sequence,
+                        upstream_record_sequence: upstreamRecord.sequence
+                    });
+                    continue;
+                }
+                const validReuseRebind = upstreamRecord.details?.reused_existing_review === true
+                    && events.some((event) => (
+                        event.sequence < downstreamPhase.sequence
+                        && (latestCompileSequence == null || event.sequence >= latestCompileSequence)
+                        && event.event_type === 'REVIEW_RECORDED'
+                        && normalizeTimelineReviewId(event) === upstreamReviewId
+                        && isAcceptedReviewTimelineRecord(event)
+                    ));
+                if (upstreamRecord.sequence > downstreamPhase.sequence && !validReuseRebind) {
+                    violations.push({
+                        code: 'downstream_started_early',
+                        downstream_review_id: downstreamReviewId,
+                        upstream_review_id: upstreamReviewId,
+                        downstream_phase_sequence: downstreamPhase.sequence,
+                        upstream_record_sequence: upstreamRecord.sequence
+                    });
+                }
+            }
+        }
+    }
+    return violations;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

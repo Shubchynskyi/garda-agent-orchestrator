@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
+import { buildBuiltInReviewTypeDefinitions } from '../../../../../../src/core/review-catalog';
 import { readTimelineEventsSummary, runBuildReviewContextCommand } from '../../../../../../src/cli/commands/gate-build-handlers';
 import {
     runCompileGateCommand,
@@ -370,6 +371,11 @@ function seedRemediationRepoBase(repoRoot: string): void {
     );
     fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+    for (const skillId of new Set(buildBuiltInReviewTypeDefinitions().flatMap((definition) => definition.skill_ids))) {
+        const skillRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'skills', skillId);
+        fs.mkdirSync(skillRoot, { recursive: true });
+        fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), `# ${skillId}\n\nReview fixture entrypoint.\n`, 'utf8');
+    }
     fs.writeFileSync(
         path.join(repoRoot, TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH),
         "test('rejects replaced trust-boundary evidence', () => { assert.equal(true, true); });\n",

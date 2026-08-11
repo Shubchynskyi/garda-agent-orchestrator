@@ -4,7 +4,7 @@ import {
     getReviewExecutionPreparationOrder,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
-import { REVIEW_CAPABILITY_KEYS } from '../../core/review-capabilities';
+import type { CompiledReviewDependencyGraph } from '../../core/review-dependency-graph';
 import { isPlainRecord } from '../../core/records';
 import { validateTaskProfilePolicySnapshot } from '../../policy/task-profile-policy-snapshot';
 import {
@@ -89,6 +89,7 @@ export interface BuildReviewRemediationRecoveryRouteOptions {
     delta: ReviewRemediationDeltaClassification;
     requiredReviews: Record<string, boolean>;
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
+    reviewDependencyGraph?: CompiledReviewDependencyGraph | null;
     reusableReceipts?: readonly ReviewRemediationReusableReceipt[];
     completedReceipts?: readonly ReviewRemediationCompletedReceipt[];
     reviewContextSha256ByType?: Partial<Record<string, string>>;
@@ -125,20 +126,32 @@ function normalizeReviewType(value: unknown, label: string): string {
     if (
         !normalized
         || value !== normalized
-        || !(REVIEW_CAPABILITY_KEYS as readonly string[]).includes(normalized)
+        || !/^[a-z][a-z0-9-]*$/u.test(normalized)
+        || normalized === 'full-suite-validation'
     ) {
-        throw new Error(`${label} must be a supported canonical review type.`);
+        throw new Error(`${label} must be a canonical review lane id.`);
     }
     return normalized;
 }
 
 function canonicalRequiredReviewTypes(
     requiredReviews: Record<string, boolean>,
-    policyMode: EffectiveReviewExecutionPolicyMode
+    policyMode: EffectiveReviewExecutionPolicyMode,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
     const required = Object.entries(requiredReviews)
         .filter(([, enabled]) => enabled === true)
         .map(([reviewType]) => normalizeReviewType(reviewType, 'required review type'));
+    if (dependencyGraph) {
+        const requiredSet = new Set(required);
+        const missingFromGraph = required.filter((reviewType) => !dependencyGraph.nodes.includes(reviewType));
+        if (missingFromGraph.length > 0) {
+            throw new Error(
+                `Required remediation recovery lanes are missing from the frozen dependency graph: ${missingFromGraph.join(', ')}.`
+            );
+        }
+        return dependencyGraph.preparation_order.filter((reviewType) => requiredSet.has(reviewType));
+    }
     const order = getReviewExecutionPreparationOrder(policyMode);
     return [...new Set(required)].sort((left, right) => {
         const leftIndex = order.indexOf(left);
@@ -310,7 +323,8 @@ export function buildReviewRemediationRecoveryRoute(
 
     const requiredReviewTypes = canonicalRequiredReviewTypes(
         options.requiredReviews,
-        options.reviewExecutionPolicyMode
+        options.reviewExecutionPolicyMode,
+        options.reviewDependencyGraph
     );
     const policyResolution = resolveReviewRemediationRerunPolicyFromSnapshot(options.profilePolicySnapshot);
     const selection = resolveReviewRemediationRerunLanes({
@@ -318,7 +332,8 @@ export function buildReviewRemediationRecoveryRoute(
         category: options.delta.category,
         currentReviewType,
         requiredReviews: options.requiredReviews,
-        reviewExecutionPolicyMode: options.reviewExecutionPolicyMode
+        reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
+        reviewDependencyGraph: options.reviewDependencyGraph
     });
     const invalidatedReviewTypes = selection.ordered_rerun_lanes;
     const invalidatedSet = new Set(invalidatedReviewTypes);
@@ -335,7 +350,8 @@ export function buildReviewRemediationRecoveryRoute(
         depends_on: getReviewExecutionDependencies(
             reviewType,
             options.requiredReviews,
-            options.reviewExecutionPolicyMode
+            options.reviewExecutionPolicyMode,
+            options.reviewDependencyGraph
         ).filter((dependency) => requiredReviewTypes.includes(dependency))
     }));
     const validationRequirement = buildReviewRemediationValidationRequirement(options.delta.category);

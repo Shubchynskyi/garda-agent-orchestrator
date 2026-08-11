@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { compileReviewDependencyGraph } from '../../../src/core/review-dependency-graph';
 import {
     REVIEW_REMEDIATION_DELTA_CATEGORIES,
     buildDefaultReviewRemediationRerunPolicy,
@@ -110,6 +111,40 @@ test('preserves the active review execution dependency graph without changing se
         { review_type: 'refactor', depends_on: [] },
         { review_type: 'test', depends_on: [] }
     ]);
+});
+
+test('expands remediation seeds through a frozen custom graph while preserving independent lanes', () => {
+    const reviewDependencyGraph = compileReviewDependencyGraph({
+        catalogLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+        activeLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+        requiredReviewIds: ['code', 'security', 'architecture-boundary', 'test'],
+        mode: 'parallel_all',
+        declaration: {
+            preparation_order: ['code', 'security', 'architecture-boundary', 'test'],
+            dependencies: {
+                'architecture-boundary': ['code'],
+                test: ['architecture-boundary']
+            }
+        }
+    });
+
+    const selection = resolveReviewRemediationRerunLanes({
+        policy: buildDefaultReviewRemediationRerunPolicy(),
+        category: 'leaf_test',
+        currentReviewType: 'code',
+        requiredReviews: { code: true, security: true, 'architecture-boundary': true, test: true },
+        reviewExecutionPolicyMode: 'parallel_all',
+        reviewDependencyGraph
+    });
+
+    assert.deepEqual(selection.ordered_rerun_lanes, ['code', 'architecture-boundary', 'test']);
+    assert.deepEqual(selection.dependency_edges, [
+        { review_type: 'code', depends_on: [] },
+        { review_type: 'architecture-boundary', depends_on: ['code'] },
+        { review_type: 'test', depends_on: ['architecture-boundary'] }
+    ]);
+    assert.equal(selection.ordered_rerun_lanes.includes('security'), false);
+    assert.match(selection.reason, /expands through affected downstream graph lanes/u);
 });
 
 test('resolves legacy snapshots conservatively to all required lanes for every category', () => {

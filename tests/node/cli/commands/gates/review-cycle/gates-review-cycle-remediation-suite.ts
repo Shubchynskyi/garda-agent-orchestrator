@@ -39,6 +39,8 @@ import {
 } from './gates-review-cycle-fixtures';
 import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
 import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-remediation';
+import { buildReviewEvidenceOnlyRestartPlan } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-review-cycle';
+import { compileReviewDependencyGraph } from '../../../../../../src/core/review-dependency-graph';
 
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
@@ -1220,6 +1222,52 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
 });
 
 describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle remediation reuse policy', () => {
+    it('schedules every graph-invalidated descendant after evidence-only reviewer failure', () => {
+        const dependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const classification = classifyReviewRemediationFix(
+            {
+                status: 'OK',
+                previousChangedFiles: ['src/app.ts'],
+                currentChangedFiles: [],
+                expandedFiles: [],
+                expandedNonTestFiles: [],
+                allowedTestOnlyExpansionFiles: []
+            },
+            ['code', 'architecture-boundary', 'test'],
+            undefined,
+            ['(^|/)tests?/'],
+            undefined,
+            {
+                reviewEvidenceOnly: true,
+                remediationReviewType: 'code',
+                reviewDependencyGraph: dependencyGraph
+            }
+        );
+
+        assert.deepEqual(classification.invalidated_review_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(buildReviewEvidenceOnlyRestartPlan(
+            classification.invalidated_review_types,
+            'code'
+        ), {
+            launchRequiredReviewTypes: ['code', 'architecture-boundary', 'test'],
+            pendingReviewTypes: ['code', 'architecture-boundary', 'test'],
+            pendingReason: 'failed delegated reviewer evidence invalidated the failed lane and every frozen-graph downstream lane',
+            nextStep: 'Rerun next-step to materialize preserved review evidence and prepare fresh reviewer launches for invalidated lanes: code, architecture-boundary, test.'
+        });
+    });
+
     it('restart-review-cycle preserves upstream lanes when failed test remediation edits an existing test file', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902-existing-test-remediation-reuse';
@@ -1756,7 +1804,57 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
         assert.equal(classification.evidence.test_refactor_changed_lines_threshold, 100);
     });
 
-    it('restart-review-cycle uses the frozen test-trigger policy after live paths config changes', { concurrency: false }, async () => {
+    it('expands an upstream remediation classification through custom graph descendants only', () => {
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'security', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'security', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const classification = classifyReviewRemediationFix(
+            {
+                status: 'OK',
+                previousChangedFiles: ['src/app.ts'],
+                currentChangedFiles: ['src/app.ts'],
+                expandedFiles: [],
+                expandedNonTestFiles: [],
+                allowedTestOnlyExpansionFiles: []
+            },
+            ['code', 'security', 'architecture-boundary', 'test'],
+            {
+                status: 'RECORDED',
+                source: 'inline',
+                summary: [
+                    'Reviewer finding: isolate the _testHooks helper in src/app.ts.',
+                    'Intended fix: constrain only test hook exposure without runtime behavior changes.',
+                    'Affected files/contracts: src/app.ts changes while public contracts stay stable.',
+                    'API/runtime/artifact/test impact: test hook isolation only.',
+                    'Possible side effects: downstream graph lanes must refresh.',
+                    'Required targeted checks: graph remediation classification.',
+                    'Scope or review-type changes: code and its dependent lanes are affected.',
+                    'Related blockers/follow-up: none.'
+                ].join(' '),
+                required_topics: [],
+                affected_files: ['src/app.ts']
+            },
+            ['(^|/)tests?/'],
+            undefined,
+            { reviewDependencyGraph }
+        );
+
+        assert.equal(classification.category, 'test_hook_isolation');
+        assert.deepEqual(classification.invalidated_review_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(classification.preserved_review_types, ['security']);
+    });
+
+    it('restart-review-cycle fails closed when live test-trigger policy drifts after task entry', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-frozen-recovery-trigger-policy';
         const sourceFile = 'src/app.ts';
@@ -1863,32 +1961,11 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
             ].join(' '),
             emitMetrics: false
         });
-        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-        const resumedReuse = await resumeReviewReuseAfterChecklist(
-            repoRoot,
-            taskId,
-            preflightPath,
-            ['code', 'security', 'refactor']
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, restartResult.outputLines.join('\n'));
+        assert.match(
+            restartResult.outputLines.join('\n'),
+            /Task profile policy inputs changed after preflight \(paths\).*Re-enter task mode/isu
         );
-
-        const remediationArtifact = JSON.parse(fs.readFileSync(
-            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
-            'utf8'
-        )) as Record<string, unknown>;
-        const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
-        const evidence = classification.evidence as Record<string, unknown>;
-        assert.equal(classification.category, 'test_coverage_only');
-        assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
-        assert.deepEqual(classification.preserved_review_types, ['code', 'security']);
-        assert.equal(evidence.test_refactor_trigger_reason, 'structural_test_domain_file');
-        assert.deepEqual(evidence.test_refactor_trigger_files, [testFile]);
-        assert.equal(evidence.test_refactor_changed_lines_threshold, 100);
-        assert.deepEqual(
-            [...resumedReuse.reusedReviewTypes].sort(),
-            ['code', 'security'],
-            restartResult.outputLines.join('\n')
-        );
-        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, ['refactor']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

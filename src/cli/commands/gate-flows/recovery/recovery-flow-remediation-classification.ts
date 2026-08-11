@@ -1,4 +1,8 @@
 import { DEFAULT_REVIEW_TRIGGER_POLICY } from '../../../../policy/review-trigger-policy';
+import {
+    resolveReviewDependencyDownstreamReachability,
+    type CompiledReviewDependencyGraph
+} from '../../../../core/review-dependency-graph';
 import { normalizeChangedFiles } from './recovery-flow-shared';
 import {
     getReviewRemediationSemanticSignals,
@@ -113,6 +117,44 @@ function getStructuralTestDomainFiles(files: readonly string[], patterns: readon
     return normalizeChangedFiles(files).filter((file) => compiledPatterns.some((pattern) => pattern.test(file)));
 }
 
+function orderRequiredReviewTypes(
+    requiredReviewTypes: readonly string[],
+    dependencyGraph?: CompiledReviewDependencyGraph | null
+): string[] {
+    const normalized = [...new Set(
+        requiredReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
+    )];
+    if (!dependencyGraph) {
+        return normalized.sort();
+    }
+    const requiredSet = new Set(normalized);
+    const missingFromGraph = normalized.filter((reviewType) => !dependencyGraph.nodes.includes(reviewType));
+    if (missingFromGraph.length > 0) {
+        throw new Error(
+            `Required remediation review lanes are missing from the frozen dependency graph: ${missingFromGraph.join(', ')}.`
+        );
+    }
+    return dependencyGraph.preparation_order.filter((reviewType) => requiredSet.has(reviewType));
+}
+
+function expandInvalidatedReviewTypes(
+    seedReviewTypes: readonly string[],
+    requiredReviewTypes: readonly string[],
+    dependencyGraph?: CompiledReviewDependencyGraph | null
+): string[] {
+    const requiredSet = new Set(requiredReviewTypes);
+    const normalizedSeeds = [...new Set(
+        seedReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter((entry) => requiredSet.has(entry))
+    )];
+    if (!dependencyGraph || normalizedSeeds.length === 0) {
+        return normalizedSeeds.sort();
+    }
+    return resolveReviewDependencyDownstreamReachability(
+        dependencyGraph,
+        normalizedSeeds
+    ).affected_review_ids.filter((reviewType) => requiredSet.has(reviewType));
+}
+
 function assessTestRefactorInvalidation(options: {
     semanticChangedFiles: readonly string[];
     scopeBoundary: ReviewRemediationScopeBoundary;
@@ -187,11 +229,13 @@ export function classifyReviewRemediationFix(
         changedFileStats?: unknown;
         reviewEvidenceOnly?: boolean;
         remediationReviewType?: string;
+        reviewDependencyGraph?: CompiledReviewDependencyGraph | null;
     } = {}
 ): ReviewRemediationFixClassification {
-    const normalizedRequiredReviewTypes = [...new Set(
-        requiredReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
-    )].sort();
+    const normalizedRequiredReviewTypes = orderRequiredReviewTypes(
+        requiredReviewTypes,
+        options.reviewDependencyGraph
+    );
     const nonTestReviewTypes = normalizedRequiredReviewTypes.filter((entry) => entry !== 'test');
     const scopeCategory: ReviewRemediationScopeCategory = scopeBoundary.status === 'BLOCKED'
         ? 'expanded_non_test_blocked'
@@ -268,7 +312,13 @@ export function classifyReviewRemediationFix(
         const targetReviewType = normalizedRequiredReviewTypes.includes(remediationReviewType)
             ? remediationReviewType
             : '';
-        const invalidatedReviewTypes = targetReviewType ? [targetReviewType] : normalizedRequiredReviewTypes;
+        const invalidatedReviewTypes = targetReviewType
+            ? expandInvalidatedReviewTypes(
+                [targetReviewType],
+                normalizedRequiredReviewTypes,
+                options.reviewDependencyGraph
+            )
+            : normalizedRequiredReviewTypes;
         return {
             ...base,
             rationale: targetReviewType
@@ -282,7 +332,7 @@ export function classifyReviewRemediationFix(
             blocked_before_reuse: false,
             invalidated_review_types: invalidatedReviewTypes,
             preserved_review_types: targetReviewType
-                ? normalizedRequiredReviewTypes.filter((entry) => entry !== targetReviewType)
+                ? normalizedRequiredReviewTypes.filter((entry) => !invalidatedReviewTypes.includes(entry))
                 : []
         };
     }
@@ -292,9 +342,16 @@ export function classifyReviewRemediationFix(
             && normalizedRequiredReviewTypes.includes('refactor')
             ? ['refactor']
             : [];
-        const invalidatedReviewTypes = normalizedRequiredReviewTypes.includes('test')
-            ? ['test', ...testRefactorInvalidatedReviewTypes, ...(failClosed ? nonTestReviewTypes : [])].sort()
-            : failClosed ? nonTestReviewTypes : testRefactorInvalidatedReviewTypes;
+        const invalidatedReviewTypes = failClosed
+            ? normalizedRequiredReviewTypes
+            : expandInvalidatedReviewTypes(
+                [
+                    ...(normalizedRequiredReviewTypes.includes('test') ? ['test'] : []),
+                    ...testRefactorInvalidatedReviewTypes
+                ],
+                normalizedRequiredReviewTypes,
+                options.reviewDependencyGraph
+            );
         return {
             ...base,
             non_test_review_reuse_candidate: !failClosed,
@@ -307,7 +364,11 @@ export function classifyReviewRemediationFix(
         };
     }
     if (semantic.category === 'test_hook_isolation' && !failClosed) {
-        const invalidatedReviewTypes = normalizedRequiredReviewTypes.includes('code') ? ['code'] : [];
+        const invalidatedReviewTypes = expandInvalidatedReviewTypes(
+            normalizedRequiredReviewTypes.includes('code') ? ['code'] : [],
+            normalizedRequiredReviewTypes,
+            options.reviewDependencyGraph
+        );
         return {
             ...base,
             non_test_review_reuse_candidate: true,
@@ -318,7 +379,11 @@ export function classifyReviewRemediationFix(
         };
     }
     if (semantic.category === 'refactor_structure' && !failClosed) {
-        const invalidatedReviewTypes = normalizedRequiredReviewTypes.includes('refactor') ? ['refactor'] : [];
+        const invalidatedReviewTypes = expandInvalidatedReviewTypes(
+            normalizedRequiredReviewTypes.includes('refactor') ? ['refactor'] : [],
+            normalizedRequiredReviewTypes,
+            options.reviewDependencyGraph
+        );
         return {
             ...base,
             non_test_review_reuse_candidate: true,

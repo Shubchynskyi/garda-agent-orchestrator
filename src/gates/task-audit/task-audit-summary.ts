@@ -26,6 +26,7 @@ import {
     loadReviewExecutionPolicyConfig,
     resolveReviewExecutionPolicyModeFromPreflight
 } from '../../core/review-execution-policy';
+import { resolveCompiledReviewDependencyGraphFromPreflight } from '../../core/review-dependency-graph';
 import { normalizeReviewCycleGuardConfig } from '../../core/review-cycle-guard';
 import { getTaskCycleStatusSnapshot, type TaskCycleStatusSnapshot } from '../../validators';
 import {
@@ -402,6 +403,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const reviewExecutionPolicyMode = preflight
         ? resolveReviewExecutionPolicyModeFromPreflight(preflight)
         : timelineReviewExecutionPolicyMode || liveReviewExecutionPolicyMode;
+    const reviewDependencyGraph = preflight
+        ? resolveCompiledReviewDependencyGraphFromPreflight(preflight, reviewExecutionPolicyMode)
+        : null;
     const preflightSha256 = preflightSummary.sha256;
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
@@ -540,7 +544,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         requiredReviews,
         events,
         currentCycle,
-        repoRoot
+        repoRoot,
+        reviewDependencyGraph
     );
     if (completionReviewOrderBlocker) {
         blockers.push(completionReviewOrderBlocker);

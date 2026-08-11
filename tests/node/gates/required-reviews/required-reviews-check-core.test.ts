@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import {
     detectZeroDiffFromPreflight,
+    checkRequiredReviews,
     parseSkipReviews,
     resolveExpectedReviewVerdicts,
     REVIEW_CONTRACTS,
@@ -19,6 +20,7 @@ import {
 import { runRequiredReviewsCheckCommand } from '../../../../src/cli/commands/gates';
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
 import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
 import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
 import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
@@ -674,6 +676,165 @@ describe('gates/required-reviews-check core helpers', () => {
             };
             assert.equal(detectZeroDiffFromPreflight(preflight), false);
         });
+    });
+
+    it('fails the review gate when a custom downstream lane started before its frozen graph dependency passed', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-graph-order-'));
+        const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+        const eventsRoot = path.join(repoRoot, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(eventsRoot, { recursive: true });
+        const taskId = 'T-729-5C-required-order';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const preflightPayload = {
+            task_id: taskId,
+            required_reviews: { code: true, 'architecture-boundary': true, test: true },
+            review_execution_policy: {
+                mode: 'parallel_all',
+                dependency_graph: reviewDependencyGraph
+            },
+            effective_review_snapshot: {
+                review_dependency_graph: reviewDependencyGraph
+            }
+        };
+        writeJson(preflightPath, preflightPayload);
+        fs.writeFileSync(path.join(eventsRoot, `${taskId}.jsonl`), [
+            { event_type: 'COMPILE_GATE_PASSED', details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', details: { review_type: 'architecture-boundary' } },
+            { event_type: 'REVIEW_RECORDED', details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', details: { review_type: 'test' } },
+            { event_type: 'REVIEW_RECORDED', details: { review_type: 'architecture-boundary' } }
+        ].map((event) => JSON.stringify(event)).join('\n'), 'utf8');
+
+        const result = checkRequiredReviews({
+            validatedPreflight: {
+                errors: [],
+                resolved_task_id: taskId,
+                required_reviews: preflightPayload.required_reviews,
+                review_contracts: [
+                    ['code', 'CODE REVIEW PASSED'],
+                    ['architecture-boundary', 'ARCHITECTURE BOUNDARY REVIEW PASSED'],
+                    ['test', 'TEST REVIEW PASSED']
+                ],
+                preflight_path: preflightPath,
+                preflight_hash: sha256File(preflightPath)
+            },
+            verdicts: {
+                code: 'CODE REVIEW PASSED',
+                'architecture-boundary': 'ARCHITECTURE BOUNDARY REVIEW PASSED',
+                test: 'TEST REVIEW PASSED'
+            },
+            preflightPayload
+        });
+
+        assert.equal(result.status, 'FAILED');
+        assert.equal(result.review_dependency_graph_sha256, reviewDependencyGraph.graph_sha256);
+        assert.ok(result.violations.some((violation) => (
+            violation.includes("Required review 'architecture-boundary' started before upstream review 'code' completed")
+        )));
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('uses task sequence instead of JSONL line order for custom dependency enforcement', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-task-sequence-'));
+        const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+        const eventsRoot = path.join(repoRoot, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(eventsRoot, { recursive: true });
+        const taskId = 'T-729-5C-required-sequence';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+        const preflightPayload = {
+            task_id: taskId,
+            required_reviews: { code: true, 'architecture-boundary': true },
+            review_execution_policy: {
+                mode: 'parallel_all',
+                dependency_graph: reviewDependencyGraph
+            },
+            effective_review_snapshot: {
+                review_dependency_graph: reviewDependencyGraph
+            }
+        };
+        writeJson(preflightPath, preflightPayload);
+        fs.writeFileSync(path.join(eventsRoot, `${taskId}.jsonl`), [
+            {
+                event_type: 'COMPILE_GATE_PASSED',
+                details: {},
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: 1,
+                    prev_event_sha256: null,
+                    event_sha256: 'a'.repeat(64)
+                }
+            },
+            {
+                event_type: 'REVIEW_RECORDED',
+                details: { review_type: 'code' },
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: 4,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }
+            },
+            {
+                event_type: 'REVIEW_PHASE_STARTED',
+                details: { review_type: 'architecture-boundary' },
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: 3,
+                    prev_event_sha256: 'b'.repeat(64),
+                    event_sha256: 'c'.repeat(64)
+                }
+            }
+        ].map((event) => JSON.stringify(event)).join('\n'), 'utf8');
+
+        const result = checkRequiredReviews({
+            validatedPreflight: {
+                errors: [],
+                resolved_task_id: taskId,
+                required_reviews: preflightPayload.required_reviews,
+                review_contracts: [
+                    ['code', 'CODE REVIEW PASSED'],
+                    ['architecture-boundary', 'ARCHITECTURE BOUNDARY REVIEW PASSED']
+                ],
+                preflight_path: preflightPath,
+                preflight_hash: sha256File(preflightPath)
+            },
+            verdicts: {
+                code: 'CODE REVIEW PASSED',
+                'architecture-boundary': 'ARCHITECTURE BOUNDARY REVIEW PASSED'
+            },
+            preflightPayload
+        });
+
+        assert.equal(result.status, 'FAILED');
+        assert.ok(result.violations.some((violation) => (
+            violation.includes("Required review 'architecture-boundary' started before upstream review 'code' completed")
+        )));
+        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
     describe('validateZeroDiffForReviewGate', () => {

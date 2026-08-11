@@ -9,6 +9,11 @@ import {
     resolveRuntimeReviewerIdentity
 } from '../review/reviewer-routing';
 import { resolveBundleName } from '../../core/constants';
+import { resolveReviewExecutionPolicyModeFromPreflight } from '../../core/review-execution-policy';
+import {
+    getReviewDependencyTimelineOrderViolations,
+    resolveCompiledReviewDependencyGraphFromPreflight
+} from '../../core/review-dependency-graph';
 import { REVIEW_CONTRACTS, resolveExpectedReviewVerdicts, testExpectedVerdict } from './required-reviews-check-contracts';
 import { readReviewDependencyTimelineEvents } from './required-reviews-check-dependencies';
 import {
@@ -262,6 +267,51 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
             `Task timeline missing or unreadable for '${resolvedTaskId}': ${normalizePath(String(timelinePath || ''))}.`
         );
     }
+    let reviewDependencyGraphSha256: string | null = null;
+    if (preflightPayload) {
+        try {
+            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(preflightPayload);
+            const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+                preflightPayload,
+                reviewExecutionPolicyMode
+            );
+            reviewDependencyGraphSha256 = reviewDependencyGraph?.graph_sha256 || null;
+            if (reviewDependencyGraph) {
+                const dependencyOrderTimeline = timelineEvents.map((event) => ({
+                    ...event,
+                    sequence: event.integrity?.task_sequence ?? event.sequence
+                }));
+                for (const violation of getReviewDependencyTimelineOrderViolations(
+                    reviewDependencyGraph,
+                    dependencyOrderTimeline
+                )) {
+                    if (violation.code === 'missing_upstream_record') {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' cannot start before upstream review ` +
+                            `'${violation.upstream_review_id}' is recorded for the current cycle.`
+                        );
+                    } else if (violation.code === 'unaccepted_upstream_record') {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' depends on upstream review ` +
+                            `'${violation.upstream_review_id}', but the latest recorded result is not accepted.`
+                        );
+                    } else if (violation.code === 'stale_upstream_record') {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' depends on upstream review ` +
+                            `'${violation.upstream_review_id}', but its evidence predates COMPILE_GATE_PASSED.`
+                        );
+                    } else {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' started before upstream review ` +
+                            `'${violation.upstream_review_id}' completed. Downstream review dependency order is invalid.`
+                        );
+                    }
+                }
+            }
+        } catch (error) {
+            errors.push(error instanceof Error ? error.message : String(error));
+        }
+    }
 
     if (compileGateEvidence) {
         if (compileGateEvidence.status !== 'PASSED') {
@@ -381,6 +431,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         skip_reviews: skipReviews,
         verdicts,
         review_checks: reviewChecks,
+        review_dependency_graph_sha256: reviewDependencyGraphSha256,
         violations: errors
     };
 }
