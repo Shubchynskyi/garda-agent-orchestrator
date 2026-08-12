@@ -3,14 +3,14 @@ import { isUtf8 } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { sha256RedactedJsonPayload } from '../../core/redaction';
+import { redactSecretText, sha256RedactedJsonPayload } from '../../core/redaction';
 import {
     getSafeWorktreePathState,
     type SafeWorktreePathState
 } from '../workspace/worktree-path-state';
 import { isPathInsideRoot, normalizePath } from '../shared/helpers';
 
-export const REVIEW_REMEDIATION_DELTA_BASE_SCHEMA_VERSION = 1;
+export const REVIEW_REMEDIATION_DELTA_BASE_SCHEMA_VERSION = 2;
 export const REVIEW_REMEDIATION_DELTA_MAX_TEXT_BYTES = 1024 * 1024;
 export const REVIEW_REMEDIATION_DELTA_MAX_LINES_PER_FILE = 4096;
 export const REVIEW_REMEDIATION_DELTA_MAX_SNAPSHOT_LINES = 16384;
@@ -43,6 +43,9 @@ export interface ReviewRemediationDeltaBaseEntry {
     content_sha256: string | null;
     link_sha256: string | null;
     line_hashes: string[] | null;
+    redacted_lines: string[] | null;
+    redacted_lines_sha256: string | null;
+    redaction_applied: boolean;
     line_count: number | null;
     line_analysis: ReviewRemediationLineAnalysis;
 }
@@ -71,9 +74,20 @@ function normalizeChangedFiles(files: readonly string[]): string[] {
     return [...new Set(files.map((file) => normalizePath(file)).filter(Boolean))].sort();
 }
 
-function buildBoundedLineHashes(content: Buffer): string[] | null {
-    if (content.length === 0) {
+function splitLinesPreservingEndings(content: string): string[] {
+    if (!content) {
         return [];
+    }
+    return content.match(/.*?(?:\r\n|\n|\r|$)/gu)?.filter((line) => line.length > 0) ?? [];
+}
+
+function buildBoundedLineEvidence(content: Buffer): {
+    lineHashes: string[];
+    redactedLines: string[];
+    redactionApplied: boolean;
+} | null {
+    if (content.length === 0) {
+        return { lineHashes: [], redactedLines: [], redactionApplied: false };
     }
     const lineHashes: string[] = [];
     let start = 0;
@@ -92,7 +106,17 @@ function buildBoundedLineHashes(content: Buffer): string[] | null {
         }
         lineHashes.push(sha256Buffer(content.subarray(start)));
     }
-    return lineHashes;
+    const decoded = content.toString('utf8');
+    const redacted = redactSecretText(decoded);
+    const redactedLines = splitLinesPreservingEndings(redacted);
+    if (redactedLines.length !== lineHashes.length) {
+        return null;
+    }
+    return {
+        lineHashes,
+        redactedLines,
+        redactionApplied: redacted !== decoded
+    };
 }
 
 function resolveRepoFile(repoRoot: string, relativeFile: string): string | null {
@@ -117,6 +141,9 @@ function buildBudgetExceededEntry(
         content_sha256: null,
         link_sha256: linkSha256,
         line_hashes: null,
+        redacted_lines: null,
+        redacted_lines_sha256: null,
+        redaction_applied: false,
         line_count: null,
         line_analysis: lineAnalysis
     };
@@ -134,6 +161,9 @@ function buildUnreviewableEntry(
         content_sha256: null,
         link_sha256: linkSha256,
         line_hashes: null,
+        redacted_lines: null,
+        redacted_lines_sha256: null,
+        redaction_applied: false,
         line_count: null,
         line_analysis: 'unreviewable'
     };
@@ -189,6 +219,9 @@ function buildEntry(
             content_sha256: null,
             link_sha256: null,
             line_hashes: null,
+            redacted_lines: null,
+            redacted_lines_sha256: null,
+            redaction_applied: false,
             line_count: null,
             line_analysis: 'unreviewable'
         }, bytes_read: 0 };
@@ -205,6 +238,9 @@ function buildEntry(
             content_sha256: null,
             link_sha256: null,
             line_hashes: [],
+            redacted_lines: [],
+            redacted_lines_sha256: sha256Text(''),
+            redaction_applied: false,
             line_count: 0,
             line_analysis: 'available'
         }, bytes_read: 0 };
@@ -224,6 +260,9 @@ function buildEntry(
             content_sha256: null,
             link_sha256: linkSha256,
             line_hashes: null,
+            redacted_lines: null,
+            redacted_lines_sha256: null,
+            redaction_applied: false,
             line_count: null,
             line_analysis: 'unreviewable'
         }, bytes_read: 0 };
@@ -271,6 +310,9 @@ function buildEntry(
                 content_sha256: null,
                 link_sha256: linkSha256,
                 line_hashes: null,
+                redacted_lines: null,
+                redacted_lines_sha256: null,
+                redaction_applied: false,
                 line_count: null,
                 line_analysis: 'content_size_limit_exceeded'
             }, bytes_read: 0 };
@@ -316,12 +358,15 @@ function buildEntry(
             content_sha256: contentSha256,
             link_sha256: linkSha256,
             line_hashes: null,
+            redacted_lines: null,
+            redacted_lines_sha256: null,
+            redaction_applied: false,
             line_count: null,
             line_analysis: 'not_text'
         }, bytes_read: fileSize };
     }
-    const lineHashes = buildBoundedLineHashes(content);
-    if (!lineHashes) {
+    const lineEvidence = buildBoundedLineEvidence(content);
+    if (!lineEvidence) {
         return { entry: {
             path: normalizedPath,
             status: symbolicLink ? 'symbolic_link' : 'text',
@@ -329,11 +374,14 @@ function buildEntry(
             content_sha256: contentSha256,
             link_sha256: linkSha256,
             line_hashes: null,
+            redacted_lines: null,
+            redacted_lines_sha256: null,
+            redaction_applied: false,
             line_count: null,
             line_analysis: 'line_count_limit_exceeded'
         }, bytes_read: fileSize };
     }
-    if (lineHashes.length > remainingSnapshotLines) {
+    if (lineEvidence.lineHashes.length > remainingSnapshotLines) {
         return { entry: {
             path: normalizedPath,
             status: symbolicLink ? 'symbolic_link' : 'text',
@@ -341,6 +389,9 @@ function buildEntry(
             content_sha256: contentSha256,
             link_sha256: linkSha256,
             line_hashes: null,
+            redacted_lines: null,
+            redacted_lines_sha256: null,
+            redaction_applied: false,
             line_count: null,
             line_analysis: 'snapshot_line_budget_exceeded'
         }, bytes_read: fileSize };
@@ -351,8 +402,11 @@ function buildEntry(
         mode: observedMode,
         content_sha256: contentSha256,
         link_sha256: linkSha256,
-        line_hashes: lineHashes,
-        line_count: lineHashes.length,
+        line_hashes: lineEvidence.lineHashes,
+        redacted_lines: lineEvidence.redactedLines,
+        redacted_lines_sha256: sha256Text(lineEvidence.redactedLines.join('')),
+        redaction_applied: lineEvidence.redactionApplied,
+        line_count: lineEvidence.lineHashes.length,
         line_analysis: 'available'
     }, bytes_read: fileSize };
 }
@@ -455,6 +509,7 @@ export function getReviewRemediationDeltaBaseViolations(
     }
     const entryPaths: string[] = [];
     let lineHashCount = 0;
+    let redactedTextBytes = 0;
     for (const [index, entryValue] of base.entries.entries()) {
         if (!entryValue || typeof entryValue !== 'object' || Array.isArray(entryValue)) {
             violations.push(`delta_base.entries[${index}] must be an object.`);
@@ -492,6 +547,9 @@ export function getReviewRemediationDeltaBaseViolations(
         } else if (entry.status === 'symbolic_link' && entry.link_sha256 === null) {
             violations.push(`delta_base.entries[${index}].link_sha256 is required for symbolic links.`);
         }
+        if (typeof entry.redaction_applied !== 'boolean') {
+            violations.push(`delta_base.entries[${index}].redaction_applied must be boolean.`);
+        }
         if (entry.line_hashes !== null) {
             if (!Array.isArray(entry.line_hashes)) {
                 violations.push(`delta_base.entries[${index}].line_hashes must contain only SHA-256 hashes.`);
@@ -518,11 +576,34 @@ export function getReviewRemediationDeltaBaseViolations(
             if (Array.isArray(entry.line_hashes)) {
                 lineHashCount += entry.line_hashes.length;
             }
+            if (!Array.isArray(entry.redacted_lines)) {
+                violations.push(`delta_base.entries[${index}].redacted_lines must accompany line_hashes.`);
+            } else {
+                redactedTextBytes += Buffer.byteLength(entry.redacted_lines.join(''), 'utf8');
+                if (!Array.isArray(entry.line_hashes) || entry.redacted_lines.length !== entry.line_hashes.length) {
+                    violations.push(`delta_base.entries[${index}].redacted_lines must match line_hashes length.`);
+                }
+                if (entry.redacted_lines.some((line) => typeof line !== 'string')) {
+                    violations.push(`delta_base.entries[${index}].redacted_lines must contain only strings.`);
+                } else if (entry.redacted_lines.some((line) => redactSecretText(line) !== line)) {
+                    violations.push(`delta_base.entries[${index}].redacted_lines contains unredacted secret-like text.`);
+                }
+                if (entry.redacted_lines_sha256 !== sha256Text(entry.redacted_lines.join(''))) {
+                    violations.push(`delta_base.entries[${index}].redacted_lines_sha256 does not match redacted_lines.`);
+                }
+            }
         } else if (entry.line_count !== null) {
             violations.push(`delta_base.entries[${index}].line_count must be null when line_hashes are unavailable.`);
         } else if (entry.line_analysis === 'available') {
             violations.push(`delta_base.entries[${index}].line_analysis cannot be available when line_hashes are unavailable.`);
+        } else if (entry.redacted_lines !== null || entry.redacted_lines_sha256 !== null || entry.redaction_applied === true) {
+            violations.push(`delta_base.entries[${index}] must not retain readable text when line evidence is unavailable.`);
         }
+    }
+    if (redactedTextBytes > REVIEW_REMEDIATION_DELTA_MAX_SNAPSHOT_BYTES) {
+        violations.push(
+            `delta_base redacted_lines must contain at most ${REVIEW_REMEDIATION_DELTA_MAX_SNAPSHOT_BYTES} UTF-8 bytes in aggregate.`
+        );
     }
     if (JSON.stringify(entryPaths) !== JSON.stringify(changedFiles)) {
         violations.push('delta_base entries must match changed_files exactly and in order.');

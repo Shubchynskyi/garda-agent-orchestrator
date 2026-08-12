@@ -142,6 +142,7 @@ test('published runtime works when the package is executed from node_modules', (
             'review-remediation-baseline.js',
             'review-remediation-delta-contract.js',
             'review-remediation-delta.js',
+            'review-remediation-readable-diff.js',
             'review-remediation-validation-evidence.js',
             'review-remediation-recovery-routing.js'
         ];

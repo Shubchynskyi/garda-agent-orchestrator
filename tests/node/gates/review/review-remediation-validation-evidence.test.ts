@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 
 import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
 import type { ReviewRemediationDeltaClassification } from '../../../../src/gates/review-remediation/review-remediation-delta';
+import { buildReviewRemediationReadableDiffEvidence } from '../../../../src/gates/review-remediation/review-remediation-readable-diff';
 import {
     buildReviewRemediationValidationEvidence,
     buildReviewRemediationValidationRequirement,
@@ -17,6 +19,7 @@ import {
 } from '../../../../src/policy/review-remediation-rerun-policy';
 
 const hash = (value: string): string => sha256RedactedJsonPayload(value);
+const rawHash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const REVIEWS_ROOT = 'garda-agent-orchestrator/runtime/reviews';
 
 function readArtifactState(artifactPath: string): {
@@ -77,6 +80,8 @@ function validateEvidence(
 }
 
 function makeDelta(category: ReviewRemediationDeltaCategory): ReviewRemediationDeltaClassification {
+    const changedFile = 'tests/node/example.test.ts';
+    const changedLine = 'assert.equal(actual, expected);\n';
     const core: Omit<ReviewRemediationDeltaClassification, 'classification_sha256'> = {
         schema_version: 1,
         task_id: 'T-979-39-fixture',
@@ -91,12 +96,51 @@ function makeDelta(category: ReviewRemediationDeltaCategory): ReviewRemediationD
             delta_base_snapshot_sha256: hash('delta-base')
         },
         current_snapshot_sha256: hash('current'),
-        changed_files: ['tests/node/example.test.ts'],
+        full_review_required: false,
+        full_review_reasons: [],
+        scope: {
+            full_review_scope: [changedFile],
+            full_review_scope_sha256: rawHash(changedFile),
+            required_delta_targets: [changedFile],
+            required_delta_targets_sha256: rawHash(changedFile),
+            optional_context_files: [],
+            optional_context_files_sha256: rawHash(''),
+            membership_unchanged: true
+        },
+        changed_files: [changedFile],
         unchanged_files: [],
-        file_deltas: [],
+        file_deltas: [{
+            path: changedFile,
+            operation: 'modified',
+            category,
+            reason: `fixture category ${category}`,
+            baseline_status: 'text',
+            current_status: 'text',
+            baseline_mode: 0o100644,
+            current_mode: 0o100644,
+            baseline_content_sha256: hash('baseline-content'),
+            current_content_sha256: hash('current-content'),
+            baseline_line_count: 0,
+            current_line_count: 1,
+            additions: 1,
+            deletions: 0,
+            changed_lines: 1
+        }],
         additions_total: 1,
         deletions_total: 0,
-        changed_lines_total: 1
+        changed_lines_total: 1,
+        readable_diff: buildReviewRemediationReadableDiffEvidence([{
+            path: changedFile,
+            lines: [{
+                operation: 'addition',
+                baseline_line: null,
+                current_line: 1,
+                segment_index: 1,
+                segment_count: 1,
+                text: changedLine,
+                source_line_sha256: rawHash(changedLine)
+            }]
+        }])
     };
     return {
         ...core,
@@ -131,6 +175,30 @@ function clone<T>(value: T): T {
 }
 
 describe('review remediation composite validation evidence', () => {
+    it('rejects rehashed DELTA metadata when scope membership drift does not require FULL review', () => {
+        const delta = makeDelta('leaf_test');
+        delta.scope.membership_unchanged = false;
+        const { classification_sha256: _classificationSha256, ...core } = delta;
+        delta.classification_sha256 = sha256RedactedJsonPayload(core);
+
+        assert.throws(() => buildEvidence({
+            delta,
+            components: [component('focused')]
+        }), /membership_unchanged=false requires delta\.full_review_required=true/u);
+    });
+
+    it('rejects readable diff evidence that omits changed line operations', () => {
+        const delta = makeDelta('leaf_test');
+        delta.readable_diff = buildReviewRemediationReadableDiffEvidence([]);
+        const { classification_sha256: _classificationSha256, ...core } = delta;
+        delta.classification_sha256 = sha256RedactedJsonPayload(core);
+
+        assert.throws(() => buildEvidence({
+            delta,
+            components: [component('focused')]
+        }), /readable_diff operations.*must match.*line totals/u);
+    });
+
     it('maps every delta category to its frozen validation requirement', () => {
         assert.equal(buildReviewRemediationValidationRequirement('leaf_test'), 'focused');
         assert.equal(buildReviewRemediationValidationRequirement('structural_test'), 'focused_and_affected');

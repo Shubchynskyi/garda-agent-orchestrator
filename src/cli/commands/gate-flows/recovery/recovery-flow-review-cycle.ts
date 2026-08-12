@@ -18,6 +18,7 @@ import {
 import {
     classifyReviewRemediationDelta
 } from '../../../../gates/review-remediation/review-remediation-delta';
+import { forEachJsonlLine, inspectTaskEventFile } from '../../../../gate-runtime/task-events';
 import {
     resolveAuthoritativeReviewRemediationDecision,
     type AuthoritativeReviewRemediationDecision,
@@ -85,6 +86,29 @@ import {
     resolveRecoveryPreflightPath
 } from './recovery-flow-restart-evidence';
 import { runRecoveryFlowPreflightPipeline } from './recovery-flow-preflight-pipeline';
+function findLatestSuccessfulReviewSnapshotDetails(
+    timelinePath: string,
+    reviewType: string
+): Record<string, unknown> | null {
+    let latestDetails: Record<string, unknown> | null = null;
+    forEachJsonlLine(timelinePath, (line) => {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+            ? event.details as Record<string, unknown>
+            : null;
+        if (
+            String(event.event_type || '').trim().toUpperCase() === 'REVIEW_RECORDED'
+            && String(event.outcome || '').trim().toUpperCase() === 'PASS'
+            && String(details?.review_type || '').trim().toLowerCase() === reviewType
+            && String(details?.remediation_baseline_snapshot_path || '').trim()
+            && String(details?.remediation_baseline_snapshot_sha256 || '').trim()
+        ) {
+            latestDetails = details;
+        }
+    });
+    return latestDetails;
+}
+
 function getDependencyBlockReason(error: unknown, reviewType: string): string | null {
     const message = error instanceof Error ? error.message : String(error);
     const isUpstreamReviewBlock = message.includes(
@@ -99,7 +123,7 @@ function getDependencyBlockReason(error: unknown, reviewType: string): string | 
     return message.trim();
 }
 
-function resolveRuntimeDecisionInputs(options: {
+export function resolveRuntimeDecisionInputs(options: {
     repoRoot: string;
     taskId: string;
     remediationReviewType: string;
@@ -129,30 +153,77 @@ function resolveRuntimeDecisionInputs(options: {
     if (!currentReviewType) {
         throw new Error('Review remediation decision requires at least one current required review lane.');
     }
+    const buildFullFallback = (reason: string): {
+        currentReviewType: string;
+        classification: ReviewRemediationDecisionClassification;
+    } => ({
+        currentReviewType,
+        classification: {
+            source: 'runtime_fix',
+            classification: {
+                category: 'ambiguous',
+                reason,
+                blocked_before_reuse: false,
+                invalidated_review_types: [...options.requiredReviewTypes]
+            }
+        }
+    });
     if (options.allowAuthenticatedDelta && options.remediationReviewType) {
         const reviewArtifactPath = resolveDefaultReviewsPath(
             options.repoRoot,
             `${options.taskId}-${currentReviewType}.md`
         );
         const baselineArtifactPath = getReviewRemediationBaselineArtifactPath(reviewArtifactPath);
-        if (fs.existsSync(baselineArtifactPath) && fs.statSync(baselineArtifactPath).isFile()) {
-            const baselineArtifactSha256 = requireArtifactSha256(
-                baselineArtifactPath,
-                'review-remediation-baseline'
+        if (!fs.existsSync(baselineArtifactPath) || !fs.statSync(baselineArtifactPath).isFile()) {
+            return buildFullFallback('Authenticated remediation baseline is unavailable; FULL review is required.');
+        }
+        const orchestratorRoot = resolveOrchestratorRoot(options.repoRoot);
+        const timelinePath = path.join(orchestratorRoot, 'runtime', 'task-events', `${options.taskId}.jsonl`);
+        const timelineIntegrity = inspectTaskEventFile(timelinePath, options.taskId);
+        if (!['PASS', 'PASS_WITH_LEGACY_PREFIX'].includes(timelineIntegrity.status)) {
+            return buildFullFallback(
+                `Task timeline cannot authenticate remediation snapshot lineage (${timelineIntegrity.status}); FULL review is required.`
             );
+        }
+        const recordedEventDetails = findLatestSuccessfulReviewSnapshotDetails(timelinePath, currentReviewType);
+        if (!recordedEventDetails) {
+            return buildFullFallback(
+                'Review telemetry does not bind an immutable remediation snapshot; FULL review is required.'
+            );
+        }
+        const baselineSnapshotPath = path.resolve(
+            options.repoRoot,
+            String(recordedEventDetails.remediation_baseline_snapshot_path)
+        );
+        const baselineSnapshotSha256 = String(
+            recordedEventDetails.remediation_baseline_snapshot_sha256 || ''
+        ).trim().toLowerCase();
+        const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+        const expectedPrefix = `${options.taskId}-${currentReviewType}-remediation-baseline-`.toLowerCase();
+        if (
+            !/^[0-9a-f]{64}$/u.test(baselineSnapshotSha256)
+            || !gateHelpers.isPathRealpathInsideRoot(baselineSnapshotPath, reviewsRoot, { allowMissing: false })
+            || !path.basename(baselineSnapshotPath).toLowerCase().startsWith(expectedPrefix)
+            || !path.basename(baselineSnapshotPath).toLowerCase().endsWith('.json')
+        ) {
+            return buildFullFallback(
+                'Review telemetry contains an unsafe or invalid remediation snapshot binding; FULL review is required.'
+            );
+        }
+        try {
             const delta = classifyReviewRemediationDelta({
                 repoRoot: options.repoRoot,
                 taskId: options.taskId,
                 reviewType: currentReviewType,
-                baselineArtifactPath,
-                baselineArtifactSha256,
+                baselineArtifactPath: baselineSnapshotPath,
+                baselineArtifactSha256: baselineSnapshotSha256,
                 currentChangedFiles: options.currentChangedFiles,
                 testPathRegexes: options.reviewTriggerPolicy.test_path_regexes,
                 structuralTestPathRegexes: options.reviewTriggerPolicy.test_refactor_structural_path_regexes,
                 structuralTestChangedLinesThreshold:
                     options.reviewTriggerPolicy.test_refactor_changed_lines_threshold
             });
-            const baseline = JSON.parse(fs.readFileSync(baselineArtifactPath, 'utf8')) as Record<string, unknown>;
+            const baseline = JSON.parse(fs.readFileSync(baselineSnapshotPath, 'utf8')) as Record<string, unknown>;
             const bindings = baseline.bindings as Record<string, unknown> | undefined;
             const policy = bindings?.policy as Record<string, unknown> | undefined;
             return {
@@ -166,6 +237,10 @@ function resolveRuntimeDecisionInputs(options: {
                     ).trim().toLowerCase()
                 }
             };
+        } catch (error: unknown) {
+            return buildFullFallback(
+                `Authenticated remediation snapshot could not be validated: ${error instanceof Error ? error.message : String(error)} FULL review is required.`
+            );
         }
     }
     return {

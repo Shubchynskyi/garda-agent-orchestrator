@@ -490,6 +490,8 @@ export function resolveAuthoritativeReviewRemediationDecision(
     let policyLegacyFallback = false;
     let invalidatedReviewTypes: string[] = [];
     let authenticatedDelta = false;
+    let fullFallbackFromDelta = false;
+    let fullFallbackReason = '';
 
     if (options.classification.source === 'delta') {
         const delta = options.classification.delta;
@@ -519,16 +521,23 @@ export function resolveAuthoritativeReviewRemediationDecision(
             policyId = policyResolution.policy.policy_id;
             policyLegacyFallback = policyResolution.legacy_fallback;
             if (blockedReasons.length === 0) {
-                const selection = resolveReviewRemediationRerunLanes({
-                    policy: policyResolution.policy,
-                    category: delta.category,
-                    currentReviewType,
-                    requiredReviews: options.requiredReviews,
-                    reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
-                    reviewDependencyGraph: options.reviewDependencyGraph
-                });
-                invalidatedReviewTypes = selection.ordered_rerun_lanes;
-                authenticatedDelta = true;
+                if (delta.full_review_required) {
+                    invalidatedReviewTypes = [...requiredReviewTypes];
+                    fullFallbackFromDelta = true;
+                    fullFallbackReason = delta.full_review_reasons.join('; ')
+                        || 'authenticated remediation snapshot requires FULL review';
+                } else {
+                    const selection = resolveReviewRemediationRerunLanes({
+                        policy: policyResolution.policy,
+                        category: delta.category,
+                        currentReviewType,
+                        requiredReviews: options.requiredReviews,
+                        reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
+                        reviewDependencyGraph: options.reviewDependencyGraph
+                    });
+                    invalidatedReviewTypes = selection.ordered_rerun_lanes;
+                    authenticatedDelta = true;
+                }
             }
         } catch (error: unknown) {
             blockedReasons.push(error instanceof Error ? error.message : String(error));
@@ -603,10 +612,14 @@ export function resolveAuthoritativeReviewRemediationDecision(
             reuseEligible = false;
             reasonCode = authenticatedDelta
                 ? 'authenticated_delta_invalidated_lane'
-                : 'runtime_fix_requires_full_fallback';
+                : fullFallbackFromDelta
+                    ? 'authenticated_snapshot_requires_full_fallback'
+                    : 'runtime_fix_requires_full_fallback';
             reason = authenticatedDelta
                 ? `Authenticated remediation delta '${category}' invalidated '${reviewType}'; bounded DELTA review is required.`
-                : `Runtime remediation classification '${category}' invalidated '${reviewType}', but no authenticated delta classification is bound; FULL review is required.`;
+                : fullFallbackFromDelta
+                    ? `Authenticated remediation snapshot requires FULL review for '${reviewType}': ${fullFallbackReason}.`
+                    : `Runtime remediation classification '${category}' invalidated '${reviewType}', but no authenticated delta classification is bound; FULL review is required.`;
             if (acceptedEvidence && evidenceKind === 'FRESH') {
                 satisfied = true;
                 satisfactionSource = 'FRESH';

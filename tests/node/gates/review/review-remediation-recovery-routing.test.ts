@@ -22,6 +22,7 @@ import {
     type ReviewRemediationReusableReceipt
 } from '../../../../src/gates/review-remediation/review-remediation-recovery-routing';
 import type { ReviewRemediationDeltaClassification } from '../../../../src/gates/review-remediation/review-remediation-delta';
+import { buildReviewRemediationReadableDiffEvidence } from '../../../../src/gates/review-remediation/review-remediation-readable-diff';
 import {
     buildReviewRemediationValidationEvidence,
     type BuildReviewRemediationValidationComponentInput,
@@ -136,6 +137,8 @@ function makeSnapshot(): Record<string, unknown> {
 }
 
 function makeDelta(category: ReviewRemediationDeltaCategory, reviewType = 'test'): ReviewRemediationDeltaClassification {
+    const changedFile = 'tests/node/example.test.ts';
+    const changedLine = 'assert.equal(actual, expected);\n';
     const core: Omit<ReviewRemediationDeltaClassification, 'classification_sha256'> = {
         schema_version: 1,
         task_id: TASK_ID,
@@ -150,12 +153,51 @@ function makeDelta(category: ReviewRemediationDeltaCategory, reviewType = 'test'
             delta_base_snapshot_sha256: hash('delta-base')
         },
         current_snapshot_sha256: hash('current'),
-        changed_files: ['tests/node/example.test.ts'],
+        full_review_required: false,
+        full_review_reasons: [],
+        scope: {
+            full_review_scope: [changedFile],
+            full_review_scope_sha256: hash(changedFile),
+            required_delta_targets: [changedFile],
+            required_delta_targets_sha256: hash(changedFile),
+            optional_context_files: [],
+            optional_context_files_sha256: hash(''),
+            membership_unchanged: true
+        },
+        changed_files: [changedFile],
         unchanged_files: [],
-        file_deltas: [],
+        file_deltas: [{
+            path: changedFile,
+            operation: 'modified',
+            category,
+            reason: `fixture category ${category}`,
+            baseline_status: 'text',
+            current_status: 'text',
+            baseline_mode: 0o100644,
+            current_mode: 0o100644,
+            baseline_content_sha256: hash('baseline-content'),
+            current_content_sha256: hash('current-content'),
+            baseline_line_count: 0,
+            current_line_count: 1,
+            additions: 1,
+            deletions: 0,
+            changed_lines: 1
+        }],
         additions_total: 1,
         deletions_total: 0,
-        changed_lines_total: 1
+        changed_lines_total: 1,
+        readable_diff: buildReviewRemediationReadableDiffEvidence([{
+            path: changedFile,
+            lines: [{
+                operation: 'addition',
+                baseline_line: null,
+                current_line: 1,
+                segment_index: 1,
+                segment_count: 1,
+                text: changedLine,
+                source_line_sha256: hash(changedLine)
+            }]
+        }])
     };
     return {
         ...core,
