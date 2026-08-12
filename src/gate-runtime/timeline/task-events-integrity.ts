@@ -22,6 +22,10 @@ export interface InspectTaskEventResult {
     violations: string[];
 }
 
+export interface InspectTaskEventOptions {
+    onIntegrityEvent?: (event: Readonly<Record<string, unknown>>, lineNumber: number) => void;
+}
+
 export function normalizeIntegrityValue(value: unknown): unknown {
     if (value == null) {
         return value;
@@ -52,7 +56,11 @@ export function normalizeIntegrityValue(value: unknown): unknown {
     return value;
 }
 
-export function inspectTaskEventFile(taskEventFile: string, taskId: string): InspectTaskEventResult {
+export function inspectTaskEventFile(
+    taskEventFile: string,
+    taskId: string,
+    options: InspectTaskEventOptions = {}
+): InspectTaskEventResult {
     const result: InspectTaskEventResult = {
         source_path: String(taskEventFile).replace(/\\/g, '/'),
         status: 'UNKNOWN',
@@ -176,6 +184,15 @@ export function inspectTaskEventFile(taskEventFile: string, taskId: string): Ins
                 result.violations.push(`Task timeline duplicate/replayed event detected at line ${lineNumber}.`);
             }
             seenHashes.add(eventSha256);
+
+            try {
+                options.onIntegrityEvent?.(event, lineNumber);
+            } catch (error: unknown) {
+                result.violations.push(
+                    `Task timeline integrity-event observer failed at line ${lineNumber}: `
+                    + (error instanceof Error ? error.message : String(error))
+                );
+            }
 
             result.integrity_event_count++;
             if (result.first_integrity_sequence == null) {

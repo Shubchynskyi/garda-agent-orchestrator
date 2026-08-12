@@ -108,31 +108,98 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
     assert.deepEqual(externalRuntime.classification.invalidated_review_types, ['code', 'security']);
     assert.match(externalRuntime.classification.reason, /unsafe or invalid remediation snapshot binding/iu);
 
-    const immutableSnapshotPath = path.join(
+    const mismatchedDigestSnapshotPath = path.join(
         reviewsRoot,
         `${taskId}-code-remediation-baseline-${'a'.repeat(64)}.json`
     );
-    fs.writeFileSync(immutableSnapshotPath, '{}\n', 'utf8');
+    fs.writeFileSync(mismatchedDigestSnapshotPath, '{}\n', 'utf8');
     appendTaskEvent(
         orchestratorRoot,
         taskId,
         'REVIEW_RECORDED',
         'PASS',
-        'tampered fixture snapshot recorded',
+        'mismatched filename digest fixture snapshot recorded',
         {
             review_type: 'code',
-            remediation_baseline_snapshot_path: immutableSnapshotPath,
-            remediation_baseline_snapshot_sha256: 'b'.repeat(64)
+            remediation_baseline_snapshot_path: mismatchedDigestSnapshotPath,
+            remediation_baseline_snapshot_sha256: fileSha256(mismatchedDigestSnapshotPath)
         }
     );
-    const tamperedBinding = resolveRuntimeDecisionInputs(options);
-    const tamperedRuntime = tamperedBinding.classification as {
+    const mismatchedDigestBinding = resolveRuntimeDecisionInputs(options);
+    const mismatchedDigestRuntime = mismatchedDigestBinding.classification as {
         source: 'runtime_fix';
         classification: { reason: string; invalidated_review_types: string[] };
     };
-    assert.equal(tamperedRuntime.source, 'runtime_fix');
-    assert.deepEqual(tamperedRuntime.classification.invalidated_review_types, ['code', 'security']);
-    assert.match(tamperedRuntime.classification.reason, /artifact hash mismatch/iu);
+    assert.equal(mismatchedDigestRuntime.source, 'runtime_fix');
+    assert.deepEqual(mismatchedDigestRuntime.classification.invalidated_review_types, ['code', 'security']);
+    assert.match(mismatchedDigestRuntime.classification.reason, /unsafe or invalid remediation snapshot binding/iu);
+
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+});
+
+it('rejects untrusted legacy-prefix snapshot binding and forces FULL', () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-992-legacy-remediation-lineage';
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const timelinePath = path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
+    const mutableBaselinePath = path.join(reviewsRoot, `${taskId}-code-remediation-baseline.json`);
+    fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(mutableBaselinePath, '{}\n', 'utf8');
+
+    const snapshotSha256 = fileSha256(mutableBaselinePath);
+    const immutableSnapshotPath = path.join(
+        reviewsRoot,
+        `${taskId}-code-remediation-baseline-${snapshotSha256}.json`
+    );
+    fs.copyFileSync(mutableBaselinePath, immutableSnapshotPath);
+    fs.writeFileSync(timelinePath, JSON.stringify({
+        task_id: taskId,
+        event_type: 'REVIEW_RECORDED',
+        outcome: 'PASS',
+        details: {
+            review_type: 'code',
+            remediation_baseline_snapshot_path: immutableSnapshotPath,
+            remediation_baseline_snapshot_sha256: snapshotSha256
+        }
+    }) + '\n', 'utf8');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'REVIEW_PHASE_STARTED',
+        'INFO',
+        'integrity chain starts after unauthenticated review binding',
+        { review_type: 'code' }
+    );
+
+    const decision = resolveRuntimeDecisionInputs({
+        repoRoot,
+        taskId,
+        remediationReviewType: 'code',
+        requiredReviewTypes: ['code', 'security'],
+        remediationFixClassification: {
+            category: 'production',
+            reason: 'fixture production remediation',
+            blocked_before_reuse: false,
+            invalidated_review_types: ['code']
+        },
+        profilePolicySnapshot: {},
+        currentChangedFiles: ['src/app.ts'],
+        reviewTriggerPolicy: {
+            test_path_regexes: ['(^|/)tests?/'],
+            test_refactor_structural_path_regexes: ['(^|/)tests?/helpers?/'],
+            test_refactor_changed_lines_threshold: 20
+        },
+        allowAuthenticatedDelta: true
+    });
+    const runtime = decision.classification as {
+        source: 'runtime_fix';
+        classification: { reason: string; invalidated_review_types: string[] };
+    };
+    assert.equal(runtime.source, 'runtime_fix');
+    assert.deepEqual(runtime.classification.invalidated_review_types, ['code', 'security']);
+    assert.match(runtime.classification.reason, /does not bind an immutable remediation snapshot/iu);
 
     fs.rmSync(repoRoot, { recursive: true, force: true });
 });

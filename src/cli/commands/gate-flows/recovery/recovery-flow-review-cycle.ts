@@ -18,7 +18,7 @@ import {
 import {
     classifyReviewRemediationDelta
 } from '../../../../gates/review-remediation/review-remediation-delta';
-import { forEachJsonlLine, inspectTaskEventFile } from '../../../../gate-runtime/task-events';
+import { inspectTaskEventFile } from '../../../../gate-runtime/task-events';
 import {
     resolveAuthoritativeReviewRemediationDecision,
     type AuthoritativeReviewRemediationDecision,
@@ -86,29 +86,6 @@ import {
     resolveRecoveryPreflightPath
 } from './recovery-flow-restart-evidence';
 import { runRecoveryFlowPreflightPipeline } from './recovery-flow-preflight-pipeline';
-function findLatestSuccessfulReviewSnapshotDetails(
-    timelinePath: string,
-    reviewType: string
-): Record<string, unknown> | null {
-    let latestDetails: Record<string, unknown> | null = null;
-    forEachJsonlLine(timelinePath, (line) => {
-        const event = JSON.parse(line) as Record<string, unknown>;
-        const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
-            ? event.details as Record<string, unknown>
-            : null;
-        if (
-            String(event.event_type || '').trim().toUpperCase() === 'REVIEW_RECORDED'
-            && String(event.outcome || '').trim().toUpperCase() === 'PASS'
-            && String(details?.review_type || '').trim().toLowerCase() === reviewType
-            && String(details?.remediation_baseline_snapshot_path || '').trim()
-            && String(details?.remediation_baseline_snapshot_sha256 || '').trim()
-        ) {
-            latestDetails = details;
-        }
-    });
-    return latestDetails;
-}
-
 function getDependencyBlockReason(error: unknown, reviewType: string): string | null {
     const message = error instanceof Error ? error.message : String(error);
     const isUpstreamReviewBlock = message.includes(
@@ -179,13 +156,29 @@ export function resolveRuntimeDecisionInputs(options: {
         }
         const orchestratorRoot = resolveOrchestratorRoot(options.repoRoot);
         const timelinePath = path.join(orchestratorRoot, 'runtime', 'task-events', `${options.taskId}.jsonl`);
-        const timelineIntegrity = inspectTaskEventFile(timelinePath, options.taskId);
+        const recordedEvent = { details: null as Record<string, unknown> | null };
+        const timelineIntegrity = inspectTaskEventFile(timelinePath, options.taskId, {
+            onIntegrityEvent: (event) => {
+                const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                    ? event.details as Record<string, unknown>
+                    : null;
+                if (
+                    String(event.event_type || '').trim().toUpperCase() === 'REVIEW_RECORDED'
+                    && String(event.outcome || '').trim().toUpperCase() === 'PASS'
+                    && String(details?.review_type || '').trim().toLowerCase() === currentReviewType
+                    && String(details?.remediation_baseline_snapshot_path || '').trim()
+                    && String(details?.remediation_baseline_snapshot_sha256 || '').trim()
+                ) {
+                    recordedEvent.details = details;
+                }
+            }
+        });
         if (!['PASS', 'PASS_WITH_LEGACY_PREFIX'].includes(timelineIntegrity.status)) {
             return buildFullFallback(
                 `Task timeline cannot authenticate remediation snapshot lineage (${timelineIntegrity.status}); FULL review is required.`
             );
         }
-        const recordedEventDetails = findLatestSuccessfulReviewSnapshotDetails(timelinePath, currentReviewType);
+        const recordedEventDetails = recordedEvent.details;
         if (!recordedEventDetails) {
             return buildFullFallback(
                 'Review telemetry does not bind an immutable remediation snapshot; FULL review is required.'
@@ -199,12 +192,13 @@ export function resolveRuntimeDecisionInputs(options: {
             recordedEventDetails.remediation_baseline_snapshot_sha256 || ''
         ).trim().toLowerCase();
         const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
-        const expectedPrefix = `${options.taskId}-${currentReviewType}-remediation-baseline-`.toLowerCase();
+        const expectedFileName = (
+            `${options.taskId}-${currentReviewType}-remediation-baseline-${baselineSnapshotSha256}.json`
+        ).toLowerCase();
         if (
             !/^[0-9a-f]{64}$/u.test(baselineSnapshotSha256)
             || !gateHelpers.isPathRealpathInsideRoot(baselineSnapshotPath, reviewsRoot, { allowMissing: false })
-            || !path.basename(baselineSnapshotPath).toLowerCase().startsWith(expectedPrefix)
-            || !path.basename(baselineSnapshotPath).toLowerCase().endsWith('.json')
+            || path.basename(baselineSnapshotPath).toLowerCase() !== expectedFileName
         ) {
             return buildFullFallback(
                 'Review telemetry contains an unsafe or invalid remediation snapshot binding; FULL review is required.'
