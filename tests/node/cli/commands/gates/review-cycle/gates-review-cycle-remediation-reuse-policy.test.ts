@@ -199,7 +199,7 @@ it('rejects untrusted legacy-prefix snapshot binding and forces FULL', () => {
     };
     assert.equal(runtime.source, 'runtime_fix');
     assert.deepEqual(runtime.classification.invalidated_review_types, ['code', 'security']);
-    assert.match(runtime.classification.reason, /does not bind an immutable remediation snapshot/iu);
+    assert.match(runtime.classification.reason, /cannot authenticate remediation snapshot lineage \(PASS_WITH_LEGACY_PREFIX\)/iu);
 
     fs.rmSync(repoRoot, { recursive: true, force: true });
 });

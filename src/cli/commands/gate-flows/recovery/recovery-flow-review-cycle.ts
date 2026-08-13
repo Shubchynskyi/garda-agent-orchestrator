@@ -173,7 +173,7 @@ export function resolveRuntimeDecisionInputs(options: {
                 }
             }
         });
-        if (!['PASS', 'PASS_WITH_LEGACY_PREFIX'].includes(timelineIntegrity.status)) {
+        if (timelineIntegrity.status !== 'PASS') {
             return buildFullFallback(
                 `Task timeline cannot authenticate remediation snapshot lineage (${timelineIntegrity.status}); FULL review is required.`
             );
