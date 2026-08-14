@@ -20,6 +20,7 @@ import {
     computeSemanticCycleSnapshotSha256,
     copySemanticCycleBaseBindings,
     deriveSemanticCycleReviewBindings,
+    serializeSemanticCycleValue,
     validateSemanticCycleSnapshot
 } from '../../../../src/gates/semantic-cycle-resume/semantic-cycle-snapshot';
 
@@ -89,6 +90,19 @@ describe('semantic cycle snapshot contract', () => {
         );
         assert.equal(validateSemanticCycleSnapshot(snapshot).status, 'VALID');
         assert.deepEqual(buildSnapshot(), snapshot);
+    });
+
+    it('rejects locale-dependent ordering for canonical payload keys and review lanes', () => {
+        assert.equal(
+            serializeSemanticCycleValue({ 'ä': 2, z: 1 }),
+            '{"z":1,"ä":2}'
+        );
+        assert.deepEqual(
+            buildSnapshot({
+                lanes: [buildLane('z-lane'), buildLane('a-2'), buildLane('a-10')]
+            }).review_lanes.map((lane) => lane.review_type),
+            ['a-10', 'a-2', 'z-lane']
+        );
     });
 
     it('rejects stale hashes and coherently rehashed derived review bindings', () => {
@@ -256,6 +270,41 @@ describe('semantic cycle comparison', () => {
                 'TASK_EVENT_SCHEMA_MISMATCH'
             ])
         );
+    });
+
+    it('reports concurrent semantic drift while runtime incompatibility keeps mutation blocked', () => {
+        const authoritative = buildSnapshot();
+        const candidate = buildSnapshot({
+            taskId: 'T-1015-2',
+            bindings: { source_content: hash('changed source') },
+            lanes: [buildLane('api'), buildLane('code')]
+        });
+        const oldRuntime: SemanticCycleRuntimeIdentity = {
+            ...runtime,
+            cli_version: '1.2.9',
+            task_event_schema_version: 1,
+            snapshot_schema_version: 2
+        };
+
+        const result = compareSemanticCycleSnapshots(authoritative, candidate, oldRuntime);
+        const codes = new Set(result.mismatches.map((entry) => entry.code));
+        assert.equal(result.status, 'RUNTIME_INCOMPATIBLE');
+        assert.equal(result.route, 'runtime_upgrade_required');
+        assert.equal(result.mutation_allowed, false);
+        for (const code of [
+            'SNAPSHOT_SCHEMA_UNSUPPORTED',
+            'RUNTIME_CLI_MISMATCH',
+            'TASK_EVENT_SCHEMA_MISMATCH',
+            'TASK_ID_MISMATCH',
+            'SOURCE_CONTENT_MISMATCH',
+            'REVIEW_CONTEXTS_MISMATCH',
+            'FINDINGS_DISPOSITIONS_MISMATCH',
+            'REVIEW_RECEIPTS_MISMATCH',
+            'REVIEWER_DEPENDENCIES_MISMATCH',
+            'REVIEW_LANE_SET_MISMATCH'
+        ] as const) {
+            assert.ok(codes.has(code), code);
+        }
     });
 
     it('round-trips the base bindings needed by a later transaction without derived review hashes', () => {

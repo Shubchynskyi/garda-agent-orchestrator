@@ -208,11 +208,7 @@ export function compareSemanticCycleSnapshots(
             runtimeMismatches.push(entry);
         }
     }
-    if (runtimeMismatches.length > 0) {
-        return buildComparisonResult('RUNTIME_INCOMPATIBLE', authoritative, candidate, runtimeMismatches);
-    }
-
-    const mismatches: SemanticCycleMismatch[] = [];
+    const mismatches: SemanticCycleMismatch[] = [...runtimeMismatches];
     if (authoritative.task_id !== candidate.task_id) {
         mismatches.push(mismatch(
             'TASK_ID_MISMATCH',
@@ -235,7 +231,11 @@ export function compareSemanticCycleSnapshots(
     }
     mismatches.push(...compareReviewLanes(authoritative.review_lanes, candidate.review_lanes));
     return buildComparisonResult(
-        mismatches.length === 0 ? 'REUSABLE' : 'RECOVERY_REQUIRED',
+        runtimeMismatches.length > 0
+            ? 'RUNTIME_INCOMPATIBLE'
+            : mismatches.length === 0
+                ? 'REUSABLE'
+                : 'RECOVERY_REQUIRED',
         authoritative,
         candidate,
         mismatches

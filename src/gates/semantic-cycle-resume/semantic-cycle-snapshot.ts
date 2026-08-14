@@ -20,13 +20,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function compareCanonicalStrings(left: string, right: string): number {
+    if (left === right) {
+        return 0;
+    }
+    return left < right ? -1 : 1;
+}
+
 function canonicalize(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(canonicalize);
     }
     if (isRecord(value)) {
         const result: Record<string, unknown> = {};
-        for (const key of Object.keys(value).sort((left, right) => left.localeCompare(right))) {
+        for (const key of Object.keys(value).sort(compareCanonicalStrings)) {
             result[key] = canonicalize(value[key]);
         }
         return result;
@@ -45,7 +52,7 @@ function sha256Value(value: unknown): string {
 function sortReviewLanes(reviewLanes: readonly SemanticCycleReviewLaneBinding[]): SemanticCycleReviewLaneBinding[] {
     return reviewLanes
         .map((lane) => ({ ...lane }))
-        .sort((left, right) => left.review_type.localeCompare(right.review_type));
+        .sort((left, right) => compareCanonicalStrings(left.review_type, right.review_type));
 }
 
 export function deriveSemanticCycleReviewBindings(
@@ -245,7 +252,7 @@ export function validateSemanticCycleSnapshot(value: unknown): SemanticCycleSnap
         if (new Set(laneIds).size !== laneIds.length) {
             violations.push('snapshot.review_lanes must not contain duplicate review_type values.');
         }
-        const sortedIds = [...laneIds].sort((left, right) => left.localeCompare(right));
+        const sortedIds = [...laneIds].sort(compareCanonicalStrings);
         if (laneIds.some((laneId, index) => laneId !== sortedIds[index])) {
             violations.push('snapshot.review_lanes must be sorted by review_type.');
         }
