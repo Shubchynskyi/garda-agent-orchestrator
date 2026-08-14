@@ -329,6 +329,28 @@ function appendCanonicalReviewFailure(repoRoot: string, reviewType = 'code'): vo
 }
 
 describe('gates/next-step quality checklist routing', () => {
+    it('requires trust-boundary checklist evidence for protected planned scope before files are dirty', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true },
+            { changedFiles: [] }
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.triggers = { protected_control_plane_changed: true };
+        writeJson(preflightPath, preflight);
+
+        const readiness = readCurrentQualityChecklistReadiness(repoRoot);
+
+        assert.equal(readiness.required, true);
+        assert.equal(readiness.ready, false);
+        assert.equal(readiness.evidenceStatus, 'missing');
+        assert.ok(readiness.activeRuleCount > 0);
+    });
+
     it('materializes current answers while routing to the quality checklist gate', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);

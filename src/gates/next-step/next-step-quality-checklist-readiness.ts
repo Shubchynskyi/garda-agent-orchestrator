@@ -442,11 +442,11 @@ export function readQualityChecklistReadiness(options: {
         ...readinessOptions,
         reviewFailureCadenceInterval: cadenceInterval.value
     });
-    const required = preflightHasChangedFiles(options.preflight);
     const changedFilesCount = preflightChangedFilesCount(options.preflight);
     const changedFiles = preflightChangedFiles(options.preflight);
     const scopeCategory = preflightScopeCategory(options.preflight);
     const trustBoundaryRequired = assessTrustBoundaryAnalysisApplicability(options.preflight).required;
+    const required = preflightHasChangedFiles(options.preflight) || trustBoundaryRequired;
     const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
     const ordinaryChecksEnabled = (hasOptionalQualityChecksConfig || sourceCheckoutDefaultEnabled)
         && optionalQualityChecks.enabled;
