@@ -315,12 +315,15 @@ export interface ClassifyChangeCommandOptions {
 
 interface PreflightFailureDiagnostics {
     reason_code: string;
-    pre_task_modified_files: string[];
-    dirty_workspace_baseline_changed_files: string[];
-    current_workspace_changed_files: string[];
-    explicit_changed_files_provided: boolean;
-    use_staged: boolean;
-    include_untracked: boolean;
+    pre_task_modified_files?: string[];
+    dirty_workspace_baseline_changed_files?: string[];
+    current_workspace_changed_files?: string[];
+    authorized_scope_changed_files?: string[];
+    changed_protected_files?: string[];
+    detection_source?: string;
+    explicit_changed_files_provided?: boolean;
+    use_staged?: boolean;
+    include_untracked?: boolean;
 }
 
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
@@ -718,6 +721,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             && changedProtectedFiles.length > 0
             && taskModeEvidence.orchestrator_work !== true
         ) {
+            preflightFailureDiagnostics = {
+                reason_code: 'protected_scope_requires_orchestrator_work',
+                authorized_scope_changed_files: normalizePortablePathList(authorizedFiles),
+                changed_protected_files: normalizePortablePathList(changedProtectedFiles),
+                detection_source: workspaceSnapshot.detection_source,
+                explicit_changed_files_provided: explicitChangedFilesProvided,
+                use_staged: options.useStaged === true,
+                include_untracked: includeUntracked
+            };
             preflightErrors.push(
                 `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${changedProtectedFiles.join(', ')}. ` +
                 'Restart task mode as orchestrator work before preflight classification. ' +
@@ -1202,6 +1214,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                             pre_task_modified_files: preflightFailureDiagnostics.pre_task_modified_files,
                             dirty_workspace_baseline_changed_files: preflightFailureDiagnostics.dirty_workspace_baseline_changed_files,
                             current_workspace_changed_files: preflightFailureDiagnostics.current_workspace_changed_files,
+                            authorized_scope_changed_files: preflightFailureDiagnostics.authorized_scope_changed_files,
+                            changed_protected_files: preflightFailureDiagnostics.changed_protected_files,
+                            detection_source: preflightFailureDiagnostics.detection_source,
                             explicit_changed_files_provided: preflightFailureDiagnostics.explicit_changed_files_provided,
                             use_staged: preflightFailureDiagnostics.use_staged,
                             include_untracked: preflightFailureDiagnostics.include_untracked

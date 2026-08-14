@@ -1002,6 +1002,21 @@ describe('cli/commands/gates', () => {
         assert.ok(error.message.includes(`--planned-changed-file "${nonProtectedFile}"`));
         assert.equal(fs.existsSync(preflightPath), false);
 
+        const failedEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'PREFLIGHT_FAILED');
+        assert.ok(failedEvent);
+        const failedDetails = failedEvent.details as Record<string, unknown>;
+        assert.equal(
+            failedDetails.preflight_failure_reason_code,
+            'protected_scope_requires_orchestrator_work'
+        );
+        assert.deepEqual(
+            failedDetails.authorized_scope_changed_files,
+            [protectedFile, nonProtectedFile].sort()
+        );
+        assert.deepEqual(failedDetails.changed_protected_files, [protectedFile]);
+
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
