@@ -198,6 +198,7 @@ function renderAddProfileForm(payload, disabled) {
     + '</select></label>'
     + '<label><span>' + safe(t('descriptionColumn')) + '</span><input id="profile-new-description" type="text"' + disabledAttr + '></label>'
     + '<label><span>' + safe(t('profileDepth')) + '</span><select id="profile-new-depth"' + disabledAttr + '><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>'
+    + '<label><span>Guarded task decomposition</span><input id="profile-new-task-decomposition" type="checkbox"' + disabledAttr + '></label>'
     + '<button type="button" data-profile-action="create"' + (disabled ? ' disabled' : '') + '>' + safe(t('addProfile')) + '</button>'
     + '</section>';
 }
@@ -269,7 +270,9 @@ function renderProfileCard(profile, disabled) {
     + '<label><span>' + safe(t('profileDepth')) + '</span><select id="' + safe(profileInputId(profile.name, 'depth')) + '"' + disabledAttr + '>'
     + [1, 2, 3].map(depth => '<option value="' + depth + '"' + (Number(profile.depth) === depth ? ' selected' : '') + '>' + depth + '</option>').join('')
     + '</select></label>'
+    + '<label><span>Guarded task decomposition</span><input id="' + safe(profileInputId(profile.name, 'task-decomposition')) + '" type="checkbox"' + (profile.task_decomposition && profile.task_decomposition.enabled ? ' checked' : '') + disabledAttr + '></label>'
     + '</div>'
+    + '<p class="empty"><strong>Effective source:</strong> <code>' + safe(profile.task_decomposition ? profile.task_decomposition.provenance : 'unavailable') + '</code></p>'
     + renderFindingPolicySection(profile, disabled)
     + renderFollowUpTaskProfileSection(profile, disabled)
     + renderProfilePolicyGrid(profile, disabled)
@@ -297,6 +300,7 @@ function readFindingPolicyForm(profileName) {
 function readProfileForm(profileName) {
   const description = document.getElementById(profileInputId(profileName, 'description'));
   const depth = document.getElementById(profileInputId(profileName, 'depth'));
+  const taskDecomposition = document.getElementById(profileInputId(profileName, 'task-decomposition'));
   const reviewTypes = currentProfilesPayload && Array.isArray(currentProfilesPayload.review_types)
     ? currentProfilesPayload.review_types
     : [];
@@ -318,6 +322,7 @@ function readProfileForm(profileName) {
     profile_name: profileName,
     description: description ? description.value : '',
     depth: depth ? depth.value : '2',
+    task_decomposition: { enabled: Boolean(taskDecomposition && taskDecomposition.checked) },
     review_policy: reviewPolicy,
     review_follow_up_policy: {
       schema_version: 1,
@@ -378,12 +383,14 @@ function attachProfileActionHandlers() {
         const copyInput = document.getElementById('profile-new-copy-from');
         const descriptionInput = document.getElementById('profile-new-description');
         const depthInput = document.getElementById('profile-new-depth');
+        const taskDecompositionInput = document.getElementById('profile-new-task-decomposition');
         payload = {
           operation: 'create',
           profile_name: nameInput ? nameInput.value : '',
           copy_from: copyInput ? copyInput.value : '',
           description: descriptionInput ? descriptionInput.value : '',
-          depth: depthInput ? depthInput.value : '2'
+          depth: depthInput ? depthInput.value : '2',
+          task_decomposition: { enabled: Boolean(taskDecompositionInput && taskDecompositionInput.checked) }
         };
       } else if (action === 'save') {
         payload = { operation: 'save', ...readProfileForm(button.dataset.profileName || '') };

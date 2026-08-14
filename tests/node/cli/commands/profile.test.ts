@@ -257,6 +257,8 @@ test('profile list shows all profiles with active marker', () => {
     assert.ok(output.includes('fast'));
     assert.ok(output.includes('strict'));
     assert.ok(output.includes('docs-only'));
+    assert.match(output, /strict\s+depth=3 decomposition=true provenance=legacy_strict_compatibility/u);
+    assert.match(output, /balanced\s+depth=2 decomposition=true provenance=legacy_balanced_default/u);
     assert.ok(output.includes('Review Catalog Lanes'));
 });
 
@@ -332,6 +334,10 @@ test('profile list --json returns valid JSON', () => {
     assert.equal(parsed.active_profile, 'balanced');
     assert.ok(Array.isArray(parsed.built_in_profiles));
     assert.ok(parsed.built_in_profiles.includes('balanced'));
+    assert.equal(
+        (parsed.profile_task_decomposition_policies as Record<string, { enabled: boolean }>).strict.enabled,
+        true
+    );
 });
 
 test('profile current shows active profile details', () => {
@@ -341,6 +347,7 @@ test('profile current shows active profile details', () => {
     assert.ok(output.includes('ActiveProfile: balanced'));
     assert.ok(output.includes('Type: built-in'));
     assert.ok(output.includes('Depth: 2'));
+    assert.ok(output.includes('TaskDecomposition: enabled=true, configured=false, provenance=legacy_balanced_default'));
     assert.ok(output.includes('ReviewFindingPolicy: policy_id=balanced'));
     assert.ok(output.includes('critical=fix_now'));
     assert.ok(output.includes('residual_risk=create_follow_up'));

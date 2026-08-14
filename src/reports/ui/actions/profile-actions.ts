@@ -54,6 +54,7 @@ interface UiProfileRequest {
     copy_from?: unknown;
     description?: unknown;
     depth?: unknown;
+    task_decomposition?: unknown;
     review_policy?: unknown;
     review_follow_up_policy?: unknown;
     policy_preset?: unknown;
@@ -115,6 +116,26 @@ function normalizeDepth(value: unknown, fallback: number): number {
         return fallback;
     }
     return parseStrictDepth(String(value));
+}
+
+function normalizeTaskDecomposition(
+    value: unknown,
+    fallback: ProfileEntry['task_decomposition']
+): ProfileEntry['task_decomposition'] {
+    if (value === undefined) {
+        return fallback ? { ...fallback } : undefined;
+    }
+    if (
+        !value
+        || typeof value !== 'object'
+        || Array.isArray(value)
+        || Object.keys(value).length !== 1
+        || !Object.hasOwn(value, 'enabled')
+        || typeof (value as Record<string, unknown>).enabled !== 'boolean'
+    ) {
+        throw new Error('task_decomposition must be exactly { "enabled": boolean }.');
+    }
+    return { enabled: (value as Record<string, unknown>).enabled as boolean };
 }
 
 function normalizeReviewPolicy(value: unknown, fallback: Record<string, boolean | 'auto'>): Record<string, boolean | 'auto'> {
@@ -250,10 +271,15 @@ function buildProfileEntryFromPayload(
     fallbackDescription: string
 ): ProfileEntry {
     const prepared = buildPromptReadyProfileEntry(cloneProfileEntry(sourceEntry));
+    const taskDecomposition = normalizeTaskDecomposition(
+        payload.task_decomposition,
+        prepared.task_decomposition
+    );
     return {
         ...prepared,
         description: normalizeDescription(payload.description, fallbackDescription || prepared.description),
         depth: normalizeDepth(payload.depth, prepared.depth),
+        ...(taskDecomposition ? { task_decomposition: taskDecomposition } : {}),
         review_policy: normalizeReviewPolicy(payload.review_policy, prepared.review_policy),
         review_follow_up_policy: normalizeReviewFollowUpPolicy(
             payload.review_follow_up_policy,

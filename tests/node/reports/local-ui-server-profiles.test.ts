@@ -27,7 +27,10 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         actionsEnabled: true
     });
     try {
-        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const dashboardHtml = await (await fetch(server.url)).text();
+        const actionToken = extractActionToken(dashboardHtml);
+        assert.match(dashboardHtml, /profile-new-task-decomposition/u);
+        assert.match(dashboardHtml, /Guarded task decomposition/u);
         const actionHeaders = {
             'content-type': 'application/json',
             'origin': server.url.slice(0, -1),
@@ -60,6 +63,11 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                 source: string;
                 protected: boolean;
                 active: boolean;
+                task_decomposition: {
+                    enabled: boolean;
+                    configured: boolean;
+                    provenance: string;
+                };
                 review_policy: Record<string, boolean | 'auto'>;
                 review_follow_up_policy: {
                     task_profile: { mode: string; fixed_profile: string | null };
@@ -82,6 +90,11 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.ok(list.profiles.some((profile) => profile.name === 'balanced' && profile.protected));
         const balancedProfile = list.profiles.find((profile) => profile.name === 'balanced');
         assert.ok(balancedProfile);
+        assert.equal(balancedProfile.task_decomposition.enabled, true);
+        assert.ok([
+            'explicit_profile_config',
+            'legacy_balanced_default'
+        ].includes(balancedProfile.task_decomposition.provenance));
         assert.deepEqual(balancedProfile.review_follow_up_task_profile_assignment, {
             parent_profile: 'balanced',
             profile: 'fast',
@@ -96,6 +109,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             copy_from: 'balanced',
             description: 'Custom profile',
             depth: '3',
+            task_decomposition: { enabled: true },
             review_policy: {
                 code: 'required',
                 test: 'auto',
@@ -239,6 +253,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         const createdData = JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')) as {
             user_profiles: Record<string, {
                 depth: number;
+                task_decomposition: { enabled: boolean };
                 review_policy: Record<string, unknown>;
                 review_follow_up_policy: {
                     task_profile: { mode: string; fixed_profile: string | null };
@@ -246,6 +261,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             }>;
         };
         assert.equal(createdData.user_profiles['custom-review'].depth, 3);
+        assert.equal(createdData.user_profiles['custom-review'].task_decomposition.enabled, true);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.code, true);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.test, 'auto');
         assert.equal(createdData.user_profiles['custom-review'].review_policy.performance, false);
@@ -467,6 +483,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             profile_name: 'balanced',
             description: 'Locally edited balanced',
             depth: '1',
+            task_decomposition: { enabled: true },
             review_policy: { code: true, test: true }
         };
         const saveBuiltInPreviewSha256 = await previewProfileAction(saveBuiltInPayload);
@@ -488,6 +505,10 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         };
         assert.equal(saveBuiltIn.proposed_value.source, 'built_in');
         assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.depth, 1);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.task_decomposition.enabled,
+            true
+        );
 
         const localizedCreatePayload = {
             operation: 'create',

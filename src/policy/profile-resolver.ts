@@ -48,6 +48,27 @@ export interface ProfileSkills {
     [key: string]: boolean;
 }
 
+export interface ProfileTaskDecompositionConfig {
+    enabled: boolean;
+}
+
+export type ProfileTaskDecompositionProvenance =
+    | 'explicit_profile_config'
+    | 'legacy_strict_compatibility'
+    | 'legacy_balanced_default'
+    | 'legacy_disabled_default'
+    | 'legacy_snapshot_strict_compatibility'
+    | 'legacy_snapshot_balanced_default'
+    | 'legacy_snapshot_disabled_default';
+
+export interface ResolvedProfileTaskDecompositionPolicy {
+    enabled: boolean;
+    configured: boolean;
+    provenance: ProfileTaskDecompositionProvenance;
+    diagnostics: string[];
+    valid: boolean;
+}
+
 export type ReviewFindingDispositionAction = 'fix_now' | 'create_follow_up' | 'ignore';
 export type CriticalReviewFindingDispositionAction = 'fix_now';
 export type ReviewFindingPolicyId = 'soft' | 'balanced' | 'strict' | 'custom';
@@ -106,6 +127,7 @@ export interface ReviewFollowUpTaskProfileAssignment {
 export interface ProfileEntry {
     description: string;
     depth: number;
+    task_decomposition?: ProfileTaskDecompositionConfig;
     review_policy: ProfileReviewPolicy;
     review_finding_policy?: ReviewFindingPolicy;
     review_follow_up_policy?: ReviewFollowUpPolicy;
@@ -164,6 +186,7 @@ export interface EffectivePolicy {
     profile_name: string;
     profile_source: 'built_in' | 'user';
     depth: number;
+    task_decomposition: ResolvedProfileTaskDecompositionPolicy;
     review_policy: EffectiveReviewPolicy;
     review_catalog_policy?: ResolvedProfileReviewCatalogPolicy;
     review_finding_policy: ReviewFindingPolicy;
@@ -185,6 +208,52 @@ export interface EffectivePolicy {
         token_economy: string;
         skill_packs: string;
         paths: string;
+    };
+}
+
+export function resolveProfileTaskDecompositionPolicy(
+    configInput: unknown,
+    profileName: string
+): ResolvedProfileTaskDecompositionPolicy {
+    if (configInput === undefined) {
+        const normalizedProfile = profileName.trim().toLowerCase();
+        const enabledByDefault = normalizedProfile === 'strict' || normalizedProfile === 'balanced';
+        return {
+            enabled: enabledByDefault,
+            configured: false,
+            provenance: normalizedProfile === 'strict'
+                ? 'legacy_strict_compatibility'
+                : normalizedProfile === 'balanced'
+                    ? 'legacy_balanced_default'
+                    : 'legacy_disabled_default',
+            diagnostics: [enabledByDefault
+                ? `Profile '${profileName}' is missing task_decomposition; defaulted guarded task decomposition to enabled.`
+                : `Profile '${profileName}' is missing task_decomposition; defaulted guarded task decomposition to disabled.`],
+            valid: true
+        };
+    }
+    if (
+        !isPlainRecord(configInput)
+        || Object.keys(configInput).length !== 1
+        || !Object.hasOwn(configInput, 'enabled')
+        || typeof configInput.enabled !== 'boolean'
+    ) {
+        return {
+            enabled: false,
+            configured: true,
+            provenance: 'explicit_profile_config',
+            diagnostics: [
+                `Profile '${profileName}' has invalid task_decomposition; expected exactly { "enabled": boolean }. Resolved fail-closed to disabled.`
+            ],
+            valid: false
+        };
+    }
+    return {
+        enabled: configInput.enabled,
+        configured: true,
+        provenance: 'explicit_profile_config',
+        diagnostics: [],
+        valid: true
     };
 }
 
@@ -1207,6 +1276,13 @@ export function resolveEffectivePolicy(
         entry.review_follow_up_policy,
         profileName
     );
+    const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(
+        entry.task_decomposition,
+        profileName
+    );
+    if (!taskDecompositionPolicy.valid) {
+        throw new Error(taskDecompositionPolicy.diagnostics.join(' '));
+    }
 
     const tokenEconomy = mergeTokenEconomy(entry.token_economy, tokenEconomyConfig);
 
@@ -1244,6 +1320,7 @@ export function resolveEffectivePolicy(
         profile_name: profileName,
         profile_source: profileSource,
         depth: entry.depth,
+        task_decomposition: taskDecompositionPolicy,
         review_policy: reviewPolicy,
         review_catalog_policy: reviewCatalogPolicy,
         review_finding_policy: reviewFindingPolicyResolution.policy,
@@ -1274,6 +1351,10 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     lines.push('EFFECTIVE_POLICY');
     lines.push(`Profile: ${policy.profile_name} (${policy.profile_source})`);
     lines.push(`Depth: ${policy.depth}`);
+    lines.push(
+        `TaskDecomposition: enabled=${String(policy.task_decomposition.enabled)}, ` +
+        `configured=${String(policy.task_decomposition.configured)}, provenance=${policy.task_decomposition.provenance}`
+    );
     if (policy.scope_category) {
         lines.push(`ScopeCategory: ${policy.scope_category}`);
     }

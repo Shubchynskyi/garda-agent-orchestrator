@@ -61,6 +61,22 @@ describe('cli/gates record-strict-decomposition-decision', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('records the actual profile for a decomposition-enabled balanced parent', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-balanced-decomposition-cli-'));
+        const result = runRecordStrictDecompositionDecisionCommand({
+            ...baseOptions(repoRoot),
+            taskProfile: 'balanced'
+        });
+
+        assert.equal(result.exitCode, 0);
+        const artifact = JSON.parse(fs.readFileSync(
+            path.join(repoRoot, 'runtime', 'reviews', 'T-200-strict-decomposition-decision.json'),
+            'utf8'
+        )) as { task_profile: string };
+        assert.equal(artifact.task_profile, 'balanced');
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('records split-required work packages from a contained structured contract file', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-strict-decomposition-work-packages-'));
         const contractPath = writeWorkPackageContract(repoRoot);

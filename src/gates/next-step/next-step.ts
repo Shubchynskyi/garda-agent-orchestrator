@@ -180,6 +180,10 @@ import {
     assessReviewCycleContinuationEvidence
 } from '../review-cycle/review-cycle-continuation';
 import { resolveTaskProfileSelection } from '../../policy/task-profile-selection';
+import {
+    resolveTaskProfileTaskDecompositionPolicy,
+    type TaskProfilePolicySnapshot
+} from '../../policy/task-profile-policy-snapshot';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
     buildForcedSourceCheckoutRuntimeBuildCommand,
@@ -488,6 +492,9 @@ export interface NextStepProfileSummary {
     effective_profile_source: string | null;
     runtime_active_profile: string | null;
     runtime_active_profile_source: string | null;
+    task_decomposition_enabled: boolean | null;
+    task_decomposition_configured: boolean | null;
+    task_decomposition_provenance: string | null;
     requested_depth: number | null;
     effective_depth: number | null;
     depth_escalation_reason: string | null;
@@ -1276,6 +1283,38 @@ function buildNextStepProfileSummary(
     const depthEscalation = preflight?.depth_escalation && typeof preflight.depth_escalation === 'object'
         ? preflight.depth_escalation as Record<string, unknown>
         : null;
+    const frozenTaskDecomposition = isPlainRecord(taskMode?.profile_policy_snapshot)
+        ? resolveTaskProfileTaskDecompositionPolicy(
+            taskMode.profile_policy_snapshot as unknown as TaskProfilePolicySnapshot
+        )
+        : null;
+    let liveTaskDecomposition: ReturnType<typeof resolveTaskProfileSelection>['effective_policy']['task_decomposition'] | null = null;
+    if (!frozenTaskDecomposition) {
+        try {
+            liveTaskDecomposition = resolveTaskProfileSelection(
+                resolveBundleRootForTarget(repoRoot),
+                rawTaskProfile,
+                typeof preflight?.scope_category === 'string' ? preflight.scope_category : null
+            ).effective_policy.task_decomposition;
+        } catch {
+            liveTaskDecomposition = null;
+        }
+    }
+    const legacyProfileName = String(
+        taskMode?.active_profile
+        || rawTaskProfile
+        || resolvedSelection?.effective_profile
+        || ''
+    ).trim().toLowerCase();
+    const taskDecomposition = frozenTaskDecomposition || liveTaskDecomposition || {
+        enabled: legacyProfileName === 'strict' || legacyProfileName === 'balanced',
+        configured: false,
+        provenance: legacyProfileName === 'strict'
+            ? 'legacy_snapshot_strict_compatibility'
+            : legacyProfileName === 'balanced'
+                ? 'legacy_snapshot_balanced_default'
+                : 'legacy_snapshot_disabled_default'
+    };
 
     const summary: NextStepProfileSummary = {
         task_selected_profile: rawTaskProfile || resolvedSelection?.task_profile || null,
@@ -1299,6 +1338,9 @@ function buildNextStepProfileSummary(
             (typeof taskMode?.runtime_profile_source === 'string' && taskMode.runtime_profile_source.trim())
             || resolvedSelection?.runtime_profile_source
             || null,
+        task_decomposition_enabled: taskDecomposition?.enabled ?? null,
+        task_decomposition_configured: taskDecomposition?.configured ?? null,
+        task_decomposition_provenance: taskDecomposition?.provenance ?? null,
         requested_depth:
             parseOptionalNumberField(budgetForecast?.requested_depth)
             ?? parseOptionalNumberField(taskMode?.requested_depth),
@@ -1324,6 +1366,7 @@ function buildNextStepProfileSummary(
         summary.task_selected_profile == null
         && summary.effective_profile == null
         && summary.runtime_active_profile == null
+        && summary.task_decomposition_enabled == null
         && summary.requested_depth == null
         && summary.effective_depth == null
         && summary.total_forecast_tokens == null

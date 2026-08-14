@@ -6,6 +6,7 @@ import { readProfilesData } from '../../cli/commands/profile/profile-data';
 import { buildProfileFindingPolicyProjection } from '../../cli/commands/profile/profile-finding-policy';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
 import {
+    resolveProfileTaskDecompositionPolicy,
     resolveReviewFollowUpPolicy,
     resolveReviewFollowUpTaskProfileAssignment
 } from '../../policy/profile-resolver';
@@ -44,6 +45,7 @@ function buildProfileRow(
     availableProfiles: readonly string[]
 ): ReportProfileRow {
     const findingPolicy = buildProfileFindingPolicyProjection(name, entry);
+    const taskDecomposition = resolveProfileTaskDecompositionPolicy(entry.task_decomposition, name);
     const followUpPolicy = resolveReviewFollowUpPolicy(entry.review_follow_up_policy, name);
     const followUpTaskProfileAssignment = resolveReviewFollowUpTaskProfileAssignment(
         followUpPolicy.policy,
@@ -57,6 +59,10 @@ function buildProfileRow(
         protected: source === 'built_in',
         description: entry.description,
         depth: entry.depth,
+        task_decomposition: {
+            ...taskDecomposition,
+            diagnostics: [...taskDecomposition.diagnostics]
+        },
         review_policy: { ...entry.review_policy },
         review_finding_policy: findingPolicy.policy,
         review_finding_policy_sha256: findingPolicy.policy_sha256,

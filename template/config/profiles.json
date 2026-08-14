@@ -5,6 +5,9 @@
     "balanced": {
       "description": "Default profile: moderate depth, standard reviews, and token economy enabled for shallow depths.",
       "depth": 2,
+      "task_decomposition": {
+        "enabled": true
+      },
       "review_policy": {
         "code": true,
         "db": "auto",
@@ -49,6 +52,9 @@
     "fast": {
       "description": "Speed-optimised profile: shallow depth, only code/test reviews by trigger, aggressive token economy.",
       "depth": 1,
+      "task_decomposition": {
+        "enabled": false
+      },
       "review_policy": {
         "code": "auto",
         "db": false,
@@ -93,6 +99,9 @@
     "strict": {
       "description": "Maximum rigour: deep depth, core reviews enabled, and domain reviews kept evidence-aware.",
       "depth": 3,
+      "task_decomposition": {
+        "enabled": true
+      },
       "review_policy": {
         "code": true,
         "db": "auto",
@@ -137,6 +146,9 @@
     "docs-only": {
       "description": "Documentation-focused profile: shallow depth, no code reviews, aggressive token economy.",
       "depth": 1,
+      "task_decomposition": {
+        "enabled": false
+      },
       "review_policy": {
         "code": false,
         "db": false,

@@ -6,6 +6,7 @@ import {
     analyzeProfileReviewCatalogPolicy,
     resolveConfigPaths,
     resolveProfileReviewCatalogPolicy,
+    resolveProfileTaskDecompositionPolicy,
     type ResolvedProfileReviewCatalogPolicy
 } from '../../../policy/profile-resolver';
 import { loadReviewTriggerPolicy } from '../../../policy/review-trigger-policy';
@@ -47,6 +48,16 @@ function buildProfileReviewCatalogPolicies(
     );
 }
 
+function buildProfileTaskDecompositionPolicies(data: ProfilesData) {
+    return Object.fromEntries(
+        [...Object.entries(data.built_in_profiles), ...Object.entries(data.user_profiles)]
+            .map(([name, entry]) => [
+                name,
+                resolveProfileTaskDecompositionPolicy(entry.task_decomposition, name)
+            ])
+    );
+}
+
 function buildProfileReviewCatalogPolicy(
     profileName: string,
     entry: ProfileEntry,
@@ -83,11 +94,13 @@ function formatCatalogLaneSummary(policy: ProfileReviewCatalogPolicyOutput): str
 
 export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
     const catalogPolicies = buildProfileReviewCatalogPolicies(data, bundleRoot);
+    const taskDecompositionPolicies = buildProfileTaskDecompositionPolicies(data);
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             built_in_profiles: Object.keys(data.built_in_profiles),
             user_profiles: Object.keys(data.user_profiles),
+            profile_task_decomposition_policies: taskDecompositionPolicies,
             profile_review_catalog_policies: catalogPolicies,
             config_path: resolveProfilesPath(bundleRoot)
         }, null, 2);
@@ -102,7 +115,11 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
     lines.push('Built-in Profiles');
     for (const [name, entry] of Object.entries(data.built_in_profiles)) {
         const marker = name === data.active_profile ? '(*) ' : '    ';
-        lines.push(`  ${marker}${padRight(name, 16)} depth=${entry.depth} ${entry.description}`);
+        const decomposition = taskDecompositionPolicies[name];
+        lines.push(
+            `  ${marker}${padRight(name, 16)} depth=${entry.depth} ` +
+            `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ${entry.description}`
+        );
     }
     const userNames = Object.keys(data.user_profiles);
     if (userNames.length > 0) {
@@ -110,7 +127,11 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
         lines.push('User Profiles');
         for (const [name, entry] of Object.entries(data.user_profiles)) {
             const marker = name === data.active_profile ? '(*) ' : '    ';
-            lines.push(`  ${marker}${padRight(name, 16)} depth=${entry.depth} ${entry.description}`);
+            const decomposition = taskDecompositionPolicies[name];
+            lines.push(
+                `  ${marker}${padRight(name, 16)} depth=${entry.depth} ` +
+                `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ${entry.description}`
+            );
         }
     }
     lines.push('');
@@ -127,12 +148,17 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         throw new Error(`Active profile '${data.active_profile}' was not found.`);
     }
     const catalogPolicy = buildProfileReviewCatalogPolicy(data.active_profile, entry, bundleRoot);
+    const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(
+        entry.task_decomposition,
+        data.active_profile
+    );
     const reviewTriggerPolicy = loadReviewTriggerPolicy(path.join(bundleRoot, 'live', 'config', 'paths.json'));
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             is_built_in: isBuiltInProfile(data, data.active_profile),
             entry: entry,
+            task_decomposition: taskDecompositionPolicy,
             review_catalog_policy: catalogPolicy,
             review_trigger_policy: reviewTriggerPolicy,
             config_path: resolveProfilesPath(bundleRoot)
@@ -146,6 +172,10 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
     if (entry) {
         lines.push(`Description: ${entry.description}`);
         lines.push(`Depth: ${entry.depth}`);
+        lines.push(
+            `TaskDecomposition: enabled=${String(taskDecompositionPolicy.enabled)}, ` +
+            `configured=${String(taskDecompositionPolicy.configured)}, provenance=${taskDecompositionPolicy.provenance}`
+        );
         lines.push(`ReviewPolicy: ${formatReviewPolicy(entry.review_policy)}`);
         lines.push(`ReviewCatalogPolicy: ${formatCatalogLaneSummary(catalogPolicy)}`);
         lines.push(`ReviewCatalogPolicySha256: ${catalogPolicy.policy_sha256}`);

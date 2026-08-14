@@ -10,6 +10,10 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
+import {
+    buildStrictDecompositionDecisionRequirement
+} from '../../../../src/gates/next-step/next-step-strict-decomposition-routing';
+import type { NextStepProfileSummary } from '../../../../src/gates/next-step/next-step';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -286,6 +290,57 @@ afterEach(() => {
 });
 
 describe('gates/next-step strict decomposition', () => {
+    function profileSummary(profile: string, enabled: boolean): NextStepProfileSummary {
+        return {
+            task_selected_profile: profile,
+            profile_selection_source: 'task_queue',
+            effective_profile: profile,
+            effective_profile_source: 'built_in',
+            runtime_active_profile: 'balanced',
+            runtime_active_profile_source: 'built_in',
+            task_decomposition_enabled: enabled,
+            task_decomposition_configured: true,
+            task_decomposition_provenance: 'explicit_profile_config',
+            requested_depth: 2,
+            effective_depth: 2,
+            depth_escalation_reason: null,
+            total_forecast_tokens: null,
+            effective_forecast_tokens: null,
+            token_economy_active_for_depth: null
+        };
+    }
+
+    it('uses frozen decomposition capability instead of profile name as routing authority', () => {
+        const taskEntry = {
+            taskId: TASK_ID,
+            status: 'IN_PROGRESS',
+            area: 'workflow/decomposition',
+            title: 'Generalize guarded decomposition routing',
+            profile: 'balanced',
+            notes: 'Crosses profile, UI, routing, and audit boundaries.'
+        };
+        const balancedEnabled = buildStrictDecompositionDecisionRequirement({
+            taskId: TASK_ID,
+            taskEntry,
+            taskMode: { task_summary: 'Seeded next-step task' },
+            preflight: null,
+            profileSummary: profileSummary('balanced', true),
+            requiredReviewTypes: ['code', 'security']
+        });
+        const strictDisabled = buildStrictDecompositionDecisionRequirement({
+            taskId: TASK_ID,
+            taskEntry: { ...taskEntry, profile: 'strict' },
+            taskMode: { task_summary: 'Seeded next-step task' },
+            preflight: null,
+            profileSummary: profileSummary('strict', false),
+            requiredReviewTypes: ['code', 'security']
+        });
+
+        assert.equal(balancedEnabled.required, true);
+        assert.equal(balancedEnabled.taskProfile, 'balanced');
+        assert.equal(strictDisabled.required, false);
+    });
+
     it('routes risky strict tasks to a decomposition decision before classify-change', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -303,10 +358,11 @@ describe('gates/next-step strict decomposition', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-strict-decomposition-decision');
-        assert.ok(result.reason.includes('requires a current strict decomposition decision'));
+        assert.ok(result.reason.includes('requires a current decomposition decision'));
         assert.ok(result.reason.includes('EVIDENCE_FILE_MISSING'));
         assert.ok(result.reason.includes('task_text:decomposition'));
         assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
+        assert.ok(result.commands[0].command.includes('--task-profile "strict"'));
         assert.ok(result.commands[0].command.includes('--task-summary "Seeded next-step task"'));
         assert.ok(result.commands[0].command.includes('--expected-review-type "none"'));
         assert.ok(result.commands[0].command.includes(

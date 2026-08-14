@@ -23,6 +23,7 @@ import {
     formatProfileGuardrailDiagnostics,
     resolveReviewFollowUpPolicy,
     resolveReviewFollowUpTaskProfileAssignment,
+    resolveProfileTaskDecompositionPolicy,
     type ReviewCapabilities,
     type TokenEconomyConfig,
     type SkillPacksConfig,
@@ -30,6 +31,35 @@ import {
     type ProfileTokenEconomy,
     type ProfileSkills
 } from '../../../src/policy/profile-resolver';
+import {
+    buildTaskProfilePolicySnapshot,
+    computeTaskProfilePolicySnapshotHash,
+    resolveTaskProfileTaskDecompositionPolicy,
+    validateTaskProfilePolicySnapshot
+} from '../../../src/policy/task-profile-policy-snapshot';
+
+test('profile task decomposition enables strict and balanced defaults and disables other legacy profiles', () => {
+    const strict = resolveProfileTaskDecompositionPolicy(undefined, 'strict');
+    const balanced = resolveProfileTaskDecompositionPolicy(undefined, 'balanced');
+    const custom = resolveProfileTaskDecompositionPolicy(undefined, 'custom-profile');
+
+    assert.deepEqual(
+        [strict.enabled, balanced.enabled, custom.enabled],
+        [true, true, false]
+    );
+    assert.equal(strict.provenance, 'legacy_strict_compatibility');
+    assert.equal(balanced.provenance, 'legacy_balanced_default');
+    assert.equal(resolveProfileTaskDecompositionPolicy({ enabled: true }, 'balanced').enabled, true);
+});
+
+test('profile task decomposition rejects forged malformed explicit configuration fail closed', () => {
+    for (const value of [true, { enabled: 'yes' }, { enabled: true, extra: false }]) {
+        const resolution = resolveProfileTaskDecompositionPolicy(value, 'balanced');
+        assert.equal(resolution.enabled, false);
+        assert.equal(resolution.valid, false);
+        assert.match(resolution.diagnostics.join('\n'), /fail-closed/iu);
+    }
+});
 
 test('follow-up task profile assignment follows the built-in lowering ladder', () => {
     const available = ['strict', 'balanced', 'fast', 'docs-only'];
@@ -313,11 +343,67 @@ test('loadProfilesData loads valid profiles', () => {
     }
 });
 
+test('task profile snapshot hash-binds explicit decomposition and migrates legacy snapshots without mutation', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, Record<string, unknown>>;
+        };
+        profiles.built_in_profiles.balanced.task_decomposition = { enabled: true };
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        const snapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reviewExecutionPolicyConfigured: true
+        });
+        assert.deepEqual(snapshot.task_decomposition, {
+            enabled: true,
+            configured: true,
+            provenance: 'explicit_profile_config',
+            diagnostics: []
+        });
+        assert.equal(validateTaskProfilePolicySnapshot(snapshot).status, 'PASS');
+
+        const tampered = structuredClone(snapshot);
+        tampered.task_decomposition!.enabled = false;
+        assert.equal(validateTaskProfilePolicySnapshot(tampered).status, 'HASH_MISMATCH');
+
+        const legacy = structuredClone(snapshot) as typeof snapshot;
+        delete legacy.task_decomposition;
+        legacy.snapshot_hash = computeTaskProfilePolicySnapshotHash(legacy);
+        assert.equal(validateTaskProfilePolicySnapshot(legacy).status, 'PASS');
+        const migrated = resolveTaskProfileTaskDecompositionPolicy(legacy);
+        assert.equal(migrated.enabled, true);
+        assert.equal(migrated.provenance, 'legacy_snapshot_balanced_default');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('effective policy rejects malformed decomposition configuration', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, Record<string, unknown>>;
+        };
+        profiles.built_in_profiles.balanced.task_decomposition = { enabled: 'yes' };
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { profileOverride: 'balanced' }),
+            /invalid task_decomposition/iu
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
 test('shipped template profiles and review capabilities use profile-driven review defaults', () => {
     const repoRoot = process.cwd();
     const profiles = JSON.parse(
         fs.readFileSync(path.join(repoRoot, 'template', 'config', 'profiles.json'), 'utf8')
-    ) as { built_in_profiles: Record<string, { review_policy: Record<string, unknown>; review_finding_policy: Record<string, unknown> }> };
+    ) as { built_in_profiles: Record<string, { task_decomposition: { enabled: boolean }; review_policy: Record<string, unknown>; review_finding_policy: Record<string, unknown> }> };
     const capabilities = JSON.parse(
         fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-capabilities.json'), 'utf8')
     ) as Record<string, boolean>;
@@ -332,6 +418,14 @@ test('shipped template profiles and review capabilities use profile-driven revie
         performance: true,
         infra: true,
         dependency: true
+    });
+    assert.deepEqual(Object.fromEntries(
+        Object.entries(profiles.built_in_profiles).map(([name, entry]) => [name, entry.task_decomposition.enabled])
+    ), {
+        balanced: true,
+        fast: false,
+        strict: true,
+        'docs-only': false
     });
     assert.deepEqual(profiles.built_in_profiles.balanced.review_policy, {
         code: true,

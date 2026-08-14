@@ -33,6 +33,8 @@ import {
     type ProfileGuardrailOptions,
     type ProfileReviewPolicy,
     type ProfileSkills,
+    type ProfileTaskDecompositionProvenance,
+    type ResolvedProfileTaskDecompositionPolicy,
     type ReviewFindingPolicy,
     type ReviewFollowUpPolicy,
     type ReviewFollowUpTaskProfileAssignment,
@@ -101,11 +103,19 @@ export interface TaskProfilePolicySnapshotReviewExecutionPolicy {
     };
 }
 
+export interface TaskProfileTaskDecompositionSnapshot {
+    enabled: boolean;
+    configured: boolean;
+    provenance: ProfileTaskDecompositionProvenance;
+    diagnostics: string[];
+}
+
 export interface TaskProfilePolicySnapshot {
     schema_version: typeof TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION;
     lock_timestamp_utc: string;
     source: TaskProfileSelectionSummary;
     depth: number;
+    task_decomposition?: TaskProfileTaskDecompositionSnapshot;
     review_lane_selection: TaskProfilePolicySnapshotReviewLaneSelection;
     review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
     review_finding_policy: ReviewFindingPolicy;
@@ -148,6 +158,7 @@ export interface TaskProfilePolicySnapshotSummary {
     schema_version: typeof TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION;
     lock_timestamp_utc: string;
     source: TaskProfileSelectionSummary;
+    task_decomposition: TaskProfileTaskDecompositionSnapshot;
     review_lane_selection: {
         effective_review_policy: EffectiveReviewPolicy;
         safety_floors_applied: string[];
@@ -224,6 +235,16 @@ const REVIEW_FINDING_POLICY_KEYS = [
 const REVIEW_FINDING_POLICY_IDS = ['soft', 'balanced', 'strict', 'custom'] as const;
 const REVIEW_FINDING_POLICY_ACTIONS = ['fix_now', 'create_follow_up', 'ignore'] as const;
 const REVIEW_FOLLOW_UP_MATERIALIZATION_MODES = ['per_finding', 'grouped_by_parent'] as const;
+const TASK_DECOMPOSITION_PROVENANCE_VALUES = [
+    'explicit_profile_config',
+    'legacy_strict_compatibility',
+    'legacy_balanced_default',
+    'legacy_disabled_default',
+    'legacy_snapshot_strict_compatibility',
+    'legacy_snapshot_balanced_default',
+    'legacy_snapshot_disabled_default'
+] as const satisfies readonly ProfileTaskDecompositionProvenance[];
+const TASK_DECOMPOSITION_KEYS = ['enabled', 'configured', 'provenance', 'diagnostics'] as const;
 const ACTIVE_FINDING_DISPOSITIONS = ['block_until_resolved', 'create_follow_up', 'ignore'] as const;
 const RESIDUAL_RISK_DISPOSITIONS = ['block_unless_deferred_with_justification', 'create_follow_up', 'ignore'] as const;
 
@@ -483,6 +504,29 @@ function validateStringArray(value: unknown, pathLabel: string, violations: stri
             violations.push(`Task profile policy snapshot ${pathLabel}[${index}] must be a string.`);
         }
     }
+}
+
+function validateTaskDecompositionSnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot task_decomposition must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, TASK_DECOMPOSITION_KEYS, 'task_decomposition', violations);
+    if (typeof value.enabled !== 'boolean') {
+        violations.push('Task profile policy snapshot task_decomposition.enabled must be boolean.');
+    }
+    if (typeof value.configured !== 'boolean') {
+        violations.push('Task profile policy snapshot task_decomposition.configured must be boolean.');
+    }
+    if (
+        typeof value.provenance !== 'string'
+        || !(TASK_DECOMPOSITION_PROVENANCE_VALUES as readonly string[]).includes(value.provenance)
+    ) {
+        violations.push(
+            `Task profile policy snapshot task_decomposition.provenance must be one of ${TASK_DECOMPOSITION_PROVENANCE_VALUES.join(', ')}.`
+        );
+    }
+    validateStringArray(value.diagnostics, 'task_decomposition.diagnostics', violations);
 }
 
 function validateReviewLaneSelectionSnapshot(value: unknown, violations: string[]): void {
@@ -891,6 +935,33 @@ function resolveSnapshotReviewFindingPolicy(snapshot: TaskProfilePolicySnapshot)
     };
 }
 
+export function resolveTaskProfileTaskDecompositionPolicy(
+    snapshot: TaskProfilePolicySnapshot
+): ResolvedProfileTaskDecompositionPolicy {
+    if (snapshot.task_decomposition) {
+        return {
+            ...snapshot.task_decomposition,
+            diagnostics: [...snapshot.task_decomposition.diagnostics],
+            valid: true
+        };
+    }
+    const normalizedProfile = snapshot.source.effective_profile.trim().toLowerCase();
+    const enabledByDefault = normalizedProfile === 'strict' || normalizedProfile === 'balanced';
+    return {
+        enabled: enabledByDefault,
+        configured: false,
+        provenance: normalizedProfile === 'strict'
+            ? 'legacy_snapshot_strict_compatibility'
+            : normalizedProfile === 'balanced'
+                ? 'legacy_snapshot_balanced_default'
+                : 'legacy_snapshot_disabled_default',
+        diagnostics: [enabledByDefault
+            ? 'Legacy task profile policy snapshot is missing task_decomposition; defaulted guarded decomposition to enabled for this profile.'
+            : 'Legacy task profile policy snapshot is missing task_decomposition; defaulted guarded task decomposition to disabled.'],
+        valid: true
+    };
+}
+
 function resolveSnapshotReviewFindingPolicyDiagnostics(snapshot: TaskProfilePolicySnapshot): string[] {
     if (isLegacyStrictReviewFindingPolicySnapshot(snapshot as unknown as Record<string, unknown>)) {
         return [LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC];
@@ -1087,6 +1158,12 @@ export function buildTaskProfilePolicySnapshot(
         lock_timestamp_utc: options.lockTimestampUtc || new Date().toISOString(),
         source: resolvedProfile.selection,
         depth: resolvedProfile.effective_policy.depth,
+        task_decomposition: {
+            enabled: resolvedProfile.effective_policy.task_decomposition.enabled,
+            configured: resolvedProfile.effective_policy.task_decomposition.configured,
+            provenance: resolvedProfile.effective_policy.task_decomposition.provenance,
+            diagnostics: [...resolvedProfile.effective_policy.task_decomposition.diagnostics]
+        },
         review_lane_selection: {
             profile_review_policy: normalizedProfileReviewPolicy,
             review_capabilities: reviewCapabilities,
@@ -1173,6 +1250,9 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
     }
     if (!isPlainRecord(value.source)) {
         violations.push('Task profile policy snapshot source must be a JSON object.');
+    }
+    if (value.task_decomposition !== undefined) {
+        validateTaskDecompositionSnapshot(value.task_decomposition, violations);
     }
     validateReviewLaneSelectionSnapshot(value.review_lane_selection, violations);
     validateReviewExecutionPolicySnapshot(value.review_execution_policy, violations);
@@ -1288,6 +1368,7 @@ export function resolveTaskProfileSelectionFromSnapshot(
             profile_name: snapshot.source.effective_profile,
             profile_source: snapshot.source.effective_profile_source,
             depth: snapshot.depth,
+            task_decomposition: resolveTaskProfileTaskDecompositionPolicy(snapshot),
             review_policy: reviewPolicy,
             review_finding_policy: reviewFindingPolicy,
             review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
@@ -1321,6 +1402,7 @@ export function summarizeTaskProfilePolicySnapshot(
         schema_version: snapshot.schema_version,
         lock_timestamp_utc: snapshot.lock_timestamp_utc,
         source: snapshot.source,
+        task_decomposition: resolveTaskProfileTaskDecompositionPolicy(snapshot),
         review_lane_selection: {
             effective_review_policy: snapshot.review_lane_selection.effective_review_policy,
             safety_floors_applied: snapshot.review_lane_selection.safety_floors_applied

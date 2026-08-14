@@ -164,6 +164,17 @@ function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void 
     ].join('\n'), 'utf8');
 }
 
+function seedProfilePolicyConfigs(repoRoot: string): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    for (const configFile of ['profiles.json', 'review-capabilities.json', 'review-catalog.json']) {
+        fs.copyFileSync(
+            path.resolve('template', 'config', configFile),
+            path.join(configDir, configFile)
+        );
+    }
+}
+
 function readTaskQueueStatusFromTaskFile(repoRoot: string, taskId: string): string | null {
     const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i;
     const taskPath = path.join(repoRoot, 'TASK.md');
@@ -997,6 +1008,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900a-legacy-post-depth1';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        seedProfilePolicyConfigs(repoRoot);
         fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
         fs.writeFileSync(
             path.join(repoRoot, '.agents', 'workflows', 'start-task.md'),

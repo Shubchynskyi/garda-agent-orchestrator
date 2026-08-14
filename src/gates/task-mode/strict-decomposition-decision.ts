@@ -45,7 +45,7 @@ export interface StrictDecompositionDecisionArtifact {
     status: 'PASSED';
     outcome: 'PASS';
     decision: StrictDecompositionDecision;
-    task_profile: 'strict';
+    task_profile: string;
     task_summary: string;
     task_summary_sha256: string;
     reason: string;
@@ -223,8 +223,8 @@ export function buildStrictDecompositionDecisionArtifact(
     const taskId = assertValidTaskId(options.taskId);
     const decision = normalizeStrictDecompositionDecision(options.decision);
     const taskProfile = normalizeShortKebab(options.taskProfile || 'strict');
-    if (taskProfile !== 'strict') {
-        throw new Error('TaskProfile must be strict for strict decomposition decisions.');
+    if (!taskProfile) {
+        throw new Error('TaskProfile is required for guarded decomposition decisions.');
     }
     const taskSummary = validateNonEmptyField(options.taskSummary, 'TaskSummary');
     const reason = validateNonEmptyField(options.reason, 'Reason');
@@ -270,7 +270,7 @@ export function buildStrictDecompositionDecisionArtifact(
         status: 'PASSED',
         outcome: 'PASS',
         decision,
-        task_profile: 'strict',
+        task_profile: taskProfile,
         task_summary: taskSummary,
         task_summary_sha256: stringSha256(taskSummary) || '',
         reason,
@@ -310,7 +310,8 @@ export function getStrictDecompositionDecisionEvidence(
     repoRoot: string,
     taskId: string | null,
     artifactPath = '',
-    expectedTaskSummary = ''
+    expectedTaskSummary = '',
+    expectedTaskProfile = ''
 ): StrictDecompositionDecisionEvidenceResult {
     const result = buildUnknownEvidence(taskId);
     if (!taskId) {
@@ -459,6 +460,12 @@ export function getStrictDecompositionDecisionEvidence(
             result.evidence_status = 'EVIDENCE_TASK_SUMMARY_MISMATCH';
             return result;
         }
+    }
+
+    const expectedProfile = normalizeShortKebab(expectedTaskProfile);
+    if (expectedProfile && normalizeShortKebab(result.task_profile) !== expectedProfile) {
+        result.evidence_status = 'EVIDENCE_TASK_PROFILE_MISMATCH';
+        return result;
     }
 
     result.evidence_status = 'PASS';

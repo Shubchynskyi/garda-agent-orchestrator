@@ -343,6 +343,13 @@ export interface ReportProfileRow {
     protected: boolean;
     description: string;
     depth: number;
+    task_decomposition: {
+        enabled: boolean;
+        configured: boolean;
+        provenance: string;
+        diagnostics: string[];
+        valid: boolean;
+    };
     review_policy: Record<string, ReportProfileReviewPolicyValue>;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_sha256: string;

@@ -3,6 +3,7 @@ import { ProfileEntry, ProfilesData } from './profile-types';
 import {
     resolveReviewFindingPolicy,
     resolveReviewFollowUpPolicy,
+    resolveProfileTaskDecompositionPolicy,
     DEFAULT_REVIEW_FOLLOW_UP_POLICY,
     REVIEW_FINDING_POLICY_PRESETS
 } from '../../../policy/profile-resolver';
@@ -64,6 +65,10 @@ export function validateProfilesIntegrity(
         const entry = getProfileEntry(data, name)!;
         if (entry.depth < 1 || entry.depth > 3) {
             issues.push(`Profile '${name}' has invalid depth ${entry.depth}; must be 1–3.`);
+        }
+        const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(entry.task_decomposition, name);
+        if (!taskDecompositionPolicy.valid) {
+            issues.push(...taskDecompositionPolicy.diagnostics);
         }
         const findingPolicyResolution = resolveReviewFindingPolicy(entry.review_finding_policy, name);
         const hasBlockingDiagnostic = findingPolicyResolution.diagnostics.some((diagnostic) => (
@@ -130,6 +135,7 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
     return {
         description,
         depth,
+        task_decomposition: { enabled: false },
         review_policy: {
             code: true,
             db: 'auto',
@@ -173,6 +179,9 @@ export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry 
             ...entry.skills
         }
     };
+    if (entry.task_decomposition) {
+        prepared.task_decomposition = { ...entry.task_decomposition };
+    }
     if (entry.review_finding_policy) {
         prepared.review_finding_policy = {
             ...entry.review_finding_policy,
