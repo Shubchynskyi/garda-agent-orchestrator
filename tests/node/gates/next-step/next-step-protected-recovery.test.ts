@@ -1676,6 +1676,40 @@ describe('gates/next-step protected recovery', () => {
         assert.ok((readiness.currentChangedFiles || []).includes(distRuntimeRelativePath));
     });
 
+    it('accepts current explicit preflight when its authenticated dist runtime is Git-ignored', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        for (const relativePath of [sourceRelativePath, testRelativePath, distRuntimeRelativePath]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot, { gitignoreContent: 'node_modules/\ndist/\n' });
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated executable change\n', 'utf8');
+
+        const changedFiles = [sourceRelativePath, testRelativePath, distRuntimeRelativePath];
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflight.metrics as Record<string, unknown>;
+        metrics.actual_changed_files = snapshot.changed_files;
+        metrics.actual_changed_files_sha256 = snapshot.changed_files_sha256;
+        preflight.authorized_files = snapshot.authorized_files;
+        preflight.git_change_classification = snapshot.git_change_classification;
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            plannedChangedFiles: changedFiles
+        });
+
+        assert.deepEqual(snapshot.changed_files, changedFiles.sort());
+        assert.equal(readiness.ready, true, readiness.reason);
+    });
+
     it('routes dirty protected workflow-config drift to operator maintenance before classify when self-guard denies entry', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
