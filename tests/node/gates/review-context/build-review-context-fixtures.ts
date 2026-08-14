@@ -30,6 +30,7 @@ import { resolveReviewerRoutingPolicy, resolveRuntimeReviewerIdentity } from '..
 import { REVIEW_CONTRACTS } from '../../../../src/gates/required-reviews/required-reviews-check';
 import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/task-plan';
 import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import { BUILT_IN_REVIEW_TYPE_IDS } from '../../../../src/core/review-catalog';
 import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
 import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
 import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
@@ -158,16 +159,40 @@ export function buildReviewContext(
         ? cloneJson(options.preflightPayload)
         : JSON.parse(fsModule.readFileSync(options.preflightPath, 'utf8')) as Record<string, unknown>;
     if (preflight.effective_review_snapshot === undefined) {
-        const catalog = normalizeReviewCatalog({ version: 1, custom_review_types: [] });
-        const capabilities = Object.fromEntries(
-            catalog.review_types.map((definition) => [definition.id, true])
-        ) as ReviewCapabilitiesConfigMap;
-        const profilePolicy = resolveProfileReviewCatalogPolicy('balanced', {}, capabilities, catalog);
         const requiredReviews = preflight.required_reviews
             && typeof preflight.required_reviews === 'object'
             && !Array.isArray(preflight.required_reviews)
             ? preflight.required_reviews as Record<string, boolean>
             : {};
+        const customReviewIds = Object.keys(requiredReviews)
+            .filter((reviewType) => !BUILT_IN_REVIEW_TYPE_IDS.includes(
+                reviewType as (typeof BUILT_IN_REVIEW_TYPE_IDS)[number]
+            ));
+        const customReviewTypes = customReviewIds.map((reviewType) => ({
+            id: reviewType,
+            display_label: `${reviewType} review`,
+            enabled_by_default: false,
+            skill_id: 'security-review',
+            trigger: { mode: 'manual', signal_ids: [] },
+            coverage_category_ids: ['security'],
+            reviewer_role: {
+                role_id: `${reviewType}-reviewer`,
+                focus_tags: ['security']
+            }
+        }));
+        const catalog = normalizeReviewCatalog(
+            { version: 1, custom_review_types: customReviewTypes },
+            { knownSkillIds: ['security-review'] }
+        );
+        const capabilities = Object.fromEntries(
+            catalog.review_types.map((definition) => [definition.id, true])
+        ) as ReviewCapabilitiesConfigMap;
+        const profilePolicy = resolveProfileReviewCatalogPolicy(
+            'balanced',
+            Object.fromEntries(customReviewIds.map((reviewType) => [reviewType, true])),
+            capabilities,
+            catalog
+        );
         const snapshot = buildEffectiveReviewSnapshot({
             catalog,
             profilePolicy,

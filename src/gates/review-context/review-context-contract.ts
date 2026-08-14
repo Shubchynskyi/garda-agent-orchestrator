@@ -9,6 +9,11 @@ import {
     resolveReviewContextLaneBinding,
     type ReviewContextLaneBinding
 } from './review-context-lane';
+import {
+    getReviewRemediationReviewContractViolations,
+    type ReviewRemediationReviewContract,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../review-remediation/review-remediation-review-contract';
 import { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
@@ -691,6 +696,7 @@ export interface ReviewContextContractValidationOptions {
     expectedScopedDiffUseStaged?: boolean | null;
     validateScopedDiffOutputFile?: boolean;
     requireDiffMaterialForRequiredReview?: boolean;
+    expectedReviewExecutionValidationAuthority?: ReviewRemediationReviewContractValidationAuthority | null;
 }
 
 export function getReviewContextContractViolations(
@@ -886,25 +892,57 @@ export function getReviewContextContractViolations(
     const currentPreflightRequiresCoverage = options.expectedPreflightPayload?.review_coverage_contract_required === true;
     const reviewContextSchemaVersion = Number(reviewContext.schema_version);
     if (currentPreflightRequiresCoverage
-        && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 3)) {
+        && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 4)) {
         violations.push(
-            'Generated review coverage context cannot downgrade below schema_version 3; legacy contexts are read-only historical evidence.'
+            'Generated review coverage context cannot downgrade below schema_version 4; legacy contexts are read-only historical evidence.'
         );
     }
     if (reviewContextSchemaVersion >= 3) {
+        const reviewExecution = isPlainRecord(reviewContext.review_execution)
+            ? reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+            : null;
+        let reviewExecutionIsAuthenticated = false;
+        if (reviewContextSchemaVersion >= 4) {
+            if (!reviewExecution) {
+                violations.push('Generated review context is missing the required review_execution contract.');
+            } else {
+                const validationAuthority = reviewExecution.source === 'initial_full'
+                    ? {
+                        taskId: expectedTaskId || '',
+                        reviewType: expectedReviewType,
+                        preflightSha256: expectedPreflightSha256 || '',
+                        mode: reviewExecution.mode,
+                        fullReviewScope: normalizePathList(options.expectedChangedFiles),
+                        persistedDecisionSha256: null,
+                        authoritativeDecisionSha256: null,
+                        authoritativeClassificationSha256: null,
+                        authoritativeDecision: null,
+                        authoritativeClassification: null
+                    } satisfies ReviewRemediationReviewContractValidationAuthority
+                    : options.expectedReviewExecutionValidationAuthority ?? null;
+                const executionViolations = validationAuthority
+                    ? getReviewRemediationReviewContractViolations(reviewExecution, validationAuthority)
+                    : ['remediation review_execution validation authority is required before coverage can be trusted.'];
+                violations.push(...executionViolations);
+                reviewExecutionIsAuthenticated = executionViolations.length === 0;
+            }
+        }
         const coverageScope = reviewContext.coverage_scope
             && typeof reviewContext.coverage_scope === 'object'
             && !Array.isArray(reviewContext.coverage_scope)
             ? reviewContext.coverage_scope as Record<string, unknown>
             : null;
         const declaredCoverageChangedFiles = normalizePathList(coverageScope?.changed_files);
-        const independentlyResolvedCoverageChangedFiles = options.repoRoot && options.expectedPreflightPayload
-            ? resolveReviewCoverageChangedFiles({
+        const independentlyResolvedCoverageChangedFiles = reviewExecution?.mode === 'DELTA'
+            && reviewExecutionIsAuthenticated
+            ? reviewExecution.delta?.required_delta_targets ?? []
+            : options.repoRoot && options.expectedPreflightPayload
+                ? resolveReviewCoverageChangedFiles({
                 reviewType: expectedReviewType,
                 preflight: options.expectedPreflightPayload,
                 repoRoot: options.repoRoot
-            })
-            : null;
+                })
+                : null;
         const expectedCoverageChangedFiles = independentlyResolvedCoverageChangedFiles
             || (options.expectedCoverageChangedFiles == null
                 ? declaredCoverageChangedFiles

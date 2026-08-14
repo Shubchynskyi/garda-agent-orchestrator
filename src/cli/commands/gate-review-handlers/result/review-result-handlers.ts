@@ -118,6 +118,9 @@ import {
     type ReviewFindingsReport
 } from '../../../../gates/review/review-findings-schema';
 import {
+    type ReviewRemediationReviewContract
+} from '../../../../gates/review-remediation/review-remediation-review-contract';
+import {
     evaluateReviewFindingsReportDispositions,
     resolveLockedReviewFindingPolicyFromPreflight,
     type LockedReviewFindingPolicyResolution,
@@ -1749,6 +1752,7 @@ async function recordReviewReceiptFromArtifacts(options: {
             reviewContextSha256: contextSha256,
             reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
             coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined,
+            expectedReviewExecutionContract: parsedReviewContext.review_execution as ReviewRemediationReviewContract,
             repoRoot: options.repoRoot,
             evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflight)
         });
@@ -1982,6 +1986,7 @@ function validateFindingsOnlyReviewOutput(options: {
     reviewContextSha256: string;
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract | null | undefined;
+    expectedReviewExecutionContract: ReviewRemediationReviewContract;
     repoRoot: string;
     evidenceSnapshotCommit?: string | null;
 }): JsonReviewFindingsArtifactValidation {
@@ -1992,6 +1997,7 @@ function validateFindingsOnlyReviewOutput(options: {
         expectedReviewContextSha256: options.reviewContextSha256,
         expectedTreeStateSha256: options.reviewTreeStateSha256,
         coverageContract: options.coverageContract,
+        expectedReviewExecutionContract: options.expectedReviewExecutionContract,
         repoRoot: options.repoRoot,
         evidenceSnapshotCommit: options.evidenceSnapshotCommit
     });
@@ -2074,6 +2080,7 @@ async function handleRecordReviewResultUnlocked(
             reviewContextSha256,
             reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
             coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined,
+            expectedReviewExecutionContract: parsedReviewContext.review_execution as ReviewRemediationReviewContract,
             repoRoot,
             evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
         });

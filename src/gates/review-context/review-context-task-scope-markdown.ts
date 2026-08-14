@@ -25,6 +25,7 @@ import {
     buildTrustBoundaryAnalysisMarkdown,
     type ReviewContextTrustBoundaryAnalysis
 } from './review-context-trust-boundary-analysis';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
 
 export function buildTaskScopeMarkdown(options: {
     taskId: string | null;
@@ -48,6 +49,7 @@ export function buildTaskScopeMarkdown(options: {
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract: ReviewRemediationReviewContract;
 }): string {
     const lines: string[] = [];
     const fullDiffText = options.gitDiff.diff || '';
@@ -146,7 +148,8 @@ export function buildTaskScopeMarkdown(options: {
         promptTemplateArtifactPath: options.promptTemplateArtifactPath,
         outputTemplateArtifactPath: options.outputTemplateArtifactPath,
         evidenceManifestArtifactPath: options.evidenceManifestArtifactPath,
-        coverageContract: options.coverageContract
+        coverageContract: options.coverageContract,
+        reviewExecutionContract: options.reviewExecutionContract
     }));
     lines.push('## Rule Context');
     return lines.join('\n');

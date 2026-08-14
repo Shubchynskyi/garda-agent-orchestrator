@@ -5,6 +5,9 @@ import {
     type ReviewFindingsReport
 } from './review-findings-schema';
 import {
+    type ReviewRemediationReviewContract
+} from '../review-remediation/review-remediation-review-contract';
+import {
     validateReviewCoverageLedger,
     type ReviewCoverageContract,
     type ReviewCoverageValidationSummary
@@ -27,6 +30,7 @@ export interface ReviewFindingsContractValidationOptions {
     coverageContract?: ReviewCoverageContract | null;
     repoRoot?: string | null;
     evidenceSnapshotCommit?: string | null;
+    expectedReviewExecutionContract?: ReviewRemediationReviewContract;
 }
 
 export function reviewContextRequiresFindingsOnlyArtifact(reviewContext: unknown): boolean {
@@ -76,14 +80,19 @@ export function findJsonReviewMissingFocusedValidationTestPaths(report: ReviewFi
         .filter(Boolean))];
 }
 
-export function parseJsonReviewFindingsArtifact(content: string): ReviewFindingsReport | null {
+export function parseJsonReviewFindingsArtifact(
+    content: string,
+    expectedReviewExecutionContract?: ReviewRemediationReviewContract
+): ReviewFindingsReport | null {
     const parsed = parseJsonReviewFindingsArtifactObject(content);
     if (!parsed) {
         return null;
     }
     const validation = validateReviewFindingsReport(parsed, {
         expectedTaskId: String(parsed.task_id || '').trim(),
-        expectedReviewType: String(parsed.review_type || '').trim()
+        expectedReviewType: String(parsed.review_type || '').trim(),
+        expectedReviewExecutionContract,
+        allowStructuralOnlyReviewExecution: !expectedReviewExecutionContract
     });
     return validation.report;
 }
@@ -151,7 +160,8 @@ export function validateReviewFindingsContract(
         expectedReviewContextSha256: options.expectedReviewContextSha256 || undefined,
         expectedTreeStateSha256: options.expectedTreeStateSha256 || undefined,
         repoRoot: options.repoRoot || undefined,
-        evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined
+        evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined,
+        expectedReviewExecutionContract: options.expectedReviewExecutionContract
     });
     const coverageContractSha256Violation = buildCoverageContractSha256Violation(parsed, options.coverageContract);
     const coverageValidation = options.coverageContract
@@ -202,6 +212,7 @@ export function validateJsonReviewFindingsArtifact(options: {
     coverageContract?: ReviewCoverageContract | null;
     repoRoot?: string | null;
     evidenceSnapshotCommit?: string | null;
+    expectedReviewExecutionContract?: ReviewRemediationReviewContract;
 }): JsonReviewFindingsArtifactValidation {
     return validateReviewFindingsContract(options);
 }
@@ -225,6 +236,7 @@ export function resolveReviewFindingsArtifactVerdictToken(options: {
     coverageContract?: ReviewCoverageContract | null;
     repoRoot?: string | null;
     evidenceSnapshotCommit?: string | null;
+    expectedReviewExecutionContract?: ReviewRemediationReviewContract;
 }): string | null {
     const parsedJsonArtifact = parseJsonReviewFindingsArtifactObject(options.content);
     if (!parsedJsonArtifact) {
@@ -243,7 +255,8 @@ export function resolveReviewFindingsArtifactVerdictToken(options: {
         expectedTreeStateSha256: options.expectedTreeStateSha256 || undefined,
         coverageContract: options.coverageContract || null,
         repoRoot: options.repoRoot || undefined,
-        evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined
+        evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined,
+        expectedReviewExecutionContract: options.expectedReviewExecutionContract
     });
     if (!validation.report) {
         return null;

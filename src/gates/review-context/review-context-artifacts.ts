@@ -27,6 +27,10 @@ import type {
     ReviewContextTrustBoundaryAnalysis
 } from './review-context-trust-boundary-analysis';
 import type { ReviewContextLaneBinding } from './review-context-lane';
+import {
+    buildReviewRemediationReviewContract,
+    type ReviewRemediationReviewContract
+} from '../review-remediation/review-remediation-review-contract';
 
 export interface ReviewSkillBinding {
     skill_id: string;
@@ -68,6 +72,8 @@ export interface ReviewContextRuleContextArtifact extends Record<string, unknown
     preferred_prompt_template_artifact: string;
     output_template_artifact: string;
     output_template_sha256: string;
+    instruction_contract_sha256: string;
+    instruction_contract_modes: Array<'FULL' | 'DELTA'>;
     preferred_output_template_artifact: string;
     evidence_manifest_artifact: string;
     evidence_manifest_sha256: string | null;
@@ -102,6 +108,69 @@ const CURRENT_VERIFICATION_ARTIFACTS = Object.freeze([
     'tree_state'
 ]);
 
+function resolveReviewExecutionContract(
+    reviewType: string,
+    coverageContract: ReviewCoverageContract,
+    value?: ReviewRemediationReviewContract | null
+): ReviewRemediationReviewContract {
+    return value ?? buildReviewRemediationReviewContract({
+        taskId: '<task-id>',
+        reviewType,
+        preflightSha256: '0'.repeat(64),
+        fullReviewScope: coverageContract.obligations
+            .filter((entry) => entry.kind === 'file')
+            .map((entry) => entry.target)
+    });
+}
+
+function buildInstructionContractExecutionVariants(
+    reviewType: string,
+    coverageContract: ReviewCoverageContract
+): readonly [ReviewRemediationReviewContract, ReviewRemediationReviewContract] {
+    const fullContract = resolveReviewExecutionContract(reviewType, coverageContract, null);
+    const placeholderSha256 = '0'.repeat(64);
+    const deltaContract: ReviewRemediationReviewContract = {
+        ...fullContract,
+        mode: 'DELTA',
+        source: 'remediation_delta',
+        authoritative_decision_sha256: placeholderSha256,
+        classification_sha256: placeholderSha256,
+        base: {
+            baseline_artifact_path: '<baseline-artifact>',
+            baseline_artifact_sha256: placeholderSha256,
+            review_receipt_sha256: placeholderSha256,
+            review_receipt_snapshot_sha256: placeholderSha256,
+            review_context_sha256: placeholderSha256,
+            review_tree_state_sha256: placeholderSha256,
+            review_scope_sha256: placeholderSha256,
+            scope_sha256: placeholderSha256,
+            delta_base_snapshot_sha256: placeholderSha256
+        },
+        delta: {
+            origin_review_type: reviewType,
+            classification_sha256: placeholderSha256,
+            current_snapshot_sha256: placeholderSha256,
+            required_delta_targets: ['<delta-target>'],
+            required_delta_targets_sha256: placeholderSha256,
+            context_files: ['<authenticated-context-file>'],
+            context_files_sha256: placeholderSha256
+        },
+        finding_reconciliation: {
+            baseline_finding_ids: ['F-001'],
+            baseline_finding_ids_sha256: placeholderSha256,
+            resolvable_finding_ids: ['F-001'],
+            resolvable_finding_ids_sha256: placeholderSha256,
+            protected_open_finding_ids: [],
+            protected_open_finding_ids_sha256: placeholderSha256,
+            protected_fix_now_finding_ids: [],
+            protected_fix_now_finding_ids_sha256: placeholderSha256
+        },
+        complete_scope_lineage_sha256: placeholderSha256,
+        contract_sha256: placeholderSha256
+    };
+    return [fullContract, deltaContract];
+}
+
 export function resolveReviewHandoffArtifactPath(outputPath: string, suffix: string): string {
     if (outputPath.endsWith('-review-context.json')) {
         return outputPath.slice(0, -'-review-context.json'.length) + suffix;
@@ -133,13 +202,18 @@ export function buildExhaustiveReviewContractLines(): string[] {
     ];
 }
 
-function buildFindingsOnlyTemplateOptions(reviewType: string, coverageContract: ReviewCoverageContract) {
+function buildFindingsOnlyTemplateOptions(
+    reviewType: string,
+    coverageContract: ReviewCoverageContract,
+    reviewExecutionContract: ReviewRemediationReviewContract
+) {
     return {
         taskId: '<copy task_id from reviewer launch input>',
         reviewType,
         reviewContextSha256: '<copy review_context_sha256 from reviewer launch input>',
         treeStateSha256: '<copy review_tree_state_sha256 from reviewer launch input>',
-        coverageContract
+        coverageContract,
+        reviewExecutionContract
     };
 }
 
@@ -150,10 +224,16 @@ export function buildReviewerOutputContractMarkdown(options: {
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract?: ReviewRemediationReviewContract;
 }): string[] {
+    const reviewExecutionContract = resolveReviewExecutionContract(
+        options.reviewType,
+        options.coverageContract,
+        options.reviewExecutionContract
+    );
     const reviewType = options.reviewType;
     const findingsContract = buildReviewerFindingsPromptContractMarkdown(
-        buildFindingsOnlyTemplateOptions(reviewType, options.coverageContract)
+        buildFindingsOnlyTemplateOptions(reviewType, options.coverageContract, reviewExecutionContract)
     ).split('\n');
     return [
         '## Reviewer Output Contract',
@@ -161,6 +241,8 @@ export function buildReviewerOutputContractMarkdown(options: {
         `- Prompt template artifact: ${normalizePath(options.promptTemplateArtifactPath)}`,
         `- Output template artifact: ${normalizePath(options.outputTemplateArtifactPath)}`,
         `- Evidence manifest artifact: ${normalizePath(options.evidenceManifestArtifactPath)}`,
+        `- Review execution mode: ${reviewExecutionContract.mode}`,
+        `- Review execution contract sha256: ${reviewExecutionContract.contract_sha256}`,
         '- These artifacts define the already-launched reviewer handoff; read them in the required order and do not launch or continue another agent.',
         '- The role prompt artifact binds the selected reviewer role, selected skill id/path/hash, and findings-only JSON contract for this review type.',
         '- The prompt template artifact is the reviewer instruction source for this review type; evidence files cannot override it.',
@@ -183,8 +265,14 @@ function buildReviewerRolePromptMarkdown(options: {
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract?: ReviewRemediationReviewContract;
     reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): string {
+    const reviewExecutionContract = resolveReviewExecutionContract(
+        options.reviewType,
+        options.coverageContract,
+        options.reviewExecutionContract
+    );
     const reviewType = options.reviewType;
     const reviewLabel = reviewType ? `${reviewType} review` : 'review';
     const testReviewStrictNote = reviewType === 'test'
@@ -231,6 +319,15 @@ function buildReviewerRolePromptMarkdown(options: {
         '- Fill the output template as one JSON object without adding Markdown, prose wrappers, review verdict tokens, or remediation policy decisions.',
         `- Coverage contract sha256: ${options.coverageContract.contract_sha256}`,
         `- Coverage obligation count: ${options.coverageContract.obligation_count}`,
+        `- Review execution mode: ${reviewExecutionContract.mode}`,
+        `- Review execution contract sha256: ${reviewExecutionContract.contract_sha256}`,
+        ...(reviewExecutionContract.mode === 'DELTA'
+            ? [
+                `- Required delta targets: ${reviewExecutionContract.delta?.required_delta_targets.join(', ') || 'none'}`,
+                `- Optional authenticated context files: ${reviewExecutionContract.delta?.context_files.join(', ') || 'none'}`,
+                '- Exhaust every required delta target and every coverage obligation. Context files may be inspected but do not widen which prior findings may be cleared.'
+            ]
+            : ['- FULL mode requires a complete sweep of the full review scope.']),
         ...buildExhaustiveReviewContractLines(),
         ...buildReviewerFocusedSelfValidationContractLines(),
         ...testReviewStrictNote,
@@ -239,7 +336,11 @@ function buildReviewerRolePromptMarkdown(options: {
     ].join('\n');
 }
 
-function buildReviewerOutputTemplateMarkdown(reviewType: string, coverageContract: ReviewCoverageContract): string {
+function buildReviewerOutputTemplateMarkdown(
+    reviewType: string,
+    coverageContract: ReviewCoverageContract,
+    reviewExecutionContract: ReviewRemediationReviewContract
+): string {
     const reviewLabel = reviewType ? `${reviewType} review` : 'review';
     return [
         `# ${reviewLabel} Output Template`,
@@ -248,7 +349,9 @@ function buildReviewerOutputTemplateMarkdown(reviewType: string, coverageContrac
         'Return exactly one JSON object. Do not wrap it in Markdown fences or append prose outside the JSON object.',
         'Do not add review verdict, pass/fail, status, downstream disposition, profile strictness, or remediation policy fields.',
         '',
-        buildReviewerFindingsOutputTemplateJson(buildFindingsOnlyTemplateOptions(reviewType, coverageContract)).trimEnd(),
+        buildReviewerFindingsOutputTemplateJson(
+            buildFindingsOnlyTemplateOptions(reviewType, coverageContract, reviewExecutionContract)
+        ).trimEnd(),
         ''
     ].join('\n');
 }
@@ -260,12 +363,18 @@ function buildReviewerPromptTemplateMarkdown(options: {
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract?: ReviewRemediationReviewContract;
     reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): string {
+    const reviewExecutionContract = resolveReviewExecutionContract(
+        options.reviewType,
+        options.coverageContract,
+        options.reviewExecutionContract
+    );
     const reviewType = options.reviewType;
     const reviewLabel = reviewType ? `${reviewType} review` : 'review';
     const findingsContract = buildReviewerFindingsPromptContractMarkdown(
-        buildFindingsOnlyTemplateOptions(reviewType, options.coverageContract)
+        buildFindingsOnlyTemplateOptions(reviewType, options.coverageContract, reviewExecutionContract)
     ).split('\n');
     return [
         `# ${reviewLabel} Prompt Template`,
@@ -292,6 +401,7 @@ function buildReviewerPromptTemplateMarkdown(options: {
         '- Fill the output template artifact exactly; return exactly one JSON object and no Markdown or prose wrapper.',
         '- Do not add review verdict, pass/fail, status, downstream disposition, profile strictness, or remediation policy fields.',
         `- Complete all ${options.coverageContract.obligation_count} coverage obligations bound by sha256 ${options.coverageContract.contract_sha256}.`,
+        `- Review execution mode is ${reviewExecutionContract.mode}, bound by sha256 ${reviewExecutionContract.contract_sha256}.`,
         ...findingsContract,
         '',
         '## Evidence Trust Boundary',
@@ -322,6 +432,7 @@ export function buildReviewContextHandoffArtifacts(options: {
     stripExamplesApplied: boolean;
     stripCodeBlocksApplied: boolean;
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract?: ReviewRemediationReviewContract;
     reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): {
     promptArtifactText: string;
@@ -335,6 +446,11 @@ export function buildReviewContextHandoffArtifacts(options: {
     ruleContextArtifact: ReviewContextRuleContextArtifact;
     reviewerHandoff: ReviewContextReviewerHandoff;
 } {
+    const reviewExecutionContract = resolveReviewExecutionContract(
+        options.reviewType,
+        options.coverageContract,
+        options.reviewExecutionContract
+    );
     const rolePromptArtifactText = buildReviewerRolePromptMarkdown({
         reviewType: options.reviewType,
         selectedSkill: options.selectedSkill,
@@ -344,6 +460,7 @@ export function buildReviewContextHandoffArtifacts(options: {
         outputTemplateArtifactPath: options.paths.outputTemplateArtifactPath,
         evidenceManifestArtifactPath: options.paths.evidenceManifestArtifactPath,
         coverageContract: options.coverageContract,
+        reviewExecutionContract,
         reviewLaneBinding: options.reviewLaneBinding
     });
     const promptTemplateArtifactText = buildReviewerPromptTemplateMarkdown({
@@ -353,13 +470,54 @@ export function buildReviewContextHandoffArtifacts(options: {
         outputTemplateArtifactPath: options.paths.outputTemplateArtifactPath,
         evidenceManifestArtifactPath: options.paths.evidenceManifestArtifactPath,
         coverageContract: options.coverageContract,
+        reviewExecutionContract,
         reviewLaneBinding: options.reviewLaneBinding
     });
-    const outputTemplateArtifactText = buildReviewerOutputTemplateMarkdown(options.reviewType, options.coverageContract);
+    const outputTemplateArtifactText = buildReviewerOutputTemplateMarkdown(
+        options.reviewType,
+        options.coverageContract,
+        reviewExecutionContract
+    );
+    const instructionContractVariants = buildInstructionContractExecutionVariants(
+        options.reviewType,
+        options.coverageContract
+    ).map((executionContract) => ({
+        mode: executionContract.mode,
+        role_prompt_sha256: stringSha256(buildReviewerRolePromptMarkdown({
+            reviewType: options.reviewType,
+            selectedSkill: options.selectedSkill,
+            rolePromptArtifactPath: options.paths.rolePromptArtifactPath,
+            reviewerPromptArtifactPath: options.paths.ruleContextArtifactPath,
+            promptTemplateArtifactPath: options.paths.promptTemplateArtifactPath,
+            outputTemplateArtifactPath: options.paths.outputTemplateArtifactPath,
+            evidenceManifestArtifactPath: options.paths.evidenceManifestArtifactPath,
+            coverageContract: options.coverageContract,
+            reviewExecutionContract: executionContract,
+            reviewLaneBinding: options.reviewLaneBinding
+        })),
+        prompt_template_sha256: stringSha256(buildReviewerPromptTemplateMarkdown({
+            reviewType: options.reviewType,
+            rolePromptArtifactPath: options.paths.rolePromptArtifactPath,
+            reviewerPromptArtifactPath: options.paths.ruleContextArtifactPath,
+            outputTemplateArtifactPath: options.paths.outputTemplateArtifactPath,
+            evidenceManifestArtifactPath: options.paths.evidenceManifestArtifactPath,
+            coverageContract: options.coverageContract,
+            reviewExecutionContract: executionContract,
+            reviewLaneBinding: options.reviewLaneBinding
+        })),
+        output_template_sha256: stringSha256(buildReviewerOutputTemplateMarkdown(
+            options.reviewType,
+            options.coverageContract,
+            executionContract
+        ))
+    }));
     const promptArtifactSha256 = stringSha256(options.promptArtifactText) || '';
     const rolePromptArtifactSha256 = stringSha256(rolePromptArtifactText) || '';
     const promptTemplateArtifactSha256 = stringSha256(promptTemplateArtifactText) || '';
     const outputTemplateArtifactSha256 = stringSha256(outputTemplateArtifactText) || '';
+    const instructionContractSha256 = stringSha256(JSON.stringify({
+        execution_modes: instructionContractVariants
+    })) || '';
 
     const ruleContextArtifact: ReviewContextRuleContextArtifact = {
         artifact_path: normalizePath(options.paths.ruleContextArtifactPath),
@@ -378,6 +536,8 @@ export function buildReviewContextHandoffArtifacts(options: {
         preferred_prompt_template_artifact: normalizePath(options.paths.promptTemplateArtifactPath),
         output_template_artifact: normalizePath(options.paths.outputTemplateArtifactPath),
         output_template_sha256: outputTemplateArtifactSha256,
+        instruction_contract_sha256: instructionContractSha256,
+        instruction_contract_modes: instructionContractVariants.map((entry) => entry.mode),
         preferred_output_template_artifact: normalizePath(options.paths.outputTemplateArtifactPath),
         evidence_manifest_artifact: normalizePath(options.paths.evidenceManifestArtifactPath),
         evidence_manifest_sha256: null as string | null,
@@ -445,12 +605,18 @@ export function buildReviewEvidenceManifest(options: {
         plan: unknown;
     };
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract?: ReviewRemediationReviewContract;
     reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): {
     evidenceManifest: Record<string, unknown>;
     evidenceManifestText: string;
     evidenceManifestSha256: string;
 } {
+    const reviewExecutionContract = resolveReviewExecutionContract(
+        options.reviewType,
+        options.coverageContract,
+        options.reviewExecutionContract
+    );
     const taskModeEvidenceRecord = toPlainRecord(options.taskModeEvidence);
     const dirtyWorkspaceBaseline = toPlainRecord(taskModeEvidenceRecord?.dirty_workspace_baseline);
     const dirtyWorkspaceFileHashes = toPlainRecord(dirtyWorkspaceBaseline?.file_hashes);
@@ -533,6 +699,7 @@ export function buildReviewEvidenceManifest(options: {
         },
         task_evidence: options.taskEvidence,
         ...(options.reviewLaneBinding ? { review_lane: options.reviewLaneBinding } : {}),
+        review_execution: reviewExecutionContract,
         coverage_contract: options.coverageContract,
         selected_skill: options.selectedSkill
     };

@@ -13,12 +13,22 @@ import {
     buildReviewCoverageContract
 } from '../../../../src/gates/review/review-coverage-ledger';
 import {
+    buildReviewRemediationReviewContract
+} from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import {
     validateReviewFindingsContract
 } from '../../../../src/gates/review/review-findings-artifact-verdict';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
 const CONTRACT_HASH = 'c'.repeat(64);
+
+const INITIAL_REVIEW_EXECUTION_CONTRACT = buildReviewRemediationReviewContract({
+    taskId: 'T-979-1',
+    reviewType: 'code',
+    preflightSha256: CONTRACT_HASH,
+    fullReviewScope: ['src/example.ts']
+});
 
 function evidence(location = 'src/example.ts:10', observation = 'Concrete parser branch was checked against malformed input'): object {
     return { location, observation };
@@ -51,6 +61,12 @@ function validReport(): Record<string, unknown> {
                     finding_ids: []
                 }
             ]
+        },
+        review_execution: {
+            mode: 'FULL',
+            contract_sha256: INITIAL_REVIEW_EXECUTION_CONTRACT.contract_sha256,
+            covered_delta_targets: [],
+            inspected_prior_finding_ids: []
         },
         findings: {
             critical: [],
@@ -113,7 +129,8 @@ const validationOptions = {
     expectedCoverageObligationIds: ['FILE-001', 'CATEGORY-SCHEMA'],
     expectedChangedFilePaths: ['src/example.ts'],
     expectedReviewContextSha256: HASH_A,
-    expectedTreeStateSha256: HASH_B
+    expectedTreeStateSha256: HASH_B,
+    expectedReviewExecutionContract: INITIAL_REVIEW_EXECUTION_CONTRACT
 };
 
 type JsonObject = Record<string, unknown>;
@@ -205,6 +222,7 @@ test('review findings schema exposes a strict versioned JSON object contract', (
     assert.equal(reviewFindingsReportJsonSchema.additionalProperties, false);
     assert.equal(reviewFindingsReportJsonSchema.properties.schema_version.const, REVIEW_FINDINGS_SCHEMA_VERSION);
     assert.ok(reviewFindingsReportJsonSchema.required.includes('coverage_ledger'));
+    assert.ok(reviewFindingsReportJsonSchema.required.includes('review_execution'));
     assert.ok(reviewFindingsReportJsonSchema.required.includes('findings'));
 });
 
@@ -245,8 +263,77 @@ test('validateReviewFindingsReport accepts empty findings only with complete cov
 
     assert.equal(result.valid, true);
     assert.equal(result.report?.task_id, 'T-979-1');
+    assert.deepEqual(result.report?.review_execution, {
+        mode: 'FULL',
+        contract_sha256: INITIAL_REVIEW_EXECUTION_CONTRACT.contract_sha256,
+        covered_delta_targets: [],
+        inspected_prior_finding_ids: []
+    });
+    assert.equal(result.review_execution_authentication, 'authenticated');
     assert.deepEqual(result.report?.findings.high, []);
     assert.deepEqual(result.violations, []);
+});
+
+test('validateReviewFindingsReport rejects missing authenticated execution contract before exposing execution claims', () => {
+    const structuralOnly = validateReviewFindingsReport(validReport(), {
+        ...validationOptions,
+        expectedReviewExecutionContract: undefined
+    });
+
+    assert.equal(structuralOnly.valid, false);
+    assert.equal(structuralOnly.report, null);
+    assert.equal(structuralOnly.review_execution_authentication, 'structural_only');
+    assert.ok(structuralOnly.violations.includes(
+        'expectedReviewExecutionContract is required to authenticate review_execution evidence.'
+    ));
+
+    const diagnosticOnly = validateReviewFindingsReport(validReport(), {
+        ...validationOptions,
+        expectedReviewExecutionContract: undefined,
+        allowStructuralOnlyReviewExecution: true
+    });
+
+    assert.equal(diagnosticOnly.valid, true, diagnosticOnly.violations.join('\n'));
+    assert.equal(diagnosticOnly.review_execution_authentication, 'structural_only');
+    assert.ok(diagnosticOnly.report);
+
+    const authenticated = validateReviewFindingsReport(validReport(), {
+        ...validationOptions,
+        expectedReviewExecutionContract: INITIAL_REVIEW_EXECUTION_CONTRACT
+    });
+
+    assert.equal(authenticated.valid, true, authenticated.violations.join('\n'));
+    assert.equal(authenticated.review_execution_authentication, 'authenticated');
+    assert.deepEqual(authenticated.report?.review_execution, {
+        mode: 'FULL',
+        contract_sha256: INITIAL_REVIEW_EXECUTION_CONTRACT.contract_sha256,
+        covered_delta_targets: [],
+        inspected_prior_finding_ids: []
+    });
+
+    const forged = validReport();
+    (forged.review_execution as Record<string, unknown>).contract_sha256 = 'f'.repeat(64);
+    const rejected = validateReviewFindingsReport(forged, {
+        ...validationOptions,
+        expectedReviewExecutionContract: INITIAL_REVIEW_EXECUTION_CONTRACT
+    });
+
+    assert.equal(rejected.valid, false);
+    assert.equal(rejected.report, null);
+    assert.ok(rejected.violations.some((entry) => entry.includes(
+        'review_execution evidence contract_sha256 does not match the launch contract'
+    )));
+});
+
+test('validateReviewFindingsReport rejects a missing review execution declaration', () => {
+    const report = validReport();
+    delete report.review_execution;
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.equal(result.report, null);
+    assert.ok(result.violations.includes('review_execution is required.'));
 });
 
 test('validateReviewFindingsReport accepts F-000 only with post-attempt focused command evidence', () => {

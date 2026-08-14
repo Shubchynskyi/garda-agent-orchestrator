@@ -16,8 +16,14 @@ import {
     REVIEWER_MISSING_FOCUSED_VALIDATION_ACTION,
     REVIEWER_MISSING_FOCUSED_VALIDATION_MARKER
 } from './reviewer-execution-contract';
+import {
+    getReviewRemediationReviewContractViolations,
+    getReviewerRemediationCoverageViolations,
+    type ReviewRemediationReviewContract,
+    type ReviewerRemediationCoverageDeclaration
+} from '../review-remediation/review-remediation-review-contract';
 
-export const REVIEW_FINDINGS_SCHEMA_VERSION = 1 as const;
+export const REVIEW_FINDINGS_SCHEMA_VERSION = 2 as const;
 
 export const REVIEW_FINDINGS_ID_PATTERN = /^F-\d{3}$/u;
 export const REVIEW_RESIDUAL_RISK_ID_PATTERN = /^R-\d{3}$/u;
@@ -48,6 +54,7 @@ const REPORT_KEYS = new Set([
     'tree_state_sha256',
     'validation_notes',
     'coverage_ledger',
+    'review_execution',
     'findings',
     'residual_risks',
     'reviewer_notes'
@@ -64,6 +71,12 @@ const VALIDATION_NOTE_KEYS = new Set([
 ]);
 const COVERAGE_LEDGER_KEYS = new Set(['coverage_contract_sha256', 'entries']);
 const COVERAGE_ENTRY_KEYS = new Set(['obligation_id', 'evidence', 'finding_ids']);
+const REVIEW_EXECUTION_KEYS = new Set([
+    'mode',
+    'contract_sha256',
+    'covered_delta_targets',
+    'inspected_prior_finding_ids'
+]);
 const FINDINGS_KEYS = new Set(['critical', 'high', 'medium', 'low']);
 const FINDING_KEYS = new Set(['id', 'title', 'description', 'evidence', 'coverage_obligation_ids']);
 const RESIDUAL_RISK_KEYS = new Set(['id', 'description', 'evidence']);
@@ -121,13 +134,16 @@ export interface ReviewResidualRisk {
 }
 
 export interface ReviewFindingsReport {
-    schema_version: typeof REVIEW_FINDINGS_SCHEMA_VERSION;
+    /** Runtime validation enforces REVIEW_FINDINGS_SCHEMA_VERSION. */
+    schema_version: number;
     task_id: string;
     review_type: string;
     review_context_sha256: string;
     tree_state_sha256: string;
     validation_notes: ReviewFindingsValidationNote[];
     coverage_ledger: ReviewFindingsCoverageLedger;
+    /** Legacy construction input; runtime validation requires this field. */
+    review_execution?: ReviewerRemediationCoverageDeclaration;
     findings: ReviewFindingsBySeverity;
     residual_risks: ReviewResidualRisk[];
     reviewer_notes: string[];
@@ -142,11 +158,15 @@ export interface ReviewFindingsValidationOptions {
     expectedTreeStateSha256?: string;
     repoRoot?: string;
     evidenceSnapshotCommit?: string;
+    expectedReviewExecutionContract?: ReviewRemediationReviewContract;
+    /** Diagnostic parsing only; never use this mode to authorize a review receipt or completion. */
+    allowStructuralOnlyReviewExecution?: boolean;
 }
 
 export interface ReviewFindingsValidationResult {
     valid: boolean;
-    report: ReviewFindingsReport | null;
+    report: (ReviewFindingsReport & { review_execution: ReviewerRemediationCoverageDeclaration }) | null;
+    review_execution_authentication: 'authenticated' | 'structural_only';
     violations: string[];
 }
 
@@ -163,6 +183,7 @@ export const reviewFindingsReportJsonSchema = {
         'tree_state_sha256',
         'validation_notes',
         'coverage_ledger',
+        'review_execution',
         'findings',
         'residual_risks',
         'reviewer_notes'
@@ -179,6 +200,7 @@ export const reviewFindingsReportJsonSchema = {
             items: { $ref: '#/definitions/validation_note' }
         },
         coverage_ledger: { $ref: '#/definitions/coverage_ledger' },
+        review_execution: { $ref: '#/definitions/review_execution' },
         findings: { $ref: '#/definitions/findings_by_severity' },
         residual_risks: {
             type: 'array',
@@ -245,6 +267,30 @@ export const reviewFindingsReportJsonSchema = {
                 finding_ids: {
                     type: 'array',
                     items: { type: 'string', pattern: '^F-\\d{3}$' }
+                }
+            }
+        },
+        review_execution: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+                'mode',
+                'contract_sha256',
+                'covered_delta_targets',
+                'inspected_prior_finding_ids'
+            ],
+            properties: {
+                mode: { enum: ['FULL', 'DELTA'] },
+                contract_sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                covered_delta_targets: {
+                    type: 'array',
+                    items: { type: 'string', minLength: 1 },
+                    uniqueItems: true
+                },
+                inspected_prior_finding_ids: {
+                    type: 'array',
+                    items: { type: 'string', pattern: '^F-\\d{3}$' },
+                    uniqueItems: true
                 }
             }
         },
@@ -1433,6 +1479,54 @@ function parseCoverageLedger(value: unknown, violations: string[]): ReviewFindin
     return coverageContractSha256 ? { coverage_contract_sha256: coverageContractSha256, entries } : null;
 }
 
+function parseReviewExecutionDeclaration(
+    value: unknown,
+    violations: string[]
+): ReviewerRemediationCoverageDeclaration | null {
+    if (value === undefined) {
+        violations.push('review_execution is required.');
+        return null;
+    }
+    if (!isRecord(value)) {
+        violations.push('review_execution must be an object.');
+        return null;
+    }
+    pushUnknownKeyViolations('review_execution', value, REVIEW_EXECUTION_KEYS, violations);
+    const mode = value.mode === 'FULL' || value.mode === 'DELTA' ? value.mode : null;
+    if (!mode) {
+        violations.push('review_execution.mode must be FULL or DELTA.');
+    }
+    const contractSha256 = normalizeSha256(value.contract_sha256);
+    if (!contractSha256) {
+        violations.push('review_execution.contract_sha256 must be a SHA-256 hex string.');
+    }
+    const coveredDeltaTargets = parseStringArray(
+        value.covered_delta_targets,
+        'review_execution.covered_delta_targets',
+        violations
+    );
+    const inspectedPriorFindingIds = parseStringArray(
+        value.inspected_prior_finding_ids,
+        'review_execution.inspected_prior_finding_ids',
+        violations
+    );
+    pushDuplicateViolations('review execution delta target', coveredDeltaTargets, violations);
+    pushDuplicateViolations('review execution prior finding', inspectedPriorFindingIds, violations);
+    inspectedPriorFindingIds
+        .filter((findingId) => !REVIEW_FINDINGS_ID_PATTERN.test(findingId))
+        .forEach((findingId) => violations.push(
+            `review_execution.inspected_prior_finding_ids contains invalid finding id '${findingId}'.`
+        ));
+    return mode && contractSha256
+        ? {
+            mode,
+            contract_sha256: contractSha256,
+            covered_delta_targets: coveredDeltaTargets,
+            inspected_prior_finding_ids: inspectedPriorFindingIds
+        }
+        : null;
+}
+
 function validateEvidenceLocations(
     evidenceItems: readonly ReviewFindingsEvidence[],
     subject: string,
@@ -1718,6 +1812,9 @@ export function validateReviewFindingsReport(
         return {
             valid: false,
             report: null,
+            review_execution_authentication: options.expectedReviewExecutionContract
+                ? 'authenticated'
+                : 'structural_only',
             violations: ['review findings report must be a JSON object.', ...violations]
         };
     }
@@ -1761,6 +1858,37 @@ export function validateReviewFindingsReport(
         options.repoRoot
     );
     const coverageLedger = parseCoverageLedger(value.coverage_ledger, violations);
+    const reviewExecution = parseReviewExecutionDeclaration(value.review_execution, violations);
+    const expectedReviewExecutionContract = options.expectedReviewExecutionContract;
+    if (!expectedReviewExecutionContract) {
+        if (!options.allowStructuralOnlyReviewExecution) {
+            violations.push(
+                'expectedReviewExecutionContract is required to authenticate review_execution evidence.'
+            );
+        }
+    } else {
+        if (expectedReviewExecutionContract.source === 'initial_full') {
+            violations.push(...getReviewRemediationReviewContractViolations(
+                expectedReviewExecutionContract,
+                {
+                    taskId: options.expectedTaskId,
+                    reviewType: expectedReviewType,
+                    preflightSha256: expectedReviewExecutionContract.preflight_sha256,
+                    mode: expectedReviewExecutionContract.mode,
+                    fullReviewScope: expectedReviewExecutionContract.full_review_scope,
+                    persistedDecisionSha256: null,
+                    authoritativeDecisionSha256: null,
+                    authoritativeClassificationSha256: null,
+                    authoritativeDecision: null,
+                    authoritativeClassification: null
+                }
+            ));
+        }
+        violations.push(...getReviewerRemediationCoverageViolations(
+            reviewExecution,
+            expectedReviewExecutionContract
+        ));
+    }
     const residualRisks = parseResidualRisks(value.residual_risks, violations);
     const reviewerNotes = parseReviewerNotes(value.reviewer_notes, violations);
     validateMissingFocusedValidationPostAttemptEvidence(
@@ -1787,7 +1915,8 @@ export function validateReviewFindingsReport(
         }, options.expectedCoverageObligationIds, violations);
     }
 
-    const report = taskId && reviewType && reviewContextSha256 && treeStateSha256 && coverageLedger && findings
+    const report = taskId && reviewType && reviewContextSha256 && treeStateSha256
+        && coverageLedger && reviewExecution && findings
         ? {
             schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
             task_id: taskId,
@@ -1796,6 +1925,7 @@ export function validateReviewFindingsReport(
             tree_state_sha256: treeStateSha256,
             validation_notes: validationNotes,
             coverage_ledger: coverageLedger,
+            review_execution: reviewExecution,
             findings,
             residual_risks: residualRisks,
             reviewer_notes: reviewerNotes
@@ -1805,6 +1935,9 @@ export function validateReviewFindingsReport(
     return {
         valid: violations.length === 0,
         report: violations.length === 0 ? report : null,
+        review_execution_authentication: options.expectedReviewExecutionContract
+            ? 'authenticated'
+            : 'structural_only',
         violations
     };
 }
