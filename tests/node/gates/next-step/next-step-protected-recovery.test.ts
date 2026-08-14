@@ -697,6 +697,36 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(!command.includes(unrelatedFile), command);
     });
 
+    it('preserves the suggested explicit scope after protected-manifest preflight drift', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const protectedFile = 'src/gates/next-step.ts';
+        const taskTestFile = 'tests/node/gates/next-step/task-scope.test.ts';
+        const unrelatedFile = 'notes/user-work.txt';
+        fs.mkdirSync(path.dirname(path.join(repoRoot, protectedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, protectedFile), 'export const baseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.mkdirSync(path.dirname(path.join(repoRoot, unrelatedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, unrelatedFile), 'unrelated user work\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                `Trusted protected control-plane manifest drift detected before preflight classification: ${protectedFile}. ` +
+                'Restart task mode with: ' +
+                `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --orchestrator-work ` +
+                `--planned-changed-file "${protectedFile}" --planned-changed-file "${taskTestFile}" --repo-root "."`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.reason, /authenticated failed-classification scope/);
+        assert.ok(command.includes(`--planned-changed-file "${protectedFile}"`), command);
+        assert.ok(command.includes(`--planned-changed-file "${taskTestFile}"`), command);
+        assert.ok(!command.includes(unrelatedFile), command);
+    });
+
     it('rejects shell-tainted legacy protected scope hints even when the task id matches', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });

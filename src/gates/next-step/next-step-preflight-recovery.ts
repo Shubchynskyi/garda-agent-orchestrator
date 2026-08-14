@@ -238,9 +238,51 @@ function readLegacyProtectedPreflightAuthorizedScope(
             .split(',')
     );
     const suggestedCommand = errorText.slice(recoveryStart + recoveryMarker.length).trim();
+    const normalizedPlannedFiles = readCanonicalProtectedRestartCommandScope(
+        repoRoot,
+        taskId,
+        suggestedCommand
+    );
+    return protectedFiles.length > 0
+        && protectedFiles.every((entry) => normalizedPlannedFiles.includes(entry))
+        ? normalizedPlannedFiles
+        : [];
+}
+
+function readProtectedManifestDriftAuthorizedScope(
+    repoRoot: string,
+    taskId: string,
+    errorText: string
+): string[] {
+    const failureMarker = 'Trusted protected control-plane manifest drift detected before preflight classification:';
+    const recoveryMarker = '. Restart task mode with:';
+    const failureStart = errorText.indexOf(failureMarker);
+    const recoveryStart = errorText.indexOf(recoveryMarker, failureStart + failureMarker.length);
+    if (failureStart < 0 || recoveryStart < 0) {
+        return [];
+    }
+    const driftFiles = normalizeEventPathList(
+        errorText
+            .slice(failureStart + failureMarker.length, recoveryStart)
+            .split(',')
+    );
+    if (driftFiles.length === 0) {
+        return [];
+    }
+    return readCanonicalProtectedRestartCommandScope(
+        repoRoot,
+        taskId,
+        errorText.slice(recoveryStart + recoveryMarker.length).trim()
+    );
+}
+
+function readCanonicalProtectedRestartCommandScope(
+    repoRoot: string,
+    taskId: string,
+    suggestedCommand: string
+): string[] {
     if (
-        protectedFiles.length === 0
-        || !/^node (?:bin|garda-agent-orchestrator\/bin)\/garda\.js gate enter-task-mode\b/.test(normalizePath(suggestedCommand))
+        !/^node (?:bin|garda-agent-orchestrator\/bin)\/garda\.js gate enter-task-mode\b/.test(normalizePath(suggestedCommand))
         || /[;&|`\r\n]/.test(suggestedCommand)
         || suggestedCommand.includes('$(')
         || !suggestedCommand.includes('--orchestrator-work')
@@ -274,9 +316,7 @@ function readLegacyProtectedPreflightAuthorizedScope(
         }
     }
     const normalizedPlannedFiles = [...plannedFiles].sort();
-    return protectedFiles.every((entry) => normalizedPlannedFiles.includes(entry))
-        ? normalizedPlannedFiles
-        : [];
+    return normalizedPlannedFiles;
 }
 
 function parseDirtyBaselineFilesFromError(errorText: string): string[] {
@@ -717,11 +757,16 @@ export function readFailedGateRecovery(
     const structuredAuthorizedScope = splitCheckpointScope
         ? []
         : readProtectedPreflightAuthorizedScope(latestPreflightFailure);
+    const legacyAuthorizedScope = splitCheckpointScope || structuredAuthorizedScope.length > 0
+        ? []
+        : readLegacyProtectedPreflightAuthorizedScope(repoRoot, taskId, errorText);
     const reportedAuthorizedScope = structuredAuthorizedScope.length > 0
         ? structuredAuthorizedScope
         : splitCheckpointScope
             ? []
-            : readLegacyProtectedPreflightAuthorizedScope(repoRoot, taskId, errorText);
+            : legacyAuthorizedScope.length > 0
+                ? legacyAuthorizedScope
+                : readProtectedManifestDriftAuthorizedScope(repoRoot, taskId, errorText);
     const currentWorkspace = splitCheckpointScope || reportedAuthorizedScope.length > 0
         ? null
         : readCurrentGitWorkspaceSnapshot(repoRoot, true);
