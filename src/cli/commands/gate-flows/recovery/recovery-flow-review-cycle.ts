@@ -66,7 +66,10 @@ import {
     resolveReviewCycleReplayScope
 } from './recovery-flow-replay-scope';
 import { buildReviewCycleRestartedOutput } from './recovery-flow-rendering';
-import { normalizeChangedFiles } from './recovery-flow-shared';
+import {
+    excludeUnchangedDirtyWorkspaceBaselineFiles,
+    normalizeChangedFiles
+} from './recovery-flow-shared';
 import type {
     RestartReviewCycleCommandOptions,
     ReviewRemediationImpactAnalysis
@@ -579,7 +582,11 @@ export async function runRestartReviewCycleCommand(
                 true,
                 []
             ) as Record<string, unknown>;
-            const liveChangedFiles = normalizeChangedFiles(liveWorkspaceSnapshot.changed_files as unknown[]);
+            const liveChangedFiles = excludeUnchangedDirtyWorkspaceBaselineFiles(
+                repoRoot,
+                liveWorkspaceSnapshot.changed_files as unknown[],
+                previousTaskMode.dirty_workspace_baseline
+            );
             if (
                 liveChangedFiles.length !== previousChangedFiles.length
                 || liveChangedFiles.some((entry, index) => entry !== previousChangedFiles[index])

@@ -1222,6 +1222,77 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
 });
 
 describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle remediation reuse policy', () => {
+    it('review-evidence-only restart ignores an unchanged dirty-workspace baseline file', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-review-evidence-only-dirty-baseline';
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'review-evidence-only-dirty-baseline'
+        );
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'user-change.test.ts'), 'it("belongs to the user", () => {});\n', 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart only invalid delegated review evidence with an unchanged dirty baseline',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart only invalid delegated review evidence with an unchanged dirty baseline',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await seedBaselineCompileGatePass({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            reviewEvidenceOnly: true,
+            reviewType: 'code',
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: review_evidence_only/u);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(remediationArtifact.status, 'PASSED');
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).previous_changed_files,
+            ['src/app.ts']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('schedules every graph-invalidated descendant after evidence-only reviewer failure', () => {
         const dependencyGraph = compileReviewDependencyGraph({
             catalogLaneIds: ['code', 'architecture-boundary', 'test'],
