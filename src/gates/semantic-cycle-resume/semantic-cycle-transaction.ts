@@ -108,6 +108,16 @@ function assessLifecycleAuthority(options: SemanticCycleRebindTransactionOptions
     if (!isCanonicalTaskId(taskId)) {
         return { authoritySha256: null, violations: ['Lifecycle authority requires a canonical task id.'] };
     }
+    const snapshotPosition = options.authoritative_snapshot.lifecycle_position;
+    if (
+        !snapshotPosition
+        || snapshotPosition.cycle_sha256 !== options.source_position.cycle_sha256
+        || snapshotPosition.task_event_sequence !== options.source_position.task_event_sequence
+    ) {
+        violations.push(
+            'source_position must exactly match the lifecycle position authenticated by the authoritative snapshot.'
+        );
+    }
     const canonicalPath = joinOrchestratorPath(
         options.repo_root,
         path.join('runtime', 'task-events', `${taskId}.jsonl`)
@@ -453,9 +463,14 @@ export function validateSemanticCycleRebindManifest(
         violations.push(`manifest.contract_id must equal '${SEMANTIC_CYCLE_REBIND_TRANSACTION_CONTRACT_ID}'.`);
     }
     for (const key of [
-        'transaction_id', 'request_sha256', 'comparison_decision_sha256',
-        'authoritative_snapshot_sha256', 'candidate_snapshot_sha256', 'lifecycle_authority_sha256',
-        'transaction_sha256'
+        'transaction_id', 'request_sha256', 'comparison_decision_sha256', 'transaction_sha256'
+    ] as const) {
+        if (!SHA256_PATTERN.test(String(value[key] || ''))) {
+            violations.push(`manifest.${key} must be a lowercase SHA-256 hex string.`);
+        }
+    }
+    for (const key of [
+        'authoritative_snapshot_sha256', 'candidate_snapshot_sha256', 'lifecycle_authority_sha256'
     ] as const) {
         if (value[key] !== null && !SHA256_PATTERN.test(String(value[key] || ''))) {
             violations.push(`manifest.${key} must be null or a lowercase SHA-256 hex string.`);
@@ -661,6 +676,13 @@ export function validateSemanticCycleRebindManifest(
         if (value.task_id === null) {
             violations.push('A committed manifest must identify its canonical task.');
         }
+        for (const key of [
+            'authoritative_snapshot_sha256', 'candidate_snapshot_sha256', 'lifecycle_authority_sha256'
+        ] as const) {
+            if (!SHA256_PATTERN.test(String(value[key] || ''))) {
+                violations.push(`A committed manifest requires manifest.${key}.`);
+            }
+        }
         if (manifestClassCounts.compile !== 1 || manifestClassCounts.full_suite !== 1) {
             violations.push('A committed manifest must contain exactly one compile and one full-suite artifact.');
         }
@@ -703,6 +725,44 @@ export function validateSemanticCycleRebindManifest(
 
 function pendingMarkerPath(artifactPath: string): string {
     return `${artifactPath}.pending`;
+}
+
+interface SemanticCyclePendingMarkerValidationResult {
+    marker: { schema_version: 1; transaction_sha256: string } | null;
+    violations: string[];
+}
+
+function parsePendingMarker(markerPath: string): SemanticCyclePendingMarkerValidationResult {
+    if (!fs.existsSync(markerPath) || !fs.statSync(markerPath).isFile()) {
+        return { marker: null, violations: ['Semantic-cycle pending marker is missing.'] };
+    }
+    try {
+        const value: unknown = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+        const violations: string[] = [];
+        if (!isRecord(value)) {
+            return { marker: null, violations: ['Semantic-cycle pending marker must be an object.'] };
+        }
+        exactKeys(value, ['schema_version', 'transaction_sha256'], 'pending marker', violations);
+        if (value.schema_version !== 1) {
+            violations.push('pending marker.schema_version must equal 1.');
+        }
+        if (!SHA256_PATTERN.test(String(value.transaction_sha256 || ''))) {
+            violations.push('pending marker.transaction_sha256 must be a lowercase SHA-256 hex string.');
+        }
+        return violations.length > 0
+            ? { marker: null, violations }
+            : {
+                marker: value as { schema_version: 1; transaction_sha256: string },
+                violations: []
+            };
+    } catch (error: unknown) {
+        return {
+            marker: null,
+            violations: [`Semantic-cycle pending marker is not valid JSON: ${
+                error instanceof Error ? error.message : String(error)
+            }`]
+        };
+    }
 }
 
 function parseManifestFile(
@@ -860,7 +920,56 @@ export function executeSemanticCycleRebindTransaction(
 
     options._testHooks?.after_initial_validation_before_lock?.();
     return withReviewArtifactLock<SemanticCycleRebindTransactionResult>(outputPath, () => {
-        const existing = fs.existsSync(outputPath) ? parseManifestFile(outputPath) : null;
+        const transactionPendingPath = pendingMarkerPath(outputPath);
+        const pending = fs.existsSync(transactionPendingPath)
+            ? parsePendingMarker(transactionPendingPath)
+            : null;
+        let recoveringPending = false;
+        let existing: SemanticCycleRebindManifestValidationResult | null = null;
+        if (pending) {
+            if (!pending.marker) {
+                existing = {
+                    status: 'INVALID',
+                    manifest: null,
+                    violations: pending.violations
+                };
+            } else if (!fs.existsSync(outputPath)) {
+                try {
+                    fs.rmSync(transactionPendingPath, { force: true });
+                } catch {
+                    // The marker remains fail-closed and is reported as an immutable conflict below.
+                }
+                if (fs.existsSync(transactionPendingPath)) {
+                    existing = {
+                        status: 'INVALID',
+                        manifest: null,
+                        violations: ['Interrupted marker-only transaction could not be cleared safely.']
+                    };
+                }
+            } else {
+                const pendingManifest = parseManifestFile(outputPath, { allowPending: true });
+                if (
+                    pendingManifest.manifest
+                    && pendingManifest.manifest.transaction_sha256 === pending.marker.transaction_sha256
+                ) {
+                    existing = pendingManifest;
+                    recoveringPending = true;
+                } else {
+                    existing = {
+                        status: 'INVALID',
+                        manifest: null,
+                        violations: [
+                            ...pendingManifest.violations,
+                            ...(pendingManifest.manifest
+                                ? ['Pending marker does not authenticate the interrupted manifest.']
+                                : [])
+                        ]
+                    };
+                }
+            }
+        } else if (fs.existsSync(outputPath)) {
+            existing = parseManifestFile(outputPath);
+        }
         let invalidationAssessment = initialAssessment;
         let invalidationLifecycle = initialLifecycle;
         if (existing?.manifest) {
@@ -875,22 +984,37 @@ export function executeSemanticCycleRebindTransaction(
                     && replayLifecycle.violations.length === 0
                     && !lifecycleAuthorityChanged
                 ) {
-                    return existing.manifest.status === 'COMMITTED'
-                        ? {
-                            status: 'IDEMPOTENT' as const,
-                            mutation_allowed: true,
-                            route: existing.manifest.audit.route,
-                            artifact_path: outputPath,
-                            manifest: existing.manifest,
-                            audit: existing.manifest.audit,
-                            violations: []
+                    if (recoveringPending) {
+                        try {
+                            fs.rmSync(transactionPendingPath, { force: true });
+                        } catch {
+                            // A marker that cannot be cleared keeps the manifest fail-closed.
                         }
-                        : invalidationResult(
-                            existing.manifest,
-                            existing.manifest.audit,
-                            existing.manifest.audit.violations,
-                            outputPath
-                        );
+                        if (fs.existsSync(transactionPendingPath)) {
+                            validationCodes.add('PERSISTENCE_FAILED');
+                            validationViolations.push(
+                                'Interrupted transaction was valid but its pending marker could not be cleared.'
+                            );
+                        }
+                    }
+                    if (!fs.existsSync(transactionPendingPath)) {
+                        return existing.manifest.status === 'COMMITTED'
+                            ? {
+                                status: 'IDEMPOTENT' as const,
+                                mutation_allowed: true,
+                                route: existing.manifest.audit.route,
+                                artifact_path: outputPath,
+                                manifest: existing.manifest,
+                                audit: existing.manifest.audit,
+                                violations: []
+                            }
+                            : invalidationResult(
+                                existing.manifest,
+                                existing.manifest.audit,
+                                existing.manifest.audit.violations,
+                                outputPath
+                            );
+                    }
                 }
                 invalidationAssessment = replayAssessment;
                 invalidationLifecycle = replayLifecycle;
@@ -981,7 +1105,6 @@ export function executeSemanticCycleRebindTransaction(
         });
         let persisted = false;
         let persistenceStarted = false;
-        const transactionPendingPath = pendingMarkerPath(outputPath);
         try {
             options._testHooks?.before_persist?.();
             writeFileAtomically(

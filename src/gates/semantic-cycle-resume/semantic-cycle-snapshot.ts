@@ -7,6 +7,7 @@ import {
     SEMANTIC_CYCLE_REVIEW_BINDING_KEYS,
     SEMANTIC_CYCLE_SNAPSHOT_SCHEMA_VERSION,
     type SemanticCycleBindingKey,
+    type SemanticCycleLifecyclePosition,
     type SemanticCycleReviewLaneBinding,
     type SemanticCycleSnapshot,
     type SemanticCycleSnapshotInput,
@@ -88,6 +89,7 @@ export function buildSemanticCycleSnapshotHashPayload(
         contract_id: snapshot.contract_id,
         task_id: snapshot.task_id,
         runtime: { ...snapshot.runtime },
+        lifecycle_position: { ...snapshot.lifecycle_position },
         bindings: { ...snapshot.bindings },
         review_lanes: snapshot.review_lanes.map((lane) => ({ ...lane }))
     };
@@ -106,6 +108,7 @@ export function buildSemanticCycleSnapshot(input: SemanticCycleSnapshotInput): S
         contract_id: SEMANTIC_CYCLE_CONTRACT_ID,
         task_id: input.task_id,
         runtime: { ...input.runtime },
+        lifecycle_position: { ...input.lifecycle_position },
         bindings: {
             ...input.bindings,
             ...deriveSemanticCycleReviewBindings(reviewLanes)
@@ -144,6 +147,23 @@ function validateSha256(value: unknown, label: string, violations: string[]): vo
     if (typeof value !== 'string' || !SHA256_PATTERN.test(value)) {
         violations.push(`${label} must be a lowercase SHA-256 hex string.`);
     }
+}
+
+function validateLifecyclePosition(
+    value: unknown,
+    label: string,
+    violations: string[]
+): value is SemanticCycleLifecyclePosition {
+    if (!isRecord(value)) {
+        violations.push(`${label} must be an object.`);
+        return false;
+    }
+    validateExactKeys(value, ['cycle_sha256', 'task_event_sequence'], label, violations);
+    validateSha256(value.cycle_sha256, `${label}.cycle_sha256`, violations);
+    if (!Number.isInteger(value.task_event_sequence) || Number(value.task_event_sequence) < 0) {
+        violations.push(`${label}.task_event_sequence must be a non-negative integer.`);
+    }
+    return true;
 }
 
 function parseReviewLane(
@@ -194,6 +214,7 @@ export function validateSemanticCycleSnapshot(value: unknown): SemanticCycleSnap
         'contract_id',
         'task_id',
         'runtime',
+        'lifecycle_position',
         'bindings',
         'review_lanes',
         'snapshot_sha256'
@@ -207,6 +228,8 @@ export function validateSemanticCycleSnapshot(value: unknown): SemanticCycleSnap
     if (!isCanonicalTaskId(value.task_id)) {
         violations.push('snapshot.task_id must be canonical.');
     }
+
+    validateLifecyclePosition(value.lifecycle_position, 'snapshot.lifecycle_position', violations);
 
     if (!isRecord(value.runtime)) {
         violations.push('snapshot.runtime must be an object.');

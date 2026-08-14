@@ -44,11 +44,14 @@ interface Fixture {
     artifacts: SemanticCycleRebindArtifactInput[];
     options: SemanticCycleRebindTransactionOptions;
     artifactPaths: Record<SemanticCycleRebindArtifactClass, string>;
+    reviewArtifactPaths: Record<string, Record<ReviewArtifactClass, string>>;
     taskEventsPath: string;
     lifecycleHashes: [string, string];
     outputPath: string;
     cleanup: () => void;
 }
+
+type ReviewArtifactClass = Exclude<SemanticCycleRebindArtifactClass, 'compile' | 'full_suite'>;
 
 function appendIntegrityEvent(
     taskEventsPath: string,
@@ -75,7 +78,7 @@ function appendIntegrityEvent(
     return eventSha256;
 }
 
-function createFixture(): Fixture {
+function createFixture(reviewTypes: readonly string[] = ['code']): Fixture {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-semantic-rebind-'));
     const evidenceRoot = path.join(repoRoot, 'runtime', 'evidence');
     fs.mkdirSync(evidenceRoot, { recursive: true });
@@ -91,10 +94,12 @@ function createFixture(): Fixture {
     };
     const compile = writeEvidence('compile.json', '{"status":"PASSED"}');
     const fullSuite = writeEvidence('full-suite.json', '{"status":"PASSED"}');
-    const context = writeEvidence('code-context.json', '{"review_type":"code"}');
-    const findings = writeEvidence('code-findings.json', '{"findings":[]}');
-    const receipt = writeEvidence('code-receipt.json', '{"accepted":true}');
-    const dependency = writeEvidence('code-dependency.json', '{"dependencies":[]}');
+    const reviewEvidence = Object.fromEntries(reviewTypes.map((reviewType) => [reviewType, {
+        review_context: writeEvidence(`${reviewType}-context.json`, `{"review_type":"${reviewType}"}`),
+        findings_disposition: writeEvidence(`${reviewType}-findings.json`, '{"findings":[]}'),
+        review_receipt: writeEvidence(`${reviewType}-receipt.json`, '{"accepted":true}'),
+        reviewer_dependency: writeEvidence(`${reviewType}-dependency.json`, '{"dependencies":[]}')
+    }])) as Record<string, Record<ReviewArtifactClass, { path: string; sha256: string }>>;
 
     const baseBindings = Object.fromEntries(SEMANTIC_CYCLE_BASE_BINDING_KEYS.map((key) => [
         key,
@@ -107,15 +112,19 @@ function createFixture(): Fixture {
     const snapshot = buildSemanticCycleSnapshot({
         task_id: 'T-1015-2',
         runtime,
+        lifecycle_position: {
+            cycle_sha256: sourceLifecycleSha256,
+            task_event_sequence: 1
+        },
         bindings: baseBindings,
-        review_lanes: [{
-            review_type: 'code',
-            context_sha256: context.sha256,
-            findings_disposition_sha256: findings.sha256,
-            receipt_sha256: receipt.sha256,
-            dependency_state_sha256: dependency.sha256,
+        review_lanes: reviewTypes.map((reviewType) => ({
+            review_type: reviewType,
+            context_sha256: reviewEvidence[reviewType].review_context.sha256,
+            findings_disposition_sha256: reviewEvidence[reviewType].findings_disposition.sha256,
+            receipt_sha256: reviewEvidence[reviewType].review_receipt.sha256,
+            dependency_state_sha256: reviewEvidence[reviewType].reviewer_dependency.sha256,
             accepted_receipt: true
-        }]
+        }))
     });
     const comparison = compareSemanticCycleSnapshots(snapshot, structuredClone(snapshot), runtime);
     const artifacts: SemanticCycleRebindArtifactInput[] = [
@@ -133,34 +142,16 @@ function createFixture(): Fixture {
             source_sha256: fullSuite.sha256,
             accepted: true
         },
-        {
-            artifact_class: 'review_context',
-            review_type: 'code',
-            source_path: path.relative(repoRoot, context.path),
-            source_sha256: context.sha256,
-            accepted: true
-        },
-        {
-            artifact_class: 'findings_disposition',
-            review_type: 'code',
-            source_path: path.relative(repoRoot, findings.path),
-            source_sha256: findings.sha256,
-            accepted: true
-        },
-        {
-            artifact_class: 'review_receipt',
-            review_type: 'code',
-            source_path: path.relative(repoRoot, receipt.path),
-            source_sha256: receipt.sha256,
-            accepted: true
-        },
-        {
-            artifact_class: 'reviewer_dependency',
-            review_type: 'code',
-            source_path: path.relative(repoRoot, dependency.path),
-            source_sha256: dependency.sha256,
-            accepted: true
-        }
+        ...reviewTypes.flatMap((reviewType) => (
+            (['review_context', 'findings_disposition', 'review_receipt', 'reviewer_dependency'] as const)
+                .map((artifactClass) => ({
+                    artifact_class: artifactClass,
+                    review_type: reviewType,
+                    source_path: path.relative(repoRoot, reviewEvidence[reviewType][artifactClass].path),
+                    source_sha256: reviewEvidence[reviewType][artifactClass].sha256,
+                    accepted: true
+                }))
+        ))
     ];
     const outputPath = path.join(
         repoRoot,
@@ -187,6 +178,7 @@ function createFixture(): Fixture {
         artifacts,
         _testHooks: { now_utc: () => fixedNow }
     };
+    const primaryReviewType = reviewTypes[0];
     return {
         repoRoot,
         snapshot,
@@ -195,11 +187,18 @@ function createFixture(): Fixture {
         artifactPaths: {
             compile: compile.path,
             full_suite: fullSuite.path,
-            review_context: context.path,
-            findings_disposition: findings.path,
-            review_receipt: receipt.path,
-            reviewer_dependency: dependency.path
+            review_context: reviewEvidence[primaryReviewType].review_context.path,
+            findings_disposition: reviewEvidence[primaryReviewType].findings_disposition.path,
+            review_receipt: reviewEvidence[primaryReviewType].review_receipt.path,
+            reviewer_dependency: reviewEvidence[primaryReviewType].reviewer_dependency.path
         },
+        reviewArtifactPaths: Object.fromEntries(Object.entries(reviewEvidence).map(([reviewType, evidence]) => [
+            reviewType,
+            Object.fromEntries(Object.entries(evidence).map(([artifactClass, artifact]) => [
+                artifactClass,
+                artifact.path
+            ]))
+        ])) as Record<string, Record<ReviewArtifactClass, string>>,
         taskEventsPath,
         lifecycleHashes: [sourceLifecycleSha256, targetLifecycleSha256],
         outputPath,
@@ -265,6 +264,7 @@ describe('semantic cycle rebind transaction', () => {
             const candidate = buildSemanticCycleSnapshot({
                 task_id: fixture.snapshot.task_id,
                 runtime,
+                lifecycle_position: fixture.snapshot.lifecycle_position,
                 bindings: {
                     task_contract: fixture.snapshot.bindings.task_contract,
                     profile_policy: fixture.snapshot.bindings.profile_policy,
@@ -360,6 +360,37 @@ describe('semantic cycle rebind transaction', () => {
             assert.equal(result.route, 'existing_recovery');
             assert.ok(result.audit.invalidation_codes.includes('LIFECYCLE_POSITION_INVALID'));
             assert.deepEqual(result.manifest?.artifacts, []);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects a valid task-event anchor that is not authenticated by the authoritative snapshot', () => {
+        const fixture = createFixture();
+        try {
+            const nextLifecycleSha256 = appendIntegrityEvent(
+                fixture.taskEventsPath,
+                3,
+                fixture.lifecycleHashes[1]
+            );
+            const result = executeSemanticCycleRebindTransaction({
+                ...fixture.options,
+                source_position: {
+                    cycle_sha256: fixture.lifecycleHashes[1],
+                    task_event_sequence: 2
+                },
+                target_position: {
+                    cycle_sha256: nextLifecycleSha256,
+                    task_event_sequence: 3
+                }
+            });
+
+            assert.equal(result.status, 'INVALIDATED');
+            assert.ok(result.audit.invalidation_codes.includes('LIFECYCLE_POSITION_INVALID'));
+            assert.match(
+                result.audit.violations.join(' '),
+                /must exactly match the lifecycle position authenticated by the authoritative snapshot/u
+            );
         } finally {
             fixture.cleanup();
         }
@@ -466,6 +497,10 @@ describe('semantic cycle rebind transaction', () => {
             const persisted = readSemanticCycleRebindManifest(fixture.repoRoot, fixture.outputPath);
             assert.equal(persisted.status, 'INVALID');
             assert.match(persisted.violations.join(' '), /incomplete transaction marker/u);
+
+            const replay = executeSemanticCycleRebindTransaction(fixture.options);
+            assert.equal(replay.status, 'INVALIDATED');
+            assert.equal(fs.existsSync(`${fixture.outputPath}.pending`), true);
         } finally {
             fixture.cleanup();
         }
@@ -539,6 +574,55 @@ describe('semantic cycle rebind transaction', () => {
             assert.equal(idempotent.status, 'IDEMPOTENT');
             assert.equal(idempotent.manifest?.transaction_sha256, committed.manifest?.transaction_sha256);
             assert.equal(fs.readFileSync(fixture.outputPath, 'utf8'), bytes);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('clears a valid marker-only interruption and commits the requested transaction', () => {
+        const fixture = createFixture();
+        try {
+            fs.mkdirSync(path.dirname(fixture.outputPath), { recursive: true });
+            fs.writeFileSync(`${fixture.outputPath}.pending`, `${JSON.stringify({
+                schema_version: 1,
+                transaction_sha256: hash('interrupted marker-only transaction')
+            })}\n`, 'utf8');
+
+            const result = executeSemanticCycleRebindTransaction(fixture.options);
+
+            assert.equal(result.status, 'COMMITTED');
+            assert.equal(fs.existsSync(`${fixture.outputPath}.pending`), false);
+            assert.equal(readSemanticCycleRebindManifest(fixture.repoRoot, fixture.outputPath).status, 'VALID');
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('finalizes a fully written interrupted transaction after revalidating its evidence', () => {
+        const fixture = createFixture();
+        try {
+            const interrupted = executeSemanticCycleRebindTransaction({
+                ...fixture.options,
+                _testHooks: {
+                    now_utc: () => fixedNow,
+                    after_write_before_persisted_validation: () => {
+                        throw new Error('simulated process interruption after manifest write');
+                    },
+                    rollback_remove_output: () => {
+                        throw new Error('simulated process termination before rollback');
+                    }
+                }
+            });
+            assert.equal(interrupted.status, 'INTERRUPTED');
+            assert.equal(fs.existsSync(fixture.outputPath), true);
+            assert.equal(fs.existsSync(`${fixture.outputPath}.pending`), true);
+
+            const recovered = executeSemanticCycleRebindTransaction(fixture.options);
+
+            assert.equal(recovered.status, 'IDEMPOTENT');
+            assert.equal(recovered.mutation_allowed, true);
+            assert.equal(fs.existsSync(`${fixture.outputPath}.pending`), false);
+            assert.equal(readSemanticCycleRebindManifest(fixture.repoRoot, fixture.outputPath).status, 'VALID');
         } finally {
             fixture.cleanup();
         }
@@ -639,6 +723,73 @@ describe('semantic cycle rebind transaction', () => {
             );
         } finally {
             fixture.cleanup();
+        }
+    });
+
+    it('rejects null required cryptographic bindings even when mirror fields and hashes are recomputed', () => {
+        const fixture = createFixture();
+        try {
+            const result = executeSemanticCycleRebindTransaction(fixture.options);
+            assert.equal(result.status, 'COMMITTED');
+
+            for (const key of [
+                'transaction_id',
+                'request_sha256',
+                'comparison_decision_sha256',
+                'authoritative_snapshot_sha256',
+                'candidate_snapshot_sha256',
+                'lifecycle_authority_sha256',
+                'transaction_sha256'
+            ] as const) {
+                const tampered = structuredClone(result.manifest!);
+                (tampered as unknown as Record<string, unknown>)[key] = null;
+                if (key in tampered.audit) {
+                    (tampered.audit as unknown as Record<string, unknown>)[key] = null;
+                }
+                if (key !== 'transaction_sha256') {
+                    tampered.transaction_sha256 = computeSemanticCycleRebindManifestSha256(tampered);
+                }
+
+                const validation = validateSemanticCycleRebindManifest(tampered);
+                assert.equal(validation.status, 'INVALID', key);
+                assert.match(validation.violations.join(' '), new RegExp(key, 'u'), key);
+            }
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('commits and independently validates every artifact in a multi-lane review set', () => {
+        const fixture = createFixture(['code', 'security']);
+        try {
+            const result = executeSemanticCycleRebindTransaction(fixture.options);
+            assert.equal(result.status, 'COMMITTED');
+            assert.equal(result.audit.verified_artifact_count, 10);
+            for (const artifactClass of [
+                'review_context',
+                'findings_disposition',
+                'review_receipt',
+                'reviewer_dependency'
+            ] as const) {
+                assert.equal(result.audit.artifact_class_counts[artifactClass], 2);
+            }
+        } finally {
+            fixture.cleanup();
+        }
+
+        const tamperedFixture = createFixture(['code', 'security']);
+        try {
+            fs.appendFileSync(
+                tamperedFixture.reviewArtifactPaths.security.reviewer_dependency,
+                'tampered security lane\n',
+                'utf8'
+            );
+            const result = executeSemanticCycleRebindTransaction(tamperedFixture.options);
+            assert.equal(result.status, 'INVALIDATED');
+            assert.ok(result.audit.invalidation_codes.includes('ARTIFACT_HASH_MISMATCH'));
+            assert.match(result.audit.violations.join(' '), /content hash changed/u);
+        } finally {
+            tamperedFixture.cleanup();
         }
     });
 });

@@ -1,8 +1,11 @@
 import type {
     SemanticCycleComparisonResult,
+    SemanticCycleLifecyclePosition,
     SemanticCycleRuntimeIdentity,
     SemanticCycleSnapshot
 } from './semantic-cycle-contract-types';
+
+export type { SemanticCycleLifecyclePosition } from './semantic-cycle-contract-types';
 
 export const SEMANTIC_CYCLE_REBIND_TRANSACTION_SCHEMA_VERSION = 1 as const;
 export const SEMANTIC_CYCLE_REBIND_TRANSACTION_CONTRACT_ID =
@@ -19,11 +22,6 @@ export const SEMANTIC_CYCLE_REBIND_ARTIFACT_CLASSES = [
 
 export type SemanticCycleRebindArtifactClass =
     typeof SEMANTIC_CYCLE_REBIND_ARTIFACT_CLASSES[number];
-
-export interface SemanticCycleLifecyclePosition {
-    cycle_sha256: string;
-    task_event_sequence: number;
-}
 
 export interface SemanticCycleRebindArtifactInput {
     artifact_class: SemanticCycleRebindArtifactClass;

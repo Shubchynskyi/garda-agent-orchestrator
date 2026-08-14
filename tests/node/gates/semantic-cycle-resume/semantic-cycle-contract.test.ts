@@ -5,6 +5,7 @@ import { stringSha256 } from '../../../../src/gate-runtime/hash';
 import {
     SEMANTIC_CYCLE_BASE_BINDING_KEYS,
     type SemanticCycleBaseBindingKey,
+    type SemanticCycleLifecyclePosition,
     type SemanticCycleMismatchCode,
     type SemanticCycleReviewLaneBinding,
     type SemanticCycleRuntimeIdentity,
@@ -59,10 +60,15 @@ function buildSnapshot(options: {
     runtimeIdentity?: SemanticCycleRuntimeIdentity;
     bindings?: Partial<Record<SemanticCycleBaseBindingKey, string>>;
     lanes?: SemanticCycleReviewLaneBinding[];
+    lifecyclePosition?: SemanticCycleLifecyclePosition;
 } = {}): SemanticCycleSnapshot {
     return buildSemanticCycleSnapshot({
         task_id: options.taskId || 'T-1015-1',
         runtime: options.runtimeIdentity || runtime,
+        lifecycle_position: options.lifecyclePosition || {
+            cycle_sha256: hash('lifecycle:source'),
+            task_event_sequence: 12
+        },
         bindings: buildBaseBindings(options.bindings),
         review_lanes: options.lanes || [buildLane('security'), buildLane('code')]
     });
@@ -90,6 +96,23 @@ describe('semantic cycle snapshot contract', () => {
         );
         assert.equal(validateSemanticCycleSnapshot(snapshot).status, 'VALID');
         assert.deepEqual(buildSnapshot(), snapshot);
+    });
+
+    it('authenticates and validates the lifecycle position carried by the snapshot', () => {
+        const snapshot = buildSnapshot();
+        const stale = structuredClone(snapshot);
+        stale.lifecycle_position.task_event_sequence += 1;
+        assert.match(
+            validateSemanticCycleSnapshot(stale).violations.join(' '),
+            /snapshot_sha256 does not authenticate/u
+        );
+
+        const malformed = structuredClone(snapshot);
+        malformed.lifecycle_position.cycle_sha256 = malformed.lifecycle_position.cycle_sha256.toUpperCase();
+        assert.match(
+            validateSemanticCycleSnapshot(rehash(malformed)).violations.join(' '),
+            /lifecycle_position\.cycle_sha256 must be a lowercase SHA-256/u
+        );
     });
 
     it('rejects locale-dependent ordering for canonical payload keys and review lanes', () => {

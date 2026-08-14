@@ -37,6 +37,11 @@ export interface SemanticCycleRuntimeIdentity {
     snapshot_schema_version: number;
 }
 
+export interface SemanticCycleLifecyclePosition {
+    cycle_sha256: string;
+    task_event_sequence: number;
+}
+
 export interface SemanticCycleReviewLaneBinding {
     review_type: string;
     context_sha256: string;
@@ -51,6 +56,7 @@ export interface SemanticCycleSnapshot {
     contract_id: typeof SEMANTIC_CYCLE_CONTRACT_ID;
     task_id: string;
     runtime: SemanticCycleRuntimeIdentity;
+    lifecycle_position: SemanticCycleLifecyclePosition;
     bindings: Record<SemanticCycleBindingKey, string>;
     review_lanes: SemanticCycleReviewLaneBinding[];
     snapshot_sha256: string;
@@ -59,6 +65,7 @@ export interface SemanticCycleSnapshot {
 export interface SemanticCycleSnapshotInput {
     task_id: string;
     runtime: SemanticCycleRuntimeIdentity;
+    lifecycle_position: SemanticCycleLifecyclePosition;
     bindings: Record<SemanticCycleBaseBindingKey, string>;
     review_lanes: readonly SemanticCycleReviewLaneBinding[];
 }
