@@ -275,7 +275,8 @@ import {
 } from './next-step-closeout-status-readers';
 import {
     evaluatePostReviewSourceMutationGuard,
-    hasAuthenticatedFixNowDisposition
+    hasAuthenticatedFixNowDisposition,
+    resolveAuthenticatedFixNowRemediationState
 } from './next-step-post-review-source-mutation-guard';
 import {
     materializeSplitRequiredLatch,
@@ -3035,11 +3036,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             timelineSnapshot: closeoutTimelineSnapshot
         }
     );
-    const failedCurrentReviewStateForPreflight = reviewLaunchPlan.next_review_type
+    const failedReviewStateFromLaunchPlan = reviewLaunchPlan.next_review_type
         ? reviewStates.find((candidate) => (
             candidate.reviewType === reviewLaunchPlan.next_review_type && candidate.failed
         ))
         : undefined;
+    const failedCurrentReviewStateForPreflight = failedReviewStateFromLaunchPlan
+        ?? resolveAuthenticatedFixNowRemediationState(reviewStates, reviewLaunchPlan.next_review_type)
+        ?? undefined;
     const effectivePreflightWorkspaceReadiness = preflight && failedCurrentReviewStateForPreflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,

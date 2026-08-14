@@ -42,9 +42,26 @@ function emptyEvaluation(reason: string): PostReviewSourceMutationGuardEvaluatio
 }
 
 export function hasAuthenticatedFixNowDisposition(state: ReviewArtifactState): boolean {
-    return state.reviewFindingsValidationAccepted === true
-        && state.failed
-        && (state.reviewFindingsDisposition?.counts_by_action.fix_now || 0) > 0;
+    const disposition = state.frozenReviewFindingsDisposition ?? state.reviewFindingsDisposition;
+    return (
+        state.frozenReviewFindingsValidationAccepted === true
+        || state.reviewFindingsValidationAccepted === true
+    )
+        && disposition !== null
+        && disposition.blocking_count > 0
+        && disposition.counts_by_action.fix_now > 0;
+}
+
+export function resolveAuthenticatedFixNowRemediationState(
+    reviewStates: readonly ReviewArtifactState[],
+    preferredReviewType: string | null
+): ReviewArtifactState | null {
+    const preferredState = preferredReviewType
+        ? reviewStates.find((state) => (
+            state.reviewType === preferredReviewType && hasAuthenticatedFixNowDisposition(state)
+        ))
+        : null;
+    return preferredState ?? reviewStates.find(hasAuthenticatedFixNowDisposition) ?? null;
 }
 
 function hasAcceptedDeferredOrIgnoredDisposition(state: ReviewArtifactState): boolean {

@@ -7,7 +7,8 @@ import * as path from 'node:path';
 import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
 import {
     evaluatePostReviewSourceMutationGuard,
-    hasAuthenticatedFixNowDisposition
+    hasAuthenticatedFixNowDisposition,
+    resolveAuthenticatedFixNowRemediationState
 } from '../../../../src/gates/next-step/next-step-post-review-source-mutation-guard';
 import type { ReviewArtifactState } from '../../../../src/gates/next-step/next-step-review-artifact-readers';
 
@@ -71,6 +72,18 @@ function rejectedFailedState(reviewType = 'test'): ReviewArtifactState {
         reviewFindingsValidationAccepted: false,
         failed: true,
         reviewFindingsDisposition: null
+    } as ReviewArtifactState;
+}
+
+function frozenFixNowState(reviewType = 'refactor'): ReviewArtifactState {
+    const disposition = acceptedFixNowState(reviewType).reviewFindingsDisposition;
+    return {
+        reviewType,
+        reviewFindingsValidationAccepted: false,
+        frozenReviewFindingsValidationAccepted: true,
+        failed: false,
+        reviewFindingsDisposition: null,
+        frozenReviewFindingsDisposition: disposition
     } as ReviewArtifactState;
 }
 
@@ -239,6 +252,35 @@ test('allows mixed multi-lane dispositions when one current lane requires fix_no
     });
 
     assert.equal(result.blocked, false, result.reason);
+});
+
+test('preserves frozen fix_now authorization after source drift invalidates the current lane view', () => {
+    const repoRoot = makeRepo();
+    const preflight = preflightFor(repoRoot);
+    const fixNowState = frozenFixNowState();
+    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 8;\n', 'utf8');
+
+    const resolvedState = resolveAuthenticatedFixNowRemediationState(
+        [acceptedDeferredState(), fixNowState],
+        'code'
+    );
+    assert.equal(resolvedState?.reviewType, 'refactor');
+    assert.equal(hasAuthenticatedFixNowDisposition(fixNowState), true);
+
+    const result = evaluatePostReviewSourceMutationGuard({
+        repoRoot,
+        preflight,
+        workspaceReadiness: {
+            ready: false,
+            reason: 'source drift invalidated the ordinary current review view',
+            currentChangedFiles: ['src/app.ts']
+        },
+        reviewStates: [acceptedDeferredState(), fixNowState],
+        authorizedImplementationTransition: Boolean(resolvedState)
+    });
+
+    assert.equal(result.blocked, false, result.reason);
+    assert.match(result.reason, /authenticated remediation transition/);
 });
 
 test('does not authorize mutation from a stale fix_now receipt outside the current remediation route', () => {
