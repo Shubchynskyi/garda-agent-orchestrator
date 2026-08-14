@@ -1513,4 +1513,41 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(command.includes('--changed-file "src/app.ts"'));
         assert.ok(!command.includes('--changed-file "src/line-ending.ts"'));
     });
+
+    it('preserves explicit preflight scope when an unchanged dirty baseline predates normal task mode', () => {
+        const repoRoot = makeTempRepo();
+        const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');
+        fs.writeFileSync(legacyPath, 'export const legacy = 1;\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(legacyPath, 'export const userBaseline = 2;\n', 'utf8');
+        const legacyBaselineHash = fileSha256(legacyPath);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const taskChange = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts']
+        });
+        const appSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflight.metrics as Record<string, unknown>;
+        metrics.actual_changed_files = appSnapshot.changed_files;
+        metrics.actual_changed_files_sha256 = appSnapshot.changed_files_sha256;
+        preflight.authorized_files = ['src/app.ts'];
+        preflight.include_untracked = true;
+        preflight.triggers = {
+            dirty_workspace_baseline_changed_files: ['src/legacy.ts'],
+            dirty_workspace_protected_files: ['src/legacy.ts'],
+            dirty_workspace_protected_file_hashes: {
+                'src/legacy.ts': legacyBaselineHash
+            }
+        };
+        writeJson(preflightPath, preflight);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const refreshedTaskChange = 3;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes('--changed-file "src/legacy.ts"'), command);
+    });
 });

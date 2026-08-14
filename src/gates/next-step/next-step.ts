@@ -2147,6 +2147,53 @@ function getPreflightRefreshCommandChangedFiles(params: {
             ? [...new Set([...taskScopedRefreshChangedFiles, ...currentTaskScopeChangedFiles])].sort()
             : taskScopedChangedFiles;
     }
+    const explicitAuthorizedFiles = String(params.preflight?.detection_source || '').trim().toLowerCase()
+        === 'explicit_changed_files'
+        && Array.isArray(params.preflight?.authorized_files)
+        ? normalizeWorkspaceRelativePaths(params.repoRoot, params.preflight.authorized_files)
+        : [];
+    if (explicitAuthorizedFiles.length > 0 && !params.includeFullFailedReviewRemediationScope) {
+        const currentChangedFiles = filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(
+            params.repoRoot,
+            getCurrentWorkspaceRefreshChangedFiles(
+                params.repoRoot,
+                params.preflight,
+                params.fallbackChangedFiles,
+                params.workspaceSnapshotRequest
+            )
+        );
+        if (!currentChangedFiles) {
+            return explicitAuthorizedFiles;
+        }
+        const authorizedSet = new Set(explicitAuthorizedFiles);
+        const dirtyBaselineSet = new Set([
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.repoRoot, params.taskMode),
+            ...getPreflightTriggerChangedFiles(
+                params.repoRoot,
+                params.preflight,
+                'dirty_workspace_baseline_changed_files'
+            )
+        ]);
+        const dirtyBaselineFileHashes = {
+            ...getTaskModeDirtyWorkspaceBaselineFileHashes(params.repoRoot, params.taskMode),
+            ...getPreflightTriggerFileHashes(
+                params.repoRoot,
+                params.preflight,
+                'dirty_workspace_protected_file_hashes'
+            )
+        };
+        const unchangedDirtyBaselineSet = new Set(
+            [...dirtyBaselineSet].filter((changedFile) => (
+                dirtyBaselineFileMatchesCurrent(params.repoRoot, changedFile, dirtyBaselineFileHashes)
+            ))
+        );
+        const taskScopedCurrentFiles = currentChangedFiles.filter((changedFile) => (
+            authorizedSet.has(changedFile) || !unchangedDirtyBaselineSet.has(changedFile)
+        ));
+        return taskScopedCurrentFiles.length > 0
+            ? taskScopedCurrentFiles
+            : explicitAuthorizedFiles;
+    }
     const dirtyBaselineCommandFiles = getTaskModeDirtyWorkspaceBaselineCommandChangedFiles(params.repoRoot, params.taskMode);
     if (dirtyBaselineCommandFiles.length > 0) {
         return filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, dirtyBaselineCommandFiles);
@@ -2250,6 +2297,30 @@ function getPreflightTriggerChangedFiles(
     }
     const value = (triggers as Record<string, unknown>)[fieldName];
     return normalizeWorkspaceRelativePaths(repoRoot, value);
+}
+
+function getPreflightTriggerFileHashes(
+    repoRoot: string,
+    preflight: Record<string, unknown> | null,
+    fieldName: string
+): Record<string, string> {
+    const triggers = preflight?.triggers;
+    if (!triggers || typeof triggers !== 'object' || Array.isArray(triggers)) {
+        return {};
+    }
+    const value = (triggers as Record<string, unknown>)[fieldName];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+    const hashes: Record<string, string> = {};
+    for (const [filePath, hash] of Object.entries(value as Record<string, unknown>)) {
+        const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, filePath);
+        const normalizedHash = String(hash || '').trim().toLowerCase();
+        if (normalizedPath && /^[0-9a-f]{64}$/u.test(normalizedHash)) {
+            hashes[normalizedPath] = normalizedHash;
+        }
+    }
+    return hashes;
 }
 
 function getBuildReviewContextReuseCandidateHint(
