@@ -716,7 +716,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     taskId: resolvedTaskId,
                     taskModeEvidence,
                     taskSummary: currentTaskSummary,
-                    changedFiles: workspaceSnapshot.changed_files
+                    changedFiles: authorizedFiles
                 })}`
             );
         }
