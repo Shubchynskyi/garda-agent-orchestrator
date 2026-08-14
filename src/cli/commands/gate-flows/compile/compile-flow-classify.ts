@@ -438,6 +438,16 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     });
     (result as unknown as Record<string, unknown>).authorized_files = authorizedFiles;
     result.changed_files = workspaceSnapshot.changed_files;
+    const actualZeroDiffDetected = workspaceSnapshot.changed_files.length === 0;
+    result.zero_diff_guard = {
+        zero_diff_detected: actualZeroDiffDetected,
+        status: actualZeroDiffDetected ? 'BASELINE_ONLY' : 'DIFF_PRESENT',
+        completion_requires_audited_no_op: actualZeroDiffDetected,
+        no_op_artifact_suffix: actualZeroDiffDetected ? '-no-op.json' : null,
+        rationale: actualZeroDiffDetected
+            ? 'Preflight authorized planned scope has no current Git diff. Task completion requires a produced diff or an audited no-op artifact.'
+            : 'Workspace diff detected.'
+    };
     result.git_change_classification = workspaceSnapshot.git_change_classification;
     (result.metrics as unknown as Record<string, unknown>).authorized_files_count = authorizedFiles.length;
     (result.metrics as unknown as Record<string, unknown>).authorized_files_sha256 = workspaceSnapshot.authorized_files_sha256;
