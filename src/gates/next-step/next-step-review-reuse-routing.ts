@@ -31,6 +31,28 @@ export interface FocusedIntermediateReviewEvidence {
 
 export type ReviewReuseCandidateHint = 'current-context-candidate' | 'validation-required';
 
+export function isReviewSatisfiedBySemanticCycleResume(options: {
+    reviewType: string;
+    ordinarySatisfied: boolean;
+    semanticResumeReusable: boolean;
+    acceptedReviewTypes: readonly string[];
+}): boolean {
+    return options.ordinarySatisfied || (
+        options.semanticResumeReusable
+        && options.acceptedReviewTypes.includes(options.reviewType)
+    );
+}
+
+export function isFullSuiteSatisfiedBySemanticCycleResume(options: {
+    semanticResumeReusable: boolean;
+    acceptedFullSuite: boolean;
+    currentConfigMatches: boolean;
+}): boolean {
+    return options.semanticResumeReusable
+        && options.acceptedFullSuite
+        && options.currentConfigMatches;
+}
+
 export interface StrictSequentialUpstreamReuseRouteOptions {
     reviewPolicyMode: string;
     downstreamReviewType: string;

@@ -48,6 +48,7 @@ export interface NextStepResolutionContext {
     rulePack: Record<string, unknown> | null;
     taskMode: Record<string, unknown> | null;
     preflightSha256: string | null;
+    taskEventsPath: string;
 }
 
 export function buildCliPrefix(repoRoot: string): string {
@@ -99,6 +100,7 @@ export function createNextStepResolutionContext(options: NextStepOptions): NextS
         preflight,
         rulePack,
         taskMode,
-        preflightSha256
+        preflightSha256,
+        taskEventsPath: path.join(eventsRoot, `${taskId}.jsonl`)
     };
 }

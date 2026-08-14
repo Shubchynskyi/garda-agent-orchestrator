@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fx from './next-step-review-reuse-fixtures';
+import {
+    isFullSuiteSatisfiedBySemanticCycleResume,
+    isReviewSatisfiedBySemanticCycleResume
+} from '../../../../src/gates/next-step/next-step-review-reuse-routing';
 const {
     ALL_REVIEW_FLAGS,
     appendEvent,
@@ -95,6 +99,40 @@ function materializeCurrentStrictReuse(repoRoot: string, taskId: string, reviewT
 }
 
 describe('gates/next-step review reuse rebind routing', () => {
+    it('accepts only review lanes named by a reusable semantic-cycle transaction', () => {
+        assert.equal(isReviewSatisfiedBySemanticCycleResume({
+            reviewType: 'security',
+            ordinarySatisfied: false,
+            semanticResumeReusable: true,
+            acceptedReviewTypes: ['code', 'security']
+        }), true);
+        assert.equal(isReviewSatisfiedBySemanticCycleResume({
+            reviewType: 'api',
+            ordinarySatisfied: false,
+            semanticResumeReusable: true,
+            acceptedReviewTypes: ['code', 'security']
+        }), false);
+        assert.equal(isReviewSatisfiedBySemanticCycleResume({
+            reviewType: 'security',
+            ordinarySatisfied: false,
+            semanticResumeReusable: false,
+            acceptedReviewTypes: ['security']
+        }), false);
+    });
+
+    it('accepts semantic full-suite evidence only while active configuration matches', () => {
+        assert.equal(isFullSuiteSatisfiedBySemanticCycleResume({
+            semanticResumeReusable: true,
+            acceptedFullSuite: true,
+            currentConfigMatches: true
+        }), true);
+        assert.equal(isFullSuiteSatisfiedBySemanticCycleResume({
+            semanticResumeReusable: true,
+            acceptedFullSuite: true,
+            currentConfigMatches: false
+        }), false);
+    });
+
     it('does not treat stale pre-compile review routing as upstream pass evidence', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

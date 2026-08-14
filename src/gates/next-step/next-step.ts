@@ -231,10 +231,15 @@ import {
     timelineHasDelegatedReviewRoutingAfterCompile
 } from './next-step-reviewer-launch-evidence';
 import {
+    isFullSuiteSatisfiedBySemanticCycleResume,
+    isReviewSatisfiedBySemanticCycleResume,
     resolveFailedReviewRemediationRoute,
     resolveStrictSequentialUpstreamReuseRoute,
     type ReviewReuseCandidateHint
 } from './next-step-review-reuse-routing';
+import {
+    readSemanticCycleResumeRoutingState
+} from '../semantic-cycle-resume/semantic-cycle-routing';
 import {
     isPassedIntermediateCommandEvent,
     readFocusedTestRequiredByReview,
@@ -2308,7 +2313,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         preflight,
         rulePack,
         taskMode,
-        preflightSha256
+        preflightSha256,
+        taskEventsPath
     } = context;
     const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
     const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
@@ -2432,6 +2438,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const fullSuiteNotRequiredForZeroDiffNoReviewableScope = hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes);
     const fullSuiteNotRequiredForCurrentScope = fullSuiteNotRequiredForDocsOnly || fullSuiteNotRequiredForZeroDiffNoReviewableScope;
+    const semanticCycleResume = readSemanticCycleResumeRoutingState({
+        repo_root: repoRoot,
+        task_id: taskId,
+        manifest_path: readinessArtifacts.paths.semanticCycleRebindPath,
+        task_events_path: taskEventsPath,
+        preflight_path: preflightPath
+    });
+    const semanticResumeReusable = semanticCycleResume.status === 'REUSABLE';
     const fullSuiteLifecycleGatePassed = isGatePassed(summary, 'full-suite-validation');
     const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
     const fullSuiteCurrentArtifactMatchesCycle = fullSuiteArtifactMatchesCurrentCycle(
@@ -2450,9 +2464,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         );
     const fullSuiteCurrentArtifactMatchesCycleAndConfig = fullSuiteCurrentArtifactMatchesCycle
         && fullSuiteCurrentArtifactMatchesConfig;
-    const fullSuiteCurrentGateStatus = fullSuiteCurrentArtifactMatchesCycleAndConfig
-        ? fullSuiteGateStatus
-        : null;
+    const semanticFullSuiteReusable = isFullSuiteSatisfiedBySemanticCycleResume({
+        semanticResumeReusable,
+        acceptedFullSuite: semanticCycleResume.accepted_full_suite,
+        currentConfigMatches: fullSuiteCurrentArtifactMatchesConfig
+    });
+    const fullSuiteCurrentGateStatus = semanticFullSuiteReusable
+        ? 'PASS'
+        : fullSuiteCurrentArtifactMatchesCycleAndConfig
+            ? fullSuiteGateStatus
+            : null;
     const fullSuiteLifecycleWarningPolicyPresent = hasFullSuiteTimeoutWarningLifecyclePolicy(
         repoRoot,
         taskId,
@@ -2469,7 +2490,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         fullSuiteCurrentArtifactMatchesCycleAndConfig,
         fullSuiteLifecycleGatePassed
     );
-    const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
+    const fullSuiteGatePassed = semanticFullSuiteReusable
+        ? true
+        : fullSuiteNotRequiredForDocsOnly
         ? hasAcceptedDocsOnlyFullSuiteSkipArtifact(
                 reviewsRoot,
                 taskId,
@@ -2622,7 +2645,17 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             reviewStates,
             isSatisfied: (state) => (
                 reviewGateOverrideSkippedReviewTypes.has(normalizeReviewTypeValue(state.reviewType) || '')
-                || reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
+                || isReviewSatisfiedBySemanticCycleResume({
+                    reviewType: state.reviewType,
+                    ordinarySatisfied: reviewStateHasSatisfiedEvidence(
+                        repoRoot,
+                        eventsRoot,
+                        taskId,
+                        state as ReviewArtifactState
+                    ),
+                    semanticResumeReusable,
+                    acceptedReviewTypes: semanticCycleResume.accepted_review_types
+                })
             ),
             isCurrentFailed: (state) => reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
         }),
@@ -3628,7 +3661,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             auditedNoOpPassed: resolveAuditedNoOpState().passed
         }),
         resolveCompileGateRoute: () => {
-            const compileReadiness = preflight
+            const semanticCompileAccepted = semanticResumeReusable && semanticCycleResume.accepted_compile;
+            const compileReadiness = semanticCompileAccepted
+                ? { ready: true, reason: semanticCycleResume.reason }
+                : preflight
                 ? readCompileReadiness(
                     repoRoot,
                     reviewsRoot,
@@ -3639,7 +3675,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 )
                 : { ready: false, reason: 'No current preflight exists.' };
             return resolveNextStepCompileGateRoute({
-                compileGatePassed: isGatePassed(summary, 'compile-gate'),
+                compileGatePassed: semanticCompileAccepted || isGatePassed(summary, 'compile-gate'),
                 ready: compileReadiness.ready,
                 reason: compileReadiness.reason,
                 recoveryGate: compileReadiness.recoveryGate,
@@ -4457,12 +4493,17 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             resolveDelegatedReadinessRoute: resolveDelegatedReadinessDecisionRoute
         });
         if (activeReviewLifecycleDecisionRoute) {
+            const semanticResumePrefix = semanticResumeReusable
+                ? `${semanticCycleResume.reason} Accepted unchanged review lanes: ${
+                    semanticCycleResume.accepted_review_types.join(', ') || 'none'
+                }. `
+                : '';
             return buildResult({
                 ...resultBase,
                 status: activeReviewLifecycleDecisionRoute.status,
                 nextGate: activeReviewLifecycleDecisionRoute.nextGate,
                 title: activeReviewLifecycleDecisionRoute.title,
-                reason: activeReviewLifecycleDecisionRoute.reason,
+                reason: semanticResumePrefix + activeReviewLifecycleDecisionRoute.reason,
                 commands: activeReviewLifecycleDecisionRoute.commands
             });
         }

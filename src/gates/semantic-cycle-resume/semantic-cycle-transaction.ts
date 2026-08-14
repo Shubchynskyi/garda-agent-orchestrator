@@ -6,7 +6,11 @@ import { joinOrchestratorPath, resolvePathInsideRepo } from '../../core/orchestr
 import { isCanonicalTaskId } from '../../core/task-ids';
 import { fileSha256, stringSha256 } from '../../gate-runtime/hash';
 import { withReviewArtifactLock } from '../../gate-runtime/review-artifacts';
-import { inspectTaskEventFile } from '../../gate-runtime/task-events';
+import {
+    appendTaskEvent,
+    inspectTaskEventFile,
+    taskEventAppendHasBlockingFailure
+} from '../../gate-runtime/task-events';
 import { compareSemanticCycleSnapshots } from './semantic-cycle-comparison';
 import type { SemanticCycleReviewLaneBinding } from './semantic-cycle-contract-types';
 import { serializeSemanticCycleValue } from './semantic-cycle-snapshot';
@@ -45,6 +49,11 @@ interface ArtifactAssessment {
 
 interface LifecycleAuthorityAssessment {
     authoritySha256: string | null;
+    violations: string[];
+}
+
+export interface SemanticCycleCommitEventBindingAssessment {
+    status: 'VALID' | 'MISSING' | 'INVALID';
     violations: string[];
 }
 
@@ -100,6 +109,127 @@ function sameResolvedPath(left: string, right: string): boolean {
         }
     };
     return canonicalize(left) === canonicalize(right);
+}
+
+function taskEventPrefixSha256(filePath: string, targetSequence: number): string | null {
+    try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const lines = content.match(/.*(?:\r?\n|$)/gu) || [];
+        let prefix = '';
+        for (const line of lines) {
+            if (!line.trim()) {
+                continue;
+            }
+            prefix += line;
+            const event = JSON.parse(line) as Record<string, unknown>;
+            const integrity = isRecord(event.integrity) ? event.integrity : null;
+            if (Number(integrity?.task_sequence) === targetSequence) {
+                return stringSha256(prefix);
+            }
+        }
+    } catch {
+        // Integrity validation reports the authoritative parse failure separately.
+    }
+    return null;
+}
+
+export function assessSemanticCycleCommitEventBinding(params: {
+    repo_root: string;
+    task_id: string;
+    manifest_path: string;
+    task_events_path: string;
+    manifest: SemanticCycleRebindManifest;
+}): SemanticCycleCommitEventBindingAssessment {
+    const expectedSequence = params.manifest.target_position.task_event_sequence + 1;
+    const candidates: Record<string, unknown>[] = [];
+    const inspection = inspectTaskEventFile(params.task_events_path, params.task_id, {
+        onIntegrityEvent: (event) => {
+            const integrity = isRecord(event.integrity) ? event.integrity : null;
+            if (Number(integrity?.task_sequence) === expectedSequence) {
+                candidates.push(event as Record<string, unknown>);
+            }
+        }
+    });
+    if (!['PASS', 'PASS_WITH_LEGACY_PREFIX'].includes(inspection.status)) {
+        return {
+            status: 'INVALID',
+            violations: [`Semantic-cycle commit event authority is unverifiable: ${inspection.violations.join(' ')}`]
+        };
+    }
+    const candidate = candidates[0];
+    if (!candidate) {
+        return {
+            status: 'MISSING',
+            violations: [`Semantic-cycle transaction commit event is missing at task-event seq ${expectedSequence}.`]
+        };
+    }
+    let resolvedManifestPath: string | null = null;
+    try {
+        resolvedManifestPath = resolvePathInsideRepo(params.manifest_path, params.repo_root, {
+            allowMissing: false,
+            enforceInside: true
+        });
+    } catch {
+        return {
+            status: 'INVALID',
+            violations: ['Semantic-cycle commit event manifest path is not canonically bound.']
+        };
+    }
+    const details = isRecord(candidate.details) ? candidate.details : null;
+    const expectedRelativePath = resolvedManifestPath
+        ? normalizeRepoRelativePath(params.repo_root, resolvedManifestPath)
+        : '';
+    const matches = (
+        String(candidate.event_type || '').trim().toUpperCase() === 'SEMANTIC_CYCLE_REBIND_COMMITTED'
+        && String(candidate.outcome || '').trim().toUpperCase() === 'PASS'
+        && details?.transaction_id === params.manifest.transaction_id
+        && details?.transaction_sha256 === params.manifest.transaction_sha256
+        && details?.manifest_path === expectedRelativePath
+        && details?.manifest_sha256 === fileSha256(resolvedManifestPath || '')
+    );
+    return matches
+        ? { status: 'VALID', violations: [] }
+        : {
+            status: 'INVALID',
+            violations: ['Semantic-cycle transaction commit event does not bind the current manifest bytes.']
+        };
+}
+
+function appendSemanticCycleCommitEvent(
+    options: SemanticCycleRebindTransactionOptions,
+    manifest: SemanticCycleRebindManifest,
+    manifestPath: string
+): boolean {
+    const manifestSha256 = fileSha256(manifestPath);
+    if (!manifestSha256) {
+        throw new Error('Committed semantic-cycle manifest is unavailable for task-event binding.');
+    }
+    const result = appendTaskEvent(
+        options.repo_root,
+        manifest.task_id || '',
+        'SEMANTIC_CYCLE_REBIND_COMMITTED',
+        'PASS',
+        'Semantic-cycle rebind transaction committed.',
+        {
+            transaction_id: manifest.transaction_id,
+            transaction_sha256: manifest.transaction_sha256,
+            manifest_path: normalizeRepoRelativePath(options.repo_root, manifestPath),
+            manifest_sha256: manifestSha256
+        },
+        {
+            actor: 'gate',
+            eventsRoot: path.dirname(options.task_events_path),
+            passThru: true
+        }
+    );
+    if (!result || (!result.canonical_committed && taskEventAppendHasBlockingFailure(result, false))) {
+        throw new Error(
+            `Semantic-cycle commit task-event append failed${
+                result?.warnings.length ? `: ${result.warnings.join(' | ')}` : '.'
+            }`
+        );
+    }
+    return result.canonical_committed;
 }
 
 function assessLifecycleAuthority(options: SemanticCycleRebindTransactionOptions): LifecycleAuthorityAssessment {
@@ -162,10 +292,33 @@ function assessLifecycleAuthority(options: SemanticCycleRebindTransactionOptions
     if (targetHash !== options.target_position.cycle_sha256) {
         violations.push('target_position does not match its authenticated task-event chain anchor.');
     }
-    if (inspection.last_integrity_sequence !== options.target_position.task_event_sequence) {
-        violations.push('target_position must identify the current authenticated task-event chain tail.');
+    const targetSequence = options.target_position.task_event_sequence;
+    const expectedCommittedTail = targetSequence + 1;
+    if (inspection.last_integrity_sequence !== targetSequence) {
+        const manifestPath = joinOrchestratorPath(
+            options.repo_root,
+            path.join('runtime', 'reviews', `${taskId}-semantic-cycle-rebind.json`)
+        );
+        const existing = parseManifestFile(manifestPath, { allowPending: true });
+        const binding = existing.manifest
+            ? assessSemanticCycleCommitEventBinding({
+                repo_root: options.repo_root,
+                task_id: taskId,
+                manifest_path: manifestPath,
+                task_events_path: resolvedPath,
+                manifest: existing.manifest
+            })
+            : null;
+        if (inspection.last_integrity_sequence !== expectedCommittedTail || binding?.status !== 'VALID') {
+            violations.push(
+                'Lifecycle authority target_position must identify the current authenticated task-event chain tail.'
+            );
+        }
     }
-    return { authoritySha256: fileSha256(resolvedPath), violations };
+    return {
+        authoritySha256: taskEventPrefixSha256(resolvedPath, targetSequence),
+        violations
+    };
 }
 
 function validateLifecyclePosition(
@@ -976,6 +1129,38 @@ export function executeSemanticCycleRebindTransaction(
             if (existing.manifest.request_sha256 === requestSha256 && validationViolations.length === 0) {
                 const replayAssessment = assessArtifacts(options);
                 const replayLifecycle = assessLifecycleAuthority(options);
+                let commitBinding = existing.manifest.status === 'COMMITTED'
+                    ? assessSemanticCycleCommitEventBinding({
+                        repo_root: options.repo_root,
+                        task_id: taskId,
+                        manifest_path: outputPath,
+                        task_events_path: options.task_events_path,
+                        manifest: existing.manifest
+                    })
+                    : null;
+                if (recoveringPending && commitBinding?.status === 'MISSING') {
+                    try {
+                        appendSemanticCycleCommitEvent(options, existing.manifest, outputPath);
+                        commitBinding = assessSemanticCycleCommitEventBinding({
+                            repo_root: options.repo_root,
+                            task_id: taskId,
+                            manifest_path: outputPath,
+                            task_events_path: options.task_events_path,
+                            manifest: existing.manifest
+                        });
+                    } catch (error: unknown) {
+                        validationCodes.add('PERSISTENCE_FAILED');
+                        replayLifecycle.violations.push(
+                            `Interrupted transaction commit event could not be recorded: ${
+                                error instanceof Error ? error.message : String(error)
+                            }`
+                        );
+                    }
+                }
+                if (commitBinding && commitBinding.status !== 'VALID') {
+                    validationCodes.add('LIFECYCLE_POSITION_INVALID');
+                    replayLifecycle.violations.push(...commitBinding.violations);
+                }
                 const lifecycleAuthorityChanged = (
                     replayLifecycle.authoritySha256 !== initialLifecycle.authoritySha256
                 );
@@ -1105,6 +1290,7 @@ export function executeSemanticCycleRebindTransaction(
         });
         let persisted = false;
         let persistenceStarted = false;
+        let commitEventPersisted = false;
         try {
             options._testHooks?.before_persist?.();
             writeFileAtomically(
@@ -1146,6 +1332,7 @@ export function executeSemanticCycleRebindTransaction(
                     `Post-commit manifest verification failed: ${persistedValidation.violations.join(' ')}`
                 );
             }
+            commitEventPersisted = appendSemanticCycleCommitEvent(options, committed, outputPath);
             fs.rmSync(transactionPendingPath, { force: true });
             if (fs.existsSync(transactionPendingPath)) {
                 throw new Error('Post-commit transaction marker cleanup failed.');
@@ -1161,7 +1348,7 @@ export function executeSemanticCycleRebindTransaction(
             };
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
-            const rollbackPerformed = persistenceStarted && fs.existsSync(outputPath);
+            const rollbackPerformed = persistenceStarted && !commitEventPersisted && fs.existsSync(outputPath);
             let rollbackCompleted = !rollbackPerformed;
             if (rollbackPerformed) {
                 try {

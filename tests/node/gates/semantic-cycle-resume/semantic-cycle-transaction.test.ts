@@ -232,6 +232,15 @@ describe('semantic cycle rebind transaction', () => {
             const persisted = readSemanticCycleRebindManifest(fixture.repoRoot, fixture.outputPath);
             assert.equal(persisted.status, 'VALID');
             assert.equal(persisted.manifest?.transaction_sha256, result.manifest?.transaction_sha256);
+            const committedEvent = fs.readFileSync(fixture.taskEventsPath, 'utf8')
+                .split('\n')
+                .filter((line) => line.trim())
+                .map((line) => JSON.parse(line) as Record<string, unknown>)
+                .find((event) => event.event_type === 'SEMANTIC_CYCLE_REBIND_COMMITTED');
+            const committedDetails = committedEvent?.details as Record<string, unknown> | undefined;
+            assert.equal(committedDetails?.transaction_id, result.manifest?.transaction_id);
+            assert.equal(committedDetails?.transaction_sha256, result.manifest?.transaction_sha256);
+            assert.equal(committedDetails?.manifest_sha256, fileSha256(fixture.outputPath));
             for (const artifact of fixture.artifacts) {
                 assert.equal(fileSha256(path.resolve(fixture.repoRoot, artifact.source_path)), artifact.source_sha256);
             }
