@@ -56,6 +56,8 @@ test('local UI renders Russian chrome while preserving machine surfaces', () => 
     assert.match(html, /Память проекта/u);
     assert.match(html, /Проверка качества/u);
     assert.match(html, /Профиль для F-задач/u);
+    assert.match(html, /Контролируемая декомпозиция задач/u);
+    assert.match(html, /Фактический источник/u);
     assert.match(html, /profileFollowUpTaskProfileOneLevelLighter/u);
     assert.match(html, /profile-follow-up-task-profile/u);
     assert.doesNotMatch(html, /JSON\.stringify\(audit, null, 2\)/u);

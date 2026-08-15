@@ -93,6 +93,8 @@
     "profileName": "Nama profil",
     "profileCopyFrom": "Salin dari",
     "profileDepth": "Kedalaman",
+    "profileTaskDecomposition": "Dekomposisi tugas terkontrol",
+    "profileTaskDecompositionSource": "Sumber efektif",
     "profilePolicyRequired": "Wajib",
     "profilePolicyAuto": "Menurut pemicu",
     "profilePolicyDisabled": "Dinonaktifkan",

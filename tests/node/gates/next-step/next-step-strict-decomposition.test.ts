@@ -14,6 +14,10 @@ import {
     buildStrictDecompositionDecisionRequirement
 } from '../../../../src/gates/next-step/next-step-strict-decomposition-routing';
 import type { NextStepProfileSummary } from '../../../../src/gates/next-step/next-step';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -68,6 +72,27 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                task_decomposition: { enabled: true },
+                review_policy: { code: true, test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -229,6 +254,105 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 }
 
+function seedStartedTaskWithFrozenDecompositionPolicy(
+    repoRoot: string,
+    taskId: string,
+    profile: string,
+    enabled: boolean
+): void {
+    const profilesConfigPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'live',
+        'config',
+        'profiles.json'
+    );
+    const profiles = JSON.parse(fs.readFileSync(profilesConfigPath, 'utf8')) as {
+        built_in_profiles: Record<string, unknown>;
+        user_profiles: Record<string, unknown>;
+    };
+    const profileEntry = {
+        description: `${profile} test profile`,
+        depth: 2,
+        task_decomposition: { enabled },
+        review_policy: { code: true, test: 'auto' },
+        token_economy: {
+            enabled: true,
+            strip_examples: true,
+            strip_code_blocks: true,
+            scoped_diffs: true,
+            compact_reviewer_output: true
+        },
+        skills: { auto_suggest: true }
+    };
+    if (profile === 'custom-review') {
+        profiles.user_profiles[profile] = profileEntry;
+    } else {
+        profiles.built_in_profiles[profile] = profileEntry;
+    }
+    writeJson(profilesConfigPath, profiles);
+
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        profile,
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    writeJson(taskModePath, buildTaskModeArtifact({
+        taskId,
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Seeded next-step task',
+        startBanner: 'Garda captures my mind',
+        provider: 'Codex',
+        canonicalSourceOfTruth: 'Codex',
+        executionProviderSource: 'explicit_provider',
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: profile,
+        profileSelectionSource: 'task_queue',
+        activeProfile: profile,
+        profileSource: profile === 'custom-review' ? 'user' : 'built_in',
+        runtimeActiveProfile: 'balanced',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
+    }));
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
+    appendEvent(
+        repoRoot,
+        taskId,
+        'TASK_MODE_ENTERED',
+        'PASS',
+        buildTaskModeTimelineDetails(taskModePath, profilePolicySnapshot)
+    );
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
+    appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+    appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function buildTaskModeTimelineDetails(
+    taskModePath: string,
+    profilePolicySnapshot: TaskProfilePolicySnapshot
+): Record<string, unknown> {
+    return {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    };
+}
+
 
 
 function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT', taskModePath = ''): void {
@@ -339,6 +463,61 @@ describe('gates/next-step strict decomposition', () => {
         assert.equal(balancedEnabled.required, true);
         assert.equal(balancedEnabled.taskProfile, 'balanced');
         assert.equal(strictDisabled.required, false);
+    });
+
+    it('routes from the persisted task-mode decomposition capability instead of the profile name', () => {
+        const scenarios = [
+            { profile: 'balanced', enabled: true, expectedGate: 'record-strict-decomposition-decision' },
+            { profile: 'strict', enabled: false, expectedGate: 'classify-change' },
+            { profile: 'custom-review', enabled: false, expectedGate: 'classify-change' }
+        ] as const;
+
+        for (const scenario of scenarios) {
+            const repoRoot = makeTempRepo();
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                `| ${TASK_ID} | TODO | P1 | workflow/decomposition | Generalize guarded decomposition routing | gpt-5.4 | 2026-05-20 | ${scenario.profile} | Crosses profile, UI, routing, and audit boundaries. |`,
+                ''
+            ].join('\n'), 'utf8');
+            seedStartedTaskWithFrozenDecompositionPolicy(
+                repoRoot,
+                TASK_ID,
+                scenario.profile,
+                scenario.enabled
+            );
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, scenario.expectedGate, scenario.profile);
+            assert.equal(result.profile?.task_decomposition_enabled, scenario.enabled, scenario.profile);
+            assert.equal(
+                result.profile?.task_decomposition_provenance,
+                'explicit_profile_config',
+                scenario.profile
+            );
+        }
+    });
+
+    it('fails closed to persisted disabled strict decomposition instead of the legacy profile default', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/decomposition | Generalize guarded decomposition routing | gpt-5.4 | 2026-05-20 | strict | Crosses profile, UI, routing, and audit boundaries. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTaskWithFrozenDecompositionPolicy(repoRoot, TASK_ID, 'strict', false);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.profile?.task_decomposition_enabled, false);
+        assert.equal(result.profile?.task_decomposition_provenance, 'explicit_profile_config');
     });
 
     it('routes risky strict tasks to a decomposition decision before classify-change', () => {

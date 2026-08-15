@@ -126,6 +126,8 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     profileName: 'Profile name',
     profileCopyFrom: 'Copy from',
     profileDepth: 'Depth',
+    profileTaskDecomposition: 'Guarded task decomposition',
+    profileTaskDecompositionSource: 'Effective source',
     profilePolicyRequired: 'Required',
     profilePolicyAuto: 'By trigger',
     profilePolicyDisabled: 'Disabled',

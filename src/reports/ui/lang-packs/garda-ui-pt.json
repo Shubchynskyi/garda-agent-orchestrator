@@ -93,6 +93,8 @@
     "profileName": "Nome do perfil",
     "profileCopyFrom": "Copiar de",
     "profileDepth": "Profundidade",
+    "profileTaskDecomposition": "Decomposição controlada de tarefas",
+    "profileTaskDecompositionSource": "Origem efetiva",
     "profilePolicyRequired": "Obrigatório",
     "profilePolicyAuto": "Por acionador",
     "profilePolicyDisabled": "Desativado",

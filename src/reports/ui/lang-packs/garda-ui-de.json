@@ -93,6 +93,8 @@
     "profileName": "Profilname",
     "profileCopyFrom": "Kopieren von",
     "profileDepth": "Tiefe",
+    "profileTaskDecomposition": "Geschützte Aufgabenzerlegung",
+    "profileTaskDecompositionSource": "Effektive Quelle",
     "profilePolicyRequired": "Pflicht",
     "profilePolicyAuto": "Bei Auslöser",
     "profilePolicyDisabled": "Deaktiviert",

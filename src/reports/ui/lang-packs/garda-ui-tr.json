@@ -93,6 +93,8 @@
     "profileName": "Profil adı",
     "profileCopyFrom": "Şuradan kopyala",
     "profileDepth": "Derinlik",
+    "profileTaskDecomposition": "Kontrollü görev ayrıştırması",
+    "profileTaskDecompositionSource": "Etkin kaynak",
     "profilePolicyRequired": "Zorunlu",
     "profilePolicyAuto": "Tetikleyiciyle",
     "profilePolicyDisabled": "Devre dışı",

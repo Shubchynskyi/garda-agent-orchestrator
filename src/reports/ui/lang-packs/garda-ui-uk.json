@@ -93,6 +93,8 @@
     "profileName": "Назва профілю",
     "profileCopyFrom": "Копіювати з",
     "profileDepth": "Глибина",
+    "profileTaskDecomposition": "Контрольована декомпозиція завдань",
+    "profileTaskDecompositionSource": "Фактичне джерело",
     "profilePolicyRequired": "Обов’язково",
     "profilePolicyAuto": "За тригером",
     "profilePolicyDisabled": "Вимкнено",

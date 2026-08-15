@@ -93,6 +93,8 @@
     "profileName": "Profilnamn",
     "profileCopyFrom": "Kopiera från",
     "profileDepth": "Djup",
+    "profileTaskDecomposition": "Skyddad uppgiftsuppdelning",
+    "profileTaskDecompositionSource": "Effektiv källa",
     "profilePolicyRequired": "Obligatorisk",
     "profilePolicyAuto": "Vid utlösare",
     "profilePolicyDisabled": "Inaktiverad",

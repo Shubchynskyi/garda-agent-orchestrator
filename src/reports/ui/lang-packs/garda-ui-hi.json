@@ -93,6 +93,8 @@
     "profileName": "प्रोफ़ाइल नाम",
     "profileCopyFrom": "इससे कॉपी करें",
     "profileDepth": "गहराई",
+    "profileTaskDecomposition": "नियंत्रित कार्य विघटन",
+    "profileTaskDecompositionSource": "प्रभावी स्रोत",
     "profilePolicyRequired": "आवश्यक",
     "profilePolicyAuto": "ट्रिगर पर",
     "profilePolicyDisabled": "अक्षम",

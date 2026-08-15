@@ -93,6 +93,8 @@
     "profileName": "配置档名称",
     "profileCopyFrom": "复制自",
     "profileDepth": "深度",
+    "profileTaskDecomposition": "受控任务分解",
+    "profileTaskDecompositionSource": "有效来源",
     "profilePolicyRequired": "必需",
     "profilePolicyAuto": "按触发器",
     "profilePolicyDisabled": "已停用",

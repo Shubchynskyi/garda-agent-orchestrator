@@ -93,6 +93,8 @@
     "profileName": "প্রোফাইলের নাম",
     "profileCopyFrom": "যেখান থেকে কপি",
     "profileDepth": "গভীরতা",
+    "profileTaskDecomposition": "নিয়ন্ত্রিত টাস্ক বিভাজন",
+    "profileTaskDecompositionSource": "কার্যকর উৎস",
     "profilePolicyRequired": "আবশ্যক",
     "profilePolicyAuto": "ট্রিগার অনুযায়ী",
     "profilePolicyDisabled": "নিষ্ক্রিয়",

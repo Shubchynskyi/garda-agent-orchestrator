@@ -142,6 +142,7 @@ function renderProfilesHtml(
 ): string {
     const profilesNode = {
         innerHTML: '',
+        querySelector: () => null,
         querySelectorAll: () => []
     };
     const context = {
@@ -1057,6 +1058,11 @@ test('profiles tab renders required auto disabled policy controls without trigge
                 active: true,
                 description: 'Custom profile',
                 depth: 2,
+                task_decomposition: {
+                    enabled: false,
+                    configured: true,
+                    provenance: 'explicit_profile_config'
+                },
                 review_policy: {
                     code: true,
                     test: 'auto',
@@ -1146,6 +1152,10 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(russianHtml, /<option value="ignore">Принять без отдельной задачи<\/option>/u);
     assert.match(russianHtml, /<option value="custom" selected>Пользовательский<\/option>/u);
     assert.match(russianHtml, /Замечание сохраняется, но не блокирует задачу/u);
+    assert.match(html, /<span>Guarded task decomposition<\/span>/u);
+    assert.match(html, /<strong>Effective source:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(russianHtml, /<span>Контролируемая декомпозиция задач<\/span>/u);
+    assert.match(russianHtml, /<strong>Фактический источник:<\/strong> <code>explicit_profile_config<\/code>/u);
     assert.match(html, /class="empty profile-follow-up-task-profile-effective"><strong>Current value:<\/strong> <code>custom-review<\/code> \(Same as parent\)/u);
     assert.match(russianHtml, /class="empty profile-follow-up-task-profile-effective"><strong>Текущее значение:<\/strong> <code>custom-review<\/code> \(Как у родителя\)/u);
     assert.match(html, /data-profile-policy-action="copy" data-profile-name="custom-review"/u);
@@ -1159,6 +1169,7 @@ test('profiles tab renders required auto disabled policy controls without trigge
 test('follow-up task profile controls toggle fixed selection and serialize the selected mode', () => {
     type BrowserElement = {
         value: string;
+        checked: boolean;
         disabled: boolean;
         dataset: Record<string, string>;
         listeners: Record<string, () => void>;
@@ -1168,6 +1179,7 @@ test('follow-up task profile controls toggle fixed selection and serialize the s
     const profileName = 'balanced';
     const createElement = (value = ''): BrowserElement => ({
         value,
+        checked: false,
         disabled: false,
         dataset: {},
         listeners: {},
@@ -1178,12 +1190,14 @@ test('follow-up task profile controls toggle fixed selection and serialize the s
     });
     const description = createElement('Balanced profile');
     const depth = createElement('2');
+    const taskDecomposition = createElement();
     const mode = createElement('one_level_lighter');
     const fixedProfile = createElement('fast');
     fixedProfile.disabled = true;
     const elementsById: Record<string, BrowserElement> = {
         [`profile-${profileName}-description`]: description,
         [`profile-${profileName}-depth`]: depth,
+        [`profile-${profileName}-task-decomposition`]: taskDecomposition,
         [`profile-${profileName}-follow-up-mode`]: mode,
         [`profile-${profileName}-follow-up-fixed-profile`]: fixedProfile
     };
@@ -1224,10 +1238,12 @@ test('follow-up task profile controls toggle fixed selection and serialize the s
         mode: 'fixed_profile',
         fixed_profile: 'fast'
     });
+    assert.deepEqual(fixedPayload.task_decomposition, { enabled: false });
     assert.deepEqual(inheritedPayload.review_follow_up_policy.task_profile, {
         mode: 'inherit_parent',
         fixed_profile: null
     });
+    assert.deepEqual(inheritedPayload.task_decomposition, { enabled: false });
 });
 
 test('task detail renders skipped quality-check cadence as a neutral localized state', () => {

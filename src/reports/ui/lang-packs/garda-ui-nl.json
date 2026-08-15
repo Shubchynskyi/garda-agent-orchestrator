@@ -93,6 +93,8 @@
     "profileName": "Profielnaam",
     "profileCopyFrom": "Kopiëren van",
     "profileDepth": "Diepte",
+    "profileTaskDecomposition": "Beveiligde taakdecompositie",
+    "profileTaskDecompositionSource": "Effectieve bron",
     "profilePolicyRequired": "Verplicht",
     "profilePolicyAuto": "Op trigger",
     "profilePolicyDisabled": "Uitgeschakeld",

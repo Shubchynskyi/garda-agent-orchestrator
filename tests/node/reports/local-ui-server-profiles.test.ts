@@ -483,7 +483,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             profile_name: 'balanced',
             description: 'Locally edited balanced',
             depth: '1',
-            task_decomposition: { enabled: true },
+            task_decomposition: { enabled: false },
             review_policy: { code: true, test: true }
         };
         const saveBuiltInPreviewSha256 = await previewProfileAction(saveBuiltInPayload);
@@ -507,7 +507,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.depth, 1);
         assert.equal(
             JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.task_decomposition.enabled,
-            true
+            false
         );
 
         const localizedCreatePayload = {

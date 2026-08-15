@@ -13,8 +13,10 @@ import {
     buildReviewCoverageContract
 } from '../../../../src/gates/review/review-coverage-ledger';
 import {
-    buildReviewRemediationReviewContract
+    buildReviewRemediationReviewContract,
+    type ReviewRemediationReviewContract
 } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import { buildReviewerFindingsOutputTemplateJson } from '../../../../src/gates/review/reviewer-findings-prompt-contract';
 import {
     validateReviewFindingsContract
 } from '../../../../src/gates/review/review-findings-artifact-verdict';
@@ -274,6 +276,41 @@ test('validateReviewFindingsReport accepts empty findings only with complete cov
     assert.deepEqual(result.violations, []);
 });
 
+test('validateReviewFindingsReport authenticates complete DELTA execution coverage', () => {
+    const coverageContract = buildReviewCoverageContract({ reviewType: 'code', changedFiles: ['src/example.ts'] });
+    const reviewExecutionContract: ReviewRemediationReviewContract = {
+        ...INITIAL_REVIEW_EXECUTION_CONTRACT,
+        mode: 'DELTA',
+        source: 'remediation_delta',
+        contract_sha256: 'd'.repeat(64),
+        delta: {
+            origin_review_type: 'code', classification_sha256: HASH_A, current_snapshot_sha256: HASH_B,
+            required_delta_targets: ['src/example.ts'], required_delta_targets_sha256: HASH_A,
+            context_files: [], context_files_sha256: HASH_B
+        },
+        finding_reconciliation: {
+            ...INITIAL_REVIEW_EXECUTION_CONTRACT.finding_reconciliation,
+            resolvable_finding_ids: ['F-001'],
+            resolvable_finding_ids_sha256: HASH_A
+        }
+    };
+    const template = JSON.parse(buildReviewerFindingsOutputTemplateJson({
+        taskId: 'T-979-1', reviewType: 'code', reviewContextSha256: HASH_A,
+        treeStateSha256: HASH_B, coverageContract, reviewExecutionContract
+    }));
+    const report = validReport();
+    report.review_execution = template.review_execution;
+    const result = validateReviewFindingsReport(report, {
+        ...validationOptions,
+        expectedReviewExecutionContract: reviewExecutionContract
+    });
+    assert.equal(result.valid, true, result.violations.join('\n'));
+    assert.equal(result.review_execution_authentication, 'authenticated');
+    assert.deepEqual(result.report?.review_execution, {
+        mode: 'DELTA', contract_sha256: 'd'.repeat(64),
+        covered_delta_targets: ['src/example.ts'], inspected_prior_finding_ids: ['F-001']
+    });
+});
 test('validateReviewFindingsReport rejects missing authenticated execution contract before exposing execution claims', () => {
     const structuralOnly = validateReviewFindingsReport(validReport(), {
         ...validationOptions,

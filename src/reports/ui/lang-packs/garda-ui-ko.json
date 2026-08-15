@@ -93,6 +93,8 @@
     "profileName": "프로필 이름",
     "profileCopyFrom": "복사 원본",
     "profileDepth": "깊이",
+    "profileTaskDecomposition": "보호된 작업 분해",
+    "profileTaskDecompositionSource": "유효 소스",
     "profilePolicyRequired": "필수",
     "profilePolicyAuto": "트리거 시",
     "profilePolicyDisabled": "비활성화",

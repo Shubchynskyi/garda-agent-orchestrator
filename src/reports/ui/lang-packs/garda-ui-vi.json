@@ -93,6 +93,8 @@
     "profileName": "Tên hồ sơ",
     "profileCopyFrom": "Sao chép từ",
     "profileDepth": "Độ sâu",
+    "profileTaskDecomposition": "Phân rã tác vụ có kiểm soát",
+    "profileTaskDecompositionSource": "Nguồn hiệu lực",
     "profilePolicyRequired": "Bắt buộc",
     "profilePolicyAuto": "Theo kích hoạt",
     "profilePolicyDisabled": "Đã tắt",

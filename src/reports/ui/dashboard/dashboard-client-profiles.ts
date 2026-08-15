@@ -198,7 +198,7 @@ function renderAddProfileForm(payload, disabled) {
     + '</select></label>'
     + '<label><span>' + safe(t('descriptionColumn')) + '</span><input id="profile-new-description" type="text"' + disabledAttr + '></label>'
     + '<label><span>' + safe(t('profileDepth')) + '</span><select id="profile-new-depth"' + disabledAttr + '><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>'
-    + '<label><span>Guarded task decomposition</span><input id="profile-new-task-decomposition" type="checkbox"' + disabledAttr + '></label>'
+    + '<label><span>' + safe(t('profileTaskDecomposition')) + '</span><input id="profile-new-task-decomposition" type="checkbox"' + disabledAttr + '></label>'
     + '<button type="button" data-profile-action="create"' + (disabled ? ' disabled' : '') + '>' + safe(t('addProfile')) + '</button>'
     + '</section>';
 }
@@ -270,9 +270,9 @@ function renderProfileCard(profile, disabled) {
     + '<label><span>' + safe(t('profileDepth')) + '</span><select id="' + safe(profileInputId(profile.name, 'depth')) + '"' + disabledAttr + '>'
     + [1, 2, 3].map(depth => '<option value="' + depth + '"' + (Number(profile.depth) === depth ? ' selected' : '') + '>' + depth + '</option>').join('')
     + '</select></label>'
-    + '<label><span>Guarded task decomposition</span><input id="' + safe(profileInputId(profile.name, 'task-decomposition')) + '" type="checkbox"' + (profile.task_decomposition && profile.task_decomposition.enabled ? ' checked' : '') + disabledAttr + '></label>'
+    + '<label><span>' + safe(t('profileTaskDecomposition')) + '</span><input id="' + safe(profileInputId(profile.name, 'task-decomposition')) + '" type="checkbox"' + (profile.task_decomposition && profile.task_decomposition.enabled ? ' checked' : '') + disabledAttr + '></label>'
     + '</div>'
-    + '<p class="empty"><strong>Effective source:</strong> <code>' + safe(profile.task_decomposition ? profile.task_decomposition.provenance : 'unavailable') + '</code></p>'
+    + '<p class="empty"><strong>' + safe(t('profileTaskDecompositionSource')) + ':</strong> <code>' + safe(profile.task_decomposition ? profile.task_decomposition.provenance : 'unavailable') + '</code></p>'
     + renderFindingPolicySection(profile, disabled)
     + renderFollowUpTaskProfileSection(profile, disabled)
     + renderProfilePolicyGrid(profile, disabled)

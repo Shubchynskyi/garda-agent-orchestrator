@@ -93,6 +93,8 @@
     "profileName": "プロファイル名",
     "profileCopyFrom": "コピー元",
     "profileDepth": "深度",
+    "profileTaskDecomposition": "ガード付きタスク分解",
+    "profileTaskDecompositionSource": "有効なソース",
     "profilePolicyRequired": "必須",
     "profilePolicyAuto": "トリガー時",
     "profilePolicyDisabled": "無効",

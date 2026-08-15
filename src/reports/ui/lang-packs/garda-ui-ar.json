@@ -93,6 +93,8 @@
     "profileName": "اسم الملف الشخصي",
     "profileCopyFrom": "نسخ من",
     "profileDepth": "العمق",
+    "profileTaskDecomposition": "تقسيم المهام المحكوم",
+    "profileTaskDecompositionSource": "المصدر الفعلي",
     "profilePolicyRequired": "مطلوب",
     "profilePolicyAuto": "حسب المشغل",
     "profilePolicyDisabled": "معطل",
