@@ -231,6 +231,12 @@ export function validateReviewContextMaterializationSnapshot(
             !== expectations.currentReviewContextContractBindings.coverageContractSha256
         || currentBindings.ruleContextSha256
             !== expectations.currentReviewContextContractBindings.ruleContextSha256
+        || currentBindings.reviewExecutionContractSha256
+            !== expectations.currentReviewContextContractBindings.reviewExecutionContractSha256
+        || currentBindings.reviewExecutionMode
+            !== expectations.currentReviewContextContractBindings.reviewExecutionMode
+        || currentBindings.reviewExecutionFullScopeSha256
+            !== expectations.currentReviewContextContractBindings.reviewExecutionFullScopeSha256
     ) {
         return 'current review context contract bindings changed before reused evidence materialization';
     }
@@ -661,6 +667,12 @@ function attachReusedReviewFindingsReceiptEvidence(
         review_context_sha256: refreshedReceipt.reused_from_review_context_sha256 ?? refreshedReceipt.review_context_sha256,
         review_tree_state_sha256: refreshedReceipt.reused_from_review_tree_state_sha256 ?? refreshedReceipt.review_tree_state_sha256 ?? null,
         coverage_contract_sha256: report.coverage_ledger.coverage_contract_sha256,
+        review_execution_contract_sha256:
+            (refreshedReceipt as unknown as Record<string, unknown>).review_execution_contract_sha256 ?? null,
+        review_execution_mode:
+            (refreshedReceipt as unknown as Record<string, unknown>).review_execution_mode ?? null,
+        review_execution_full_scope_sha256:
+            (refreshedReceipt as unknown as Record<string, unknown>).review_execution_full_scope_sha256 ?? null,
         reviewer_identity: refreshedReceipt.reviewer_identity,
         reviewer_provenance_event_sha256: refreshedReceipt.reviewer_provenance?.event_sha256 ?? null
     };
@@ -714,6 +726,10 @@ function buildReusedReviewReceipt(
         reusedFromCodeScopeSha256: options.expectedCodeScopeSha256,
         reusedFromDomainScopeFingerprints: normalizeDomainScopeFingerprints(options.receipt.domain_scope_fingerprints)
     });
+    const refreshedReceiptRecord = refreshedReceipt as unknown as Record<string, unknown>;
+    refreshedReceiptRecord.review_execution_contract_sha256 = contractBindings.reviewExecutionContractSha256;
+    refreshedReceiptRecord.review_execution_mode = contractBindings.reviewExecutionMode;
+    refreshedReceiptRecord.review_execution_full_scope_sha256 = contractBindings.reviewExecutionFullScopeSha256;
     if (isCustomReviewLaneInSnapshot(options.preflightPayload, options.reviewType)) {
         Object.assign(
             refreshedReceipt,

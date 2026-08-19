@@ -10,6 +10,7 @@ import {
     computeReviewContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
+    getReviewContextReuseContractBindingMismatch,
     resolveReviewContextReuseContractBindings
 } from '../../../../src/gates/review-reuse';
 import { stringSha256 } from '../../../../src/gate-runtime/hash';
@@ -399,6 +400,11 @@ describe('gates/review-reuse', () => {
             coverage_contract: {
                 contract_sha256: '2'.repeat(64)
             },
+            review_execution: {
+                mode: 'FULL',
+                contract_sha256: '3'.repeat(64),
+                full_review_scope_sha256: '4'.repeat(64)
+            },
             scoped_diff: {
                 expected: true,
                 metadata: {
@@ -482,14 +488,50 @@ describe('gates/review-reuse', () => {
                 contract_sha256: '4'.repeat(64)
             }
         };
+        const changedExecutionMode = {
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                mode: 'DELTA'
+            }
+        };
+        const changedExecutionScope = {
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                full_review_scope_sha256: '5'.repeat(64)
+            }
+        };
+        const changedExecutionDecisionOnly = {
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                contract_sha256: '6'.repeat(64)
+            }
+        };
 
         assert.equal(computeReviewContextReuseHash(refreshedContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedDiffContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedRuleContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedCoverageContract), computeReviewContextReuseHash(baseContext));
+        assert.notEqual(computeReviewContextReuseHash(changedExecutionMode), computeReviewContextReuseHash(baseContext));
+        assert.notEqual(computeReviewContextReuseHash(changedExecutionScope), computeReviewContextReuseHash(baseContext));
+        assert.equal(
+            computeReviewContextReuseHash(changedExecutionDecisionOnly),
+            computeReviewContextReuseHash(baseContext),
+            'FULL remediation may carry a new decision hash while preserving the exhaustive scope contract'
+        );
+
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewContextReuseContractBindings(baseContext),
+                resolveReviewContextReuseContractBindings(changedExecutionMode)
+            ) || '',
+            /review execution mode does not match/u
+        );
     });
 
-    it('rejects review-context drift between reuse validation and evidence materialization', () => {
+    it('rejects replaced review-context drift between reuse validation and evidence materialization', () => {
         const initialContext = {
             schema_version: 3,
             review_type: 'code',
@@ -503,6 +545,11 @@ describe('gates/review-reuse', () => {
             },
             coverage_contract: {
                 contract_sha256: 'c'.repeat(64)
+            },
+            review_execution: {
+                mode: 'FULL',
+                contract_sha256: 'e'.repeat(64),
+                full_review_scope_sha256: 'f'.repeat(64)
             }
         };
         const initialContextText = `${JSON.stringify(initialContext, null, 2)}\n`;
@@ -537,6 +584,26 @@ describe('gates/review-reuse', () => {
                 driftedContext
             ) || '',
             /current review context changed before reused evidence materialization/u
+        );
+
+        const forgedExecutionContext = {
+            ...initialContext,
+            review_execution: {
+                ...initialContext.review_execution,
+                contract_sha256: '1'.repeat(64)
+            }
+        };
+        const forgedExecutionContextText = `${JSON.stringify(forgedExecutionContext, null, 2)}\n`;
+        assert.match(
+            validateReviewContextMaterializationSnapshot(
+                {
+                    ...expectations,
+                    currentReviewContextSha256: stringSha256(forgedExecutionContextText)
+                },
+                forgedExecutionContextText,
+                forgedExecutionContext
+            ) || '',
+            /current review context contract bindings changed/u
         );
     });
 });

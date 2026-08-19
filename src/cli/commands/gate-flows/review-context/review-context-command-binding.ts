@@ -16,6 +16,10 @@ import type { ReviewContextSectionsResult } from '../../../../gate-runtime/revie
 import type { ReviewDependencyTimelineEvent } from '../../../../gates/review/review-dependencies';
 import type { TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION } from '../../../../gate-runtime/reviewer-session-contract';
+import type {
+    ReviewRemediationReviewContract,
+    ReviewRemediationReviewContractValidationAuthority
+} from '../../../../gates/review-remediation/review-remediation-review-contract';
 import {
     normalizePathValue,
     ensureDirectoryExists,
@@ -117,6 +121,9 @@ export interface BuildReviewContextCommandOptions {
     focusedRequiredTestPath?: unknown;
     reviewReuseBlockedReason?: unknown;
     remediationPreservedScopeMismatchReason?: unknown;
+    reviewExecutionContract?: ReviewRemediationReviewContract | null;
+    reviewExecutionValidationAuthority?: ReviewRemediationReviewContractValidationAuthority | null;
+    persistedRemediationReuseRequired?: boolean;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
     ruleFileContentCache?: Map<string, string> | null;
     telemetryLockTimeoutMs?: unknown;
@@ -140,6 +147,9 @@ export interface ResolvedBuildReviewContextCommandInputs {
     scopedDiffMetadataPath: string;
     focusedRequiredTestPath: string | null;
     reviewReuseBlockedReason: string;
+    reviewExecutionContract: ReviewRemediationReviewContract | null;
+    reviewExecutionValidationAuthority: ReviewRemediationReviewContractValidationAuthority | null;
+    persistedRemediationReuseRequired: boolean;
 }
 
 export function resolveBuildReviewContextCommandInputs(
@@ -227,7 +237,10 @@ export function resolveBuildReviewContextCommandInputs(
         outputPath,
         scopedDiffMetadataPath,
         focusedRequiredTestPath,
-        reviewReuseBlockedReason: String(options.reviewReuseBlockedReason || '').trim()
+        reviewReuseBlockedReason: String(options.reviewReuseBlockedReason || '').trim(),
+        reviewExecutionContract: options.reviewExecutionContract || null,
+        reviewExecutionValidationAuthority: options.reviewExecutionValidationAuthority || null,
+        persistedRemediationReuseRequired: options.persistedRemediationReuseRequired === true
     };
 }
 

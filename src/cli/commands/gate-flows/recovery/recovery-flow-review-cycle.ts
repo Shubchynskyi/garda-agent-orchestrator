@@ -43,6 +43,10 @@ import {
     type BuildReviewContextCommandResult
 } from '../../gate-build-handlers';
 import {
+    bindAuthoritativeRemediationDecisionToPreflight,
+    buildAuthenticatedRemediationReviewExecution
+} from '../review-context/review-context-flow';
+import {
     runHandshakeDiagnosticsCommand,
     runLoadRulePackCommand,
     runShellSmokePreflightCommand
@@ -635,15 +639,16 @@ export async function runRestartReviewCycleCommand(
                 reviewTriggerPolicy,
                 allowAuthenticatedDelta: false
             });
-            const authoritativeDecision = requireReadyAuthoritativeDecision(
-                resolveAuthoritativeReviewRemediationDecision({
+            const authoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+                requireReadyAuthoritativeDecision(resolveAuthoritativeReviewRemediationDecision({
                     taskId: resolvedTaskId,
                     currentReviewType: evidenceOnlyDecisionInputs.currentReviewType,
                     classification: evidenceOnlyDecisionInputs.classification,
                     requiredReviews,
                     reviewExecutionPolicyMode,
                     reviewDependencyGraph
-                })
+                })),
+                currentPreflightSha256
             );
             const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, previousPreflight);
             const evidenceOnlyRestartPlan = buildReviewEvidenceOnlyRestartPlan(
@@ -663,6 +668,7 @@ export async function runRestartReviewCycleCommand(
                 impact_analysis: remediationImpactAnalysis,
                 remediation_fix_classification: remediationFixClassification,
                 authoritative_review_decision: authoritativeDecision,
+                authoritative_review_classification: evidenceOnlyDecisionInputs.classification,
                 remediation_scope: {
                     status: scopeBoundary.status,
                     previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -710,6 +716,7 @@ export async function runRestartReviewCycleCommand(
                     invalidated_review_types: authoritativeDecision.invalidated_review_types,
                     preserved_review_types: authoritativeDecision.preserved_review_types,
                     authoritative_review_decision: authoritativeDecision,
+                    authoritative_review_classification: evidenceOnlyDecisionInputs.classification,
                     review_contexts_refresh_status: 'deferred_to_navigator',
                     review_execution_policy_mode: reviewExecutionPolicyMode,
                     prepared_review_types: [],
@@ -872,7 +879,7 @@ export async function runRestartReviewCycleCommand(
             reviewTriggerPolicy,
             allowAuthenticatedDelta: true
         });
-        const preliminaryAuthoritativeDecision = requireReadyAuthoritativeDecision(
+        const preliminaryAuthoritativeDecisionWithoutPreflight = requireReadyAuthoritativeDecision(
             resolveAuthoritativeReviewRemediationDecision({
                 taskId: resolvedTaskId,
                 currentReviewType: authoritativeDecisionInputs.currentReviewType,
@@ -882,8 +889,19 @@ export async function runRestartReviewCycleCommand(
                 reviewDependencyGraph
             })
         );
+        const refreshedPreflightSha256 = requireArtifactSha256(
+            refreshedPreflightPath,
+            'refreshed-preflight'
+        );
+        const preliminaryAuthoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+            preliminaryAuthoritativeDecisionWithoutPreflight,
+            refreshedPreflightSha256
+        );
         const preliminaryLaneDecisionByType = new Map(
             preliminaryAuthoritativeDecision.lane_decisions.map((decision) => [decision.review_type, decision])
+        );
+        const refreshedFullReviewScope = normalizeChangedFiles(
+            refreshedPreflight.preflight.changed_files as unknown[]
         );
         const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
         const sharedTokenEconomyConfigData: TokenEconomyConfig | null = (
@@ -918,12 +936,15 @@ export async function runRestartReviewCycleCommand(
                     if (!laneDecision) {
                         throw new Error(`Authoritative remediation decision is missing required lane '${reviewType}'.`);
                     }
-                    const reviewReuseBlockedReason = laneDecision.reuse_eligible
-                        ? ''
-                        : laneDecision.reason;
-                    const remediationPreservedScopeMismatchReason = laneDecision.reuse_eligible
-                        ? laneDecision.reason
-                        : '';
+                    const reviewExecution = buildAuthenticatedRemediationReviewExecution({
+                        taskId: resolvedTaskId,
+                        reviewType,
+                        preflightSha256: refreshedPreflightSha256,
+                        fullReviewScope: refreshedFullReviewScope,
+                        authoritativeDecision: preliminaryAuthoritativeDecision,
+                        authoritativeClassification: authoritativeDecisionInputs.classification,
+                        persistedDecisionSha256: preliminaryAuthoritativeDecision.decision_sha256
+                    });
                     const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(
                         refreshedPreflight.preflight,
                         reviewType
@@ -955,8 +976,8 @@ export async function runRestartReviewCycleCommand(
                         tokenEconomyConfigData: sharedTokenEconomyConfigData,
                         scopedDiffMetadataPath,
                         timelineEventsSummary: batchTimelineSummary,
-                        reviewReuseBlockedReason,
-                        remediationPreservedScopeMismatchReason,
+                        reviewExecutionContract: reviewExecution.contract,
+                        reviewExecutionValidationAuthority: reviewExecution.validationAuthority,
                         ruleContextSectionsCache: sharedRuleContextSectionsCache,
                         ruleFileContentCache: sharedRuleFileContentCache
                     });
@@ -1015,8 +1036,8 @@ export async function runRestartReviewCycleCommand(
             }
         }
 
-        const authoritativeDecision = requireReadyAuthoritativeDecision(
-            resolveAuthoritativeReviewRemediationDecision({
+        const authoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+            requireReadyAuthoritativeDecision(resolveAuthoritativeReviewRemediationDecision({
                 taskId: resolvedTaskId,
                 currentReviewType: authoritativeDecisionInputs.currentReviewType,
                 classification: authoritativeDecisionInputs.classification,
@@ -1024,9 +1045,71 @@ export async function runRestartReviewCycleCommand(
                 reviewExecutionPolicyMode,
                 reviewDependencyGraph,
                 reusableReceipts
-            })
+            })),
+            refreshedPreflightSha256
         );
         const reusedReviewTypes = authoritativeDecision.reused_review_types;
+        const finalLaneDecisionByType = new Map(
+            authoritativeDecision.lane_decisions.map((decision) => [decision.review_type, decision])
+        );
+
+        for (let index = 0; index < preparedResults.length; index += 1) {
+            const preparedResult = preparedResults[index];
+            if (!launchRequiredReviewTypes.includes(preparedResult.reviewType)) {
+                continue;
+            }
+            const laneDecision = finalLaneDecisionByType.get(preparedResult.reviewType);
+            if (!laneDecision || laneDecision.mode === 'REUSE') {
+                throw new Error(
+                    `Final authoritative remediation decision has no executable FULL/DELTA lane `
+                    + `'${preparedResult.reviewType}'.`
+                );
+            }
+            const reviewExecution = buildAuthenticatedRemediationReviewExecution({
+                taskId: resolvedTaskId,
+                reviewType: preparedResult.reviewType,
+                preflightSha256: refreshedPreflightSha256,
+                fullReviewScope: refreshedFullReviewScope,
+                authoritativeDecision,
+                authoritativeClassification: authoritativeDecisionInputs.classification,
+                persistedDecisionSha256: authoritativeDecision.decision_sha256
+            });
+            const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(
+                refreshedPreflight.preflight,
+                preparedResult.reviewType
+            ).expectedScopedDiff;
+            preparedResults[index] = await runBuildReviewContextCommand({
+                repoRoot,
+                reviewType: preparedResult.reviewType,
+                depth: String(effectiveDepth),
+                preflightPath: refreshedPreflightPath,
+                preflightPayload: refreshedPreflight.preflight,
+                taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+                taskModeEvidence: previousTaskMode,
+                runtimeReviewerIdentity: sharedRuntimeReviewerIdentity,
+                tokenEconomyConfigPath: sharedTokenEconomyConfigPath,
+                tokenEconomyConfigData: sharedTokenEconomyConfigData,
+                scopedDiffMetadataPath: scopedDiffExpected
+                    ? resolveScopedDiffMetadataPath(
+                        '',
+                        refreshedPreflightPath,
+                        preparedResult.reviewType,
+                        repoRoot
+                    )
+                    : '',
+                timelineEventsSummary: readTimelineEventsSummary(
+                    gateHelpers.joinOrchestratorPath(
+                        repoRoot,
+                        path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`)
+                    )
+                ),
+                reviewReuseBlockedReason: laneDecision.reason,
+                reviewExecutionContract: reviewExecution.contract,
+                reviewExecutionValidationAuthority: reviewExecution.validationAuthority,
+                ruleContextSectionsCache: sharedRuleContextSectionsCache,
+                ruleFileContentCache: sharedRuleFileContentCache
+            });
+        }
 
         const pendingOnTrustBoundaryPrerequisite = pendingReason?.includes(
             'Review context cannot be built because required trust-boundary analysis is'
@@ -1064,6 +1147,7 @@ export async function runRestartReviewCycleCommand(
             },
             remediation_fix_classification: remediationFixClassification,
             authoritative_review_decision: authoritativeDecision,
+            authoritative_review_classification: authoritativeDecisionInputs.classification,
             remediation_scope: {
                 status: scopeBoundary.status,
                 previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -1117,6 +1201,7 @@ export async function runRestartReviewCycleCommand(
                 invalidated_review_types: authoritativeDecision.invalidated_review_types,
                 preserved_review_types: authoritativeDecision.preserved_review_types,
                 authoritative_review_decision: authoritativeDecision,
+                authoritative_review_classification: authoritativeDecisionInputs.classification,
                 review_contexts_refresh_status: reviewContextsRefreshStatus,
                 review_execution_policy_mode: reviewExecutionPolicyMode,
                 prepared_review_types: preparedResults.map((result) => result.reviewType),

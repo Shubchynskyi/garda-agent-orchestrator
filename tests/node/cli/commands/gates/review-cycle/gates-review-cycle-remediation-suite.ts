@@ -40,29 +40,19 @@ import {
 import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
 import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-remediation';
 import { buildReviewEvidenceOnlyRestartPlan } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-review-cycle';
+import {
+    bindAuthoritativeRemediationDecisionToPreflight,
+    buildAuthenticatedRemediationReviewExecution
+} from '../../../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
+import {
+    resolveAuthoritativeReviewRemediationDecision
+} from '../../../../../../src/gates/review-remediation/review-remediation-recovery-routing';
 import { compileReviewDependencyGraph } from '../../../../../../src/core/review-dependency-graph';
 
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
 const REMEDIATION_PART_ENV = 'GARDA_REVIEW_CYCLE_REMEDIATION_PART';
 const SHARED_IGNORED_CHANGELOG_TASK_ID = 'T-940-ignored-changelog-shared';
-
-type RemediationPart =
-    | 'reuse-basic'
-    | 'reuse-policy'
-    | 'scope-expansion'
-    | 'ignored-changelog-binding'
-    | 'ignored-changelog-guards';
-
-function describeRemediationPart(
-    part: RemediationPart,
-    name: string,
-    suite: () => void
-): void {
-    if (process.env[REMEDIATION_PART_ENV] === part) {
-        describe(name, suite);
-    }
-}
 
 function seedBaselineCompileGatePass(options: {
     repoRoot: string;
@@ -105,6 +95,71 @@ function buildIgnoredChangelogImpactAnalysis(changelogPath = IGNORED_CHANGELOG_P
         'Related blockers/follow-up: no separate follow-up is needed for this same failed-review blocker.'
     ].join(' ');
 }
+
+describe('cli/commands/gates – authenticated remediation execution persistence', {
+    skip: Boolean(process.env[REMEDIATION_PART_ENV])
+}, () => {
+    it('reloads origin and non-origin FULL authority and rejects forged persisted remediation authority', () => {
+        const taskId = 'T-992-3-2-persisted-authority';
+        const preflightSha256 = 'a'.repeat(64);
+        const fullReviewScope = ['src/app.ts', 'tests/app.test.ts'];
+        const classification = {
+            source: 'runtime_fix' as const,
+            classification: {
+                category: 'production',
+                reason: 'Production remediation invalidates origin and downstream lanes.',
+                blocked_before_reuse: false,
+                invalidated_review_types: ['code', 'security']
+            }
+        };
+        const decision = bindAuthoritativeRemediationDecisionToPreflight(
+            resolveAuthoritativeReviewRemediationDecision({
+                taskId,
+                currentReviewType: 'code',
+                classification,
+                requiredReviews: { code: true, security: true },
+                reviewExecutionPolicyMode: 'strict_sequential'
+            }),
+            preflightSha256
+        );
+        const persistedDecision = JSON.parse(JSON.stringify(decision)) as typeof decision;
+        const originExecution = buildAuthenticatedRemediationReviewExecution({
+            taskId,
+            reviewType: 'code',
+            preflightSha256,
+            fullReviewScope,
+            authoritativeDecision: persistedDecision,
+            authoritativeClassification: classification
+        });
+        const nonOriginExecution = buildAuthenticatedRemediationReviewExecution({
+            taskId,
+            reviewType: 'security',
+            preflightSha256,
+            fullReviewScope,
+            authoritativeDecision: persistedDecision,
+            authoritativeClassification: classification
+        });
+
+        assert.equal(originExecution.contract.mode, 'FULL');
+        assert.equal(nonOriginExecution.contract.mode, 'FULL');
+        assert.equal(originExecution.contract.authoritative_decision_sha256, decision.decision_sha256);
+        assert.equal(nonOriginExecution.contract.authoritative_decision_sha256, decision.decision_sha256);
+
+        const forgedDecision = JSON.parse(JSON.stringify(persistedDecision)) as typeof persistedDecision;
+        forgedDecision.lane_decisions[1].mode = 'REUSE';
+        assert.throws(
+            () => buildAuthenticatedRemediationReviewExecution({
+                taskId,
+                reviewType: 'security',
+                preflightSha256,
+                fullReviewScope,
+                authoritativeDecision: forgedDecision,
+                authoritativeClassification: classification
+            }),
+            /persisted authoritative remediation decision is invalid.*hash is invalid/iu
+        );
+    });
+});
 
 interface IgnoredChangelogTemplate {
     readonly repoRoot: string;
@@ -392,8 +447,10 @@ async function resumeReviewReuseAfterChecklist(
     return { reusedReviewTypes, launchRequiredReviewTypes };
 }
 
-describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle remediation reuse basics', () => {
-    it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
+describe('cli/commands/gates – review-cycle remediation reuse basics', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'reuse-basic'
+}, () => {
+    it('restart-review-cycle reuses unaffected lanes and rejects forged persisted remediation authority', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
         seedRemediationRepoBase(repoRoot);
@@ -513,6 +570,29 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
             false
         );
 
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const authoritativeDecision = remediationArtifact.authoritative_review_decision as Record<string, unknown>;
+        const authoritativeClassification = remediationArtifact.authoritative_review_classification as Record<string, unknown>;
+        assert.equal(authoritativeClassification.source, 'runtime_fix');
+        assert.equal(
+            (authoritativeClassification.classification as Record<string, unknown>).category,
+            'test_hook_isolation'
+        );
+        const codeReviewContext = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const codeReviewExecution = codeReviewContext.review_execution as Record<string, unknown>;
+        assert.equal(codeReviewExecution.mode, 'FULL');
+        assert.equal(codeReviewExecution.source, 'remediation_full');
+        assert.equal(
+            codeReviewExecution.authoritative_decision_sha256,
+            authoritativeDecision.decision_sha256
+        );
+
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const handshakeIndexes = events.reduce<number[]>((indexes, event, index) => {
             if (event.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED') {
@@ -534,6 +614,11 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         ));
         const lastHandshakeIndex = handshakeIndexes.at(-1) ?? -1;
         const lastShellSmokeIndex = shellSmokeIndexes.at(-1) ?? -1;
+        const restartEvent = events.find((event) => event.event_type === 'REVIEW_CYCLE_RESTARTED');
+        assert.deepEqual(
+            (restartEvent?.details as Record<string, unknown>)?.authoritative_review_classification,
+            authoritativeClassification
+        );
         assert.ok(lastCompileIndex >= 0);
         assert.equal(handshakeIndexes.length, 2);
         assert.equal(shellSmokeIndexes.length, 2);
@@ -590,7 +675,11 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         assert.ok(restartLineIndex >= 0);
         const tamperedRestartEvent = JSON.parse(timelineLines[restartLineIndex]) as Record<string, unknown>;
         const tamperedRestartDetails = tamperedRestartEvent.details as Record<string, unknown>;
-        tamperedRestartDetails.remediation_category = 'forged_preserved_scope';
+        const tamperedAuthoritativeClassification =
+            tamperedRestartDetails.authoritative_review_classification as Record<string, unknown>;
+        const tamperedRuntimeClassification =
+            tamperedAuthoritativeClassification.classification as Record<string, unknown>;
+        tamperedRuntimeClassification.category = 'forged_preserved_scope';
         timelineLines[restartLineIndex] = JSON.stringify(tamperedRestartEvent);
         fs.writeFileSync(timelinePath, `${timelineLines.join('\n')}\n`, 'utf8');
 
@@ -1221,7 +1310,9 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
 
 });
 
-describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle remediation reuse policy', () => {
+describe('cli/commands/gates – review-cycle remediation reuse policy', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'reuse-policy'
+}, () => {
     it('review-evidence-only restart ignores an unchanged dirty-workspace baseline file', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-review-evidence-only-dirty-baseline';
@@ -2379,7 +2470,9 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
 
 });
 
-describeRemediationPart('scope-expansion', 'cli/commands/gates – review-cycle remediation scope expansion', () => {
+describe('cli/commands/gates – review-cycle remediation scope expansion', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'scope-expansion'
+}, () => {
     it('restart-review-cycle preserves previous source scope when explicit refresh lists only test remediation', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-explicit-subset';
@@ -2711,7 +2804,9 @@ describeRemediationPart('scope-expansion', 'cli/commands/gates – review-cycle 
 
 });
 
-describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ignored changelog remediation binding', () => {
+describe('cli/commands/gates – ignored changelog remediation binding', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'ignored-changelog-binding'
+}, () => {
     it('restart-review-cycle accepts an explicit ignored changelog remediation target named by the blocker', { concurrency: false }, async () => {
         const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
@@ -3090,7 +3185,9 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
 
 });
 
-describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – ignored changelog remediation guards', () => {
+describe('cli/commands/gates – ignored changelog remediation guards', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'ignored-changelog-guards'
+}, () => {
     it('restart-review-cycle rejects ignored paths mentioned only as failed-review diagnostics', { concurrency: false }, async () => {
         const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
