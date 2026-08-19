@@ -11,7 +11,8 @@ import {
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     getReviewContextReuseContractBindingMismatch,
-    resolveReviewContextReuseContractBindings
+    resolveReviewContextReuseContractBindings,
+    resolveReviewReceiptReuseContractBindings
 } from '../../../../src/gates/review-reuse';
 import { stringSha256 } from '../../../../src/gate-runtime/hash';
 import {
@@ -528,6 +529,59 @@ describe('gates/review-reuse', () => {
                 resolveReviewContextReuseContractBindings(changedExecutionMode)
             ) || '',
             /review execution mode does not match/u
+        );
+
+        const currentDeltaBindings = resolveReviewContextReuseContractBindings({
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                mode: 'DELTA',
+                contract_sha256: '6'.repeat(64)
+            }
+        });
+        const validDeltaReceipt = {
+            review_coverage_contract_sha256: currentDeltaBindings.coverageContractSha256,
+            review_rule_context_sha256: currentDeltaBindings.ruleContextSha256,
+            review_execution_mode: 'DELTA',
+            review_execution_contract_sha256: currentDeltaBindings.reviewExecutionContractSha256,
+            review_execution_full_scope_sha256: currentDeltaBindings.reviewExecutionFullScopeSha256
+        };
+        assert.equal(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings(validDeltaReceipt),
+                currentDeltaBindings
+            ),
+            null
+        );
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings({
+                    ...validDeltaReceipt,
+                    review_execution_contract_sha256: '7'.repeat(64)
+                }),
+                currentDeltaBindings
+            ) || '',
+            /reused DELTA review execution contract does not match/u
+        );
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings({
+                    ...validDeltaReceipt,
+                    review_execution_full_scope_sha256: '8'.repeat(64)
+                }),
+                currentDeltaBindings
+            ) || '',
+            /reused review execution full scope does not match/u
+        );
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings({
+                    ...validDeltaReceipt,
+                    review_execution_mode: undefined
+                }),
+                currentDeltaBindings
+            ) || '',
+            /reused review execution mode is missing for a current DELTA/u
         );
     });
 
