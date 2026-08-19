@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { isPlainRecord } from '../../core/records';
 import type { ReviewReceipt } from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
 import { fileSha256, normalizePath } from '../shared/helpers';
@@ -9,6 +10,10 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../review-remediation/review-remediation-execution-authority';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
 import {
     getReviewLaneArtifactEvidenceViolations,
     isCustomReviewLaneInSnapshot
@@ -165,6 +170,20 @@ export function collectRequiredReviewEvidence(input: {
                     const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
                     if (parsedReviewContext && typeof parsedReviewContext === 'object' && !Array.isArray(parsedReviewContext)) {
                         reviewContext = parsedReviewContext as Record<string, unknown>;
+                        const diffExpectations = buildReviewContextPreflightDiffExpectations(input.preflight, reviewKey);
+                        const reviewExecution = isPlainRecord(reviewContext.review_execution)
+                            ? reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+                            : null;
+                        const reviewExecutionValidationAuthority = reviewExecution
+                            ? resolvePersistedRemediationReviewExecutionAuthority({
+                                reviewsRoot: input.reviewsRoot,
+                                taskId: input.taskId,
+                                reviewType: reviewKey,
+                                preflightSha256: input.preflightSha256,
+                                fullReviewScope: diffExpectations.expectedChangedFiles,
+                                reviewExecution
+                            })
+                            : null;
                         input.errors.push(...getReviewContextContractViolations({
                             contextPath: reviewContextPath,
                             reviewContext,
@@ -178,7 +197,8 @@ export function collectRequiredReviewEvidence(input: {
                             requirePreflightSha256: true,
                             expectedPreflightPayload: input.preflight,
                             repoRoot,
-                            ...buildReviewContextPreflightDiffExpectations(input.preflight, reviewKey)
+                            expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
+                            ...diffExpectations
                         }));
                     }
                 } catch {

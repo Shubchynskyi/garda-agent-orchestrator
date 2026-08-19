@@ -1,4 +1,7 @@
 // Extracted from required-reviews-check.ts; keep behavior changes in the facade tests.
+import * as path from 'node:path';
+
+import { isPlainRecord } from '../../core/records';
 import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../core/orchestration-constants';
 import {
     auditReviewArtifactCompaction,
@@ -15,6 +18,10 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../review-remediation/review-remediation-execution-authority';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
 import {
     getReviewLaneArtifactEvidenceViolations,
     isCustomReviewLaneInSnapshot
@@ -207,8 +214,25 @@ export function validateReviewArtifactGateEligibility(options: {
             const diffExpectations = buildReviewContextPreflightDiffExpectations(preflightPayload, reviewKey);
             laneDomainPreflightBindingAllowed = options.allowLaneDomainPreflightBinding === true
                 && reviewContextLaneScopeMatchesCurrentPreflight(reviewKey, reviewContext || null, preflightPayload);
+            const reviewContextPath = reviewArtifact.reviewContextPath
+                || artifactPath.replace(/\.md$/, '-review-context.json');
+            const reviewExecution = isPlainRecord(reviewContext?.review_execution)
+                ? reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+                : null;
+            const reviewExecutionValidationAuthority = reviewExecution
+                && resolvedTaskId
+                && options.preflightSha256
+                ? resolvePersistedRemediationReviewExecutionAuthority({
+                    reviewsRoot: path.dirname(reviewContextPath),
+                    taskId: resolvedTaskId,
+                    reviewType: reviewKey,
+                    preflightSha256: options.preflightSha256,
+                    fullReviewScope: diffExpectations.expectedChangedFiles,
+                    reviewExecution
+                })
+                : null;
             errors.push(...getReviewContextContractViolations({
-                contextPath: reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json'),
+                contextPath: reviewContextPath,
                 reviewContext: reviewContext || null,
                 expectedTaskId: resolvedTaskId,
                 expectedReviewType: reviewKey,
@@ -222,6 +246,7 @@ export function validateReviewArtifactGateEligibility(options: {
                 expectedChangedFiles: laneDomainPreflightBindingAllowed ? [] : diffExpectations.expectedChangedFiles,
                 expectedPreflightPayload: preflightPayload,
                 repoRoot: options.repoRoot || null,
+                expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
                 expectedChangedFilesSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedChangedFilesSha256,
                 expectedScopeContentSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeContentSha256,
                 expectedScopeSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeSha256,
@@ -240,7 +265,7 @@ export function validateReviewArtifactGateEligibility(options: {
                 );
             }
             if (repoRoot && reviewContext) {
-                const contextPath = reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json');
+                const contextPath = reviewContextPath;
                 try {
                     assertReviewTreeStateFresh({
                         repoRoot,

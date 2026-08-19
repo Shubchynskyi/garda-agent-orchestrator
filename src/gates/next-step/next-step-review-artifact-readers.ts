@@ -21,6 +21,10 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../review-remediation/review-remediation-execution-authority';
 import {
     getReviewContextFullSuiteValidationViolations
 } from '../review-context/review-context-validation-evidence';
@@ -687,6 +691,23 @@ export function readReviewArtifactState(
                 && contextPreflightPath.toLowerCase() === expectedPreflightPath.toLowerCase()
                 && contextPreflightHash === expectedPreflightHash
             ) {
+                const preflightDiffExpectations = buildReviewContextPreflightDiffExpectations(
+                    preflightPayload,
+                    reviewType
+                );
+                const reviewExecution = isPlainRecord(context.review_execution)
+                    ? context.review_execution as unknown as ReviewRemediationReviewContract
+                    : null;
+                const reviewExecutionValidationAuthority = reviewExecution && repoRoot
+                    ? resolvePersistedRemediationReviewExecutionAuthority({
+                        reviewsRoot,
+                        taskId,
+                        reviewType,
+                        preflightSha256: expectedPreflightHash,
+                        fullReviewScope: preflightDiffExpectations.expectedChangedFiles,
+                        reviewExecution
+                    })
+                    : null;
                 const contractViolations = getReviewContextContractViolations({
                     contextPath,
                     reviewContext: context,
@@ -700,7 +721,8 @@ export function readReviewArtifactState(
                     requirePreflightSha256: true,
                     expectedPreflightPayload: preflightPayload,
                     repoRoot: repoRoot || null,
-                    ...buildReviewContextPreflightDiffExpectations(preflightPayload, reviewType)
+                    expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
+                    ...preflightDiffExpectations
                 });
                 const fullSuiteBindingViolations = repoRoot
                     ? getReviewContextFullSuiteValidationViolations({

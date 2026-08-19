@@ -1,3 +1,6 @@
+import * as path from 'node:path';
+
+import { isPlainRecord } from '../../../../core/records';
 import {
     normalizeCompatibilityReviewerExecutionMode
 } from '../../../../gate-runtime/review-context';
@@ -12,6 +15,12 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../../gates/review-context/review-context-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../../../../gates/review-remediation/review-remediation-execution-authority';
+import type {
+    ReviewRemediationReviewContract
+} from '../../../../gates/review-remediation/review-remediation-review-contract';
 import {
     getReviewContextFullSuiteValidationViolations
 } from '../../../../gates/review-context/review-context-validation-evidence';
@@ -105,6 +114,19 @@ export function assertReviewContextContractOrThrow(options: {
     const diffExpectations = buildReviewContextPreflightDiffExpectations(options.preflightPayload, options.reviewType);
     const requireStrictBindingMetadata = options.requireStrictBindingMetadata === true
         || diffExpectations.expectedRequiredReview;
+    const reviewExecution = isPlainRecord(options.reviewContext?.review_execution)
+        ? options.reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+        : null;
+    const reviewExecutionValidationAuthority = reviewExecution && options.preflightSha256
+        ? resolvePersistedRemediationReviewExecutionAuthority({
+            reviewsRoot: path.dirname(options.contextPath),
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            preflightSha256: options.preflightSha256,
+            fullReviewScope: diffExpectations.expectedChangedFiles,
+            reviewExecution
+        })
+        : null;
     const violations = getReviewContextContractViolations({
         contextPath: options.contextPath,
         reviewContext: options.reviewContext,
@@ -118,6 +140,7 @@ export function assertReviewContextContractOrThrow(options: {
         requirePreflightSha256: requireStrictBindingMetadata,
         expectedPreflightPayload: options.preflightPayload,
         repoRoot: options.repoRoot || null,
+        expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
         ...diffExpectations
     });
     if (options.repoRoot) {
