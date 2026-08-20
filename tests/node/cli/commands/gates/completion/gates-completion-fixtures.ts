@@ -51,6 +51,9 @@ import {
     initializeGitRepo as initializeCanonicalGitRepo,
     initializeGitRepoWithMaterializedScope,
     prepareReviewDiffFixture as prepareCanonicalReviewDiffFixture,
+    bindFixtureEffectiveReviewSnapshot,
+    writeBalancedProfilesConfig,
+    writePreflight as writeCanonicalPreflight,
     writeReceiptBackedReviewArtifact as writeCanonicalReceiptBackedReviewArtifact
 } from '../../gate-test-helpers';
 import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
@@ -207,6 +210,7 @@ function createTempRepo(): string {
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     seedProjectMemoryOffWorkflowConfig(root);
+    writeBalancedProfilesConfig(root);
     writeProtectedControlPlaneManifest(root);
     return root;
 }
@@ -437,7 +441,23 @@ function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]
             : [];
         initializeGitRepoWithMaterializedScope(repoRoot, changedFiles);
     }
-    return runEnterTaskModeCommand(resolvedOptions);
+    const result = runEnterTaskModeCommand(resolvedOptions);
+    assert.equal(result.exitCode, 0, JSON.stringify(result, null, 2));
+    const taskId = String(resolvedOptions.taskId || '').trim();
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (taskId && fs.existsSync(preflightPath)) {
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        delete preflight.effective_review_snapshot;
+        fs.writeFileSync(preflightPath, `${JSON.stringify(preflight, null, 2)}\n`, 'utf8');
+        bindFixtureEffectiveReviewSnapshot(
+            repoRoot,
+            taskId,
+            'code',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`)
+        );
+    }
+    return result;
 }
 
 function seedRuleFiles(repoRoot: string): void {
@@ -497,44 +517,10 @@ function writePreflight(
     overrides: Record<string, unknown> = {},
     outputFileName = `${taskId}-preflight.json`
 ): string {
-    const reviewsRoot = getReviewsRoot(repoRoot);
-    fs.mkdirSync(reviewsRoot, { recursive: true });
-    const preflightPath = path.join(reviewsRoot, outputFileName);
-    const payload = {
-        task_id: taskId,
-        detection_source: 'explicit_changed_files',
-        mode: 'FULL_PATH',
+    return writeCanonicalPreflight(repoRoot, taskId, {
         metrics: { changed_lines_total: 3 },
-        required_reviews: {
-            code: true,
-            db: false,
-            security: false,
-            refactor: false,
-            api: false,
-            test: false,
-            performance: false,
-            infra: false,
-            dependency: false
-        },
-        profile_policy_snapshot: {
-            review_finding_policy: {
-                schema_version: 1,
-                policy_id: 'balanced',
-                findings: {
-                    critical: 'fix_now',
-                    high: 'fix_now',
-                    medium: 'fix_now',
-                    low: 'create_follow_up'
-                },
-                residual_risk: 'create_follow_up'
-            }
-        },
-        triggers: {},
-        changed_files: ['src/app.ts'],
         ...overrides
-    };
-    fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
-    return preflightPath;
+    }, outputFileName);
 }
 
 function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
@@ -1214,7 +1200,7 @@ function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<
 }
 
 function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
-    return runLoadRulePackCommand({
+    const result = runLoadRulePackCommand({
         repoRoot,
         taskId,
         stage: 'TASK_ENTRY',
@@ -1228,6 +1214,8 @@ function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = 
         ],
         emitMetrics: false
     });
+    assert.equal(result.exitCode, 0, JSON.stringify(result, null, 2));
+    return result;
 }
 
 function loadPostPreflightRulePack(
@@ -1242,7 +1230,7 @@ function loadPostPreflightRulePack(
     if (ensurePreflightClassified) {
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
     }
-    return runLoadRulePackCommand({
+    const result = runLoadRulePackCommand({
         repoRoot,
         taskId,
         stage: 'POST_PREFLIGHT',
@@ -1261,6 +1249,8 @@ function loadPostPreflightRulePack(
         ],
         emitMetrics: false
     });
+    assert.equal(result.exitCode, 0, JSON.stringify(result, null, 2));
+    return result;
 }
 
 function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex') {

@@ -41,6 +41,7 @@ export {
     runEnterTaskMode,
     createReviewerRoutingFixture,
     resolveReviewerExecutionFixture,
+    bindFixtureEffectiveReviewSnapshot,
     writePreflight,
     prepareReviewDiffFixture,
     appendPreflightClassifiedEvent,

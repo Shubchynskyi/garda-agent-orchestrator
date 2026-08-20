@@ -241,6 +241,9 @@ describe('cli/commands/gates - review reuse remediation', () => {
         }, `${taskId}-prior-preflight.json`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+        const priorReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
 
         const preflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts', 'tests/app.test.ts'],
@@ -269,6 +272,28 @@ describe('cli/commands/gates - review reuse remediation', () => {
         });
         assert.equal(codeBuild.reusedReviewEvidence, true);
 
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.notEqual(
+            refreshedReceipt.review_execution_contract_sha256,
+            priorReceipt.review_execution_contract_sha256,
+            'fixture must exercise reuse across cycle-specific review execution contracts'
+        );
+        for (const field of [
+            'review_execution_mode',
+            'review_execution_contract_sha256',
+            'review_execution_full_scope_sha256',
+            'review_execution_complete_scope_lineage_sha256',
+            'review_execution_finding_reconciliation_sha256'
+        ]) {
+            assert.equal(
+                refreshedReceipt[`reused_from_${field}`],
+                priorReceipt[field],
+                `reused receipt must preserve historical ${field}`
+            );
+        }
+
         const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
         receipt.reused_from_review_context_reuse_sha256 = '9'.repeat(64);
@@ -286,6 +311,83 @@ describe('cli/commands/gates - review reuse remediation', () => {
         assert.ok(reviewResult.outputLines.some((line) => (
             line.includes("Review 'code' is missing current-cycle REVIEW_RECORDED reuse telemetry")
         )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects reused findings evidence without historical execution lineage', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-rejects-missing-historical-execution';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject reused findings evidence without historical execution lineage'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            priorPreflightPath,
+            reviewContextPath,
+            'agent:code-reviewer',
+            { omitReviewFindingsValidationExecutionBinding: true }
+        );
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, false, codeBuild.outputLines.join('\n'));
+        assert.ok(codeBuild.outputLines.some((line) => (
+            line.includes('review findings validation artifact execution binding is missing valid review_execution_mode')
+        )), codeBuild.outputLines.join('\n'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -395,6 +497,11 @@ describe('cli/commands/gates - review reuse remediation', () => {
         assert.equal(
             reviewResult.outputLines.some((line) => line.includes('Workspace changed after compile gate')),
             true
+        );
+        assert.equal(
+            reviewResult.outputLines.some((line) => line.includes('review findings validation artifact execution binding')),
+            false,
+            reviewResult.outputLines.join('\n')
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

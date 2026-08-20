@@ -25,6 +25,8 @@ export interface ReviewExecutionEvidenceBindings {
     review_execution_finding_reconciliation_sha256: string;
 }
 
+type ReviewExecutionEvidenceInput = Partial<Record<keyof ReviewExecutionEvidenceBindings, unknown>>;
+
 export interface ReviewContextExecutionEvidenceContractResult {
     required: boolean;
     bindings: ReviewExecutionEvidenceBindings | null;
@@ -208,9 +210,18 @@ export function getReviewExecutionEvidenceContractViolations(options: {
     if (!expected.bindings) {
         return expected.violations;
     }
-    const label = String(options.evidenceLabel || 'review evidence').trim();
-    const evidence = options.evidence;
-    const actual: Record<keyof ReviewExecutionEvidenceBindings, string | null> = {
+    return getReviewExecutionEvidenceBindingViolations({
+        expectedEvidence: expected.bindings,
+        evidence: options.evidence,
+        evidenceLabel: options.evidenceLabel,
+        expectedEvidenceLabel: 'the authenticated schema-4 review context'
+    });
+}
+
+function normalizeReviewExecutionEvidenceBindings(
+    evidence: ReviewExecutionEvidenceInput | null
+): Record<keyof ReviewExecutionEvidenceBindings, string | null> {
+    return {
         review_execution_mode: normalizeReviewExecutionMode(evidence?.review_execution_mode),
         review_execution_contract_sha256: normalizeReviewEvidenceSha256(evidence?.review_execution_contract_sha256),
         review_execution_full_scope_sha256: normalizeReviewEvidenceSha256(evidence?.review_execution_full_scope_sha256),
@@ -221,15 +232,31 @@ export function getReviewExecutionEvidenceContractViolations(options: {
             evidence?.review_execution_finding_reconciliation_sha256
         )
     };
+}
+
+export function getReviewExecutionEvidenceBindingViolations(options: {
+    expectedEvidence: ReviewExecutionEvidenceInput | null;
+    evidence: ReviewExecutionEvidenceInput | null;
+    evidenceLabel?: string;
+    expectedEvidenceLabel?: string;
+}): string[] {
+    const label = String(options.evidenceLabel || 'review evidence').trim();
+    const expectedLabel = String(options.expectedEvidenceLabel || 'the authenticated review execution evidence').trim();
+    const expected = normalizeReviewExecutionEvidenceBindings(options.expectedEvidence);
+    const actual = normalizeReviewExecutionEvidenceBindings(options.evidence);
     const violations: string[] = [];
-    for (const [field, expectedValue] of Object.entries(expected.bindings) as Array<
-        [keyof ReviewExecutionEvidenceBindings, string]
+    for (const [field, expectedValue] of Object.entries(expected) as Array<
+        [keyof ReviewExecutionEvidenceBindings, string | null]
     >) {
+        if (!expectedValue || (field !== 'review_execution_mode' && !/^[0-9a-f]{64}$/u.test(expectedValue))) {
+            violations.push(`${expectedLabel} is missing valid ${field}`);
+            continue;
+        }
         const actualValue = actual[field];
         if (!actualValue || (field !== 'review_execution_mode' && !/^[0-9a-f]{64}$/u.test(actualValue))) {
             violations.push(`${label} is missing valid ${field}`);
         } else if (actualValue !== expectedValue) {
-            violations.push(`${label} ${field} does not match the authenticated schema-4 review context`);
+            violations.push(`${label} ${field} does not match ${expectedLabel}`);
         }
     }
     return violations;

@@ -63,9 +63,10 @@ describe('profile config materialization migration', () => {
             user_profiles: {}
         };
         const legacy = structuredClone(template) as unknown as Record<string, unknown>;
-        delete (
-            (legacy.built_in_profiles as Record<string, Record<string, unknown>>).balanced
-        ).review_remediation_mode_policy;
+        const legacyBuiltIns = legacy.built_in_profiles as Record<string, Record<string, unknown>>;
+        legacyBuiltIns.BALANCED = legacyBuiltIns.balanced;
+        delete legacyBuiltIns.balanced;
+        delete legacyBuiltIns.BALANCED.review_remediation_mode_policy;
 
         const migrated = mergeProfilesConfigWithTemplate(template, legacy);
         assert.equal(

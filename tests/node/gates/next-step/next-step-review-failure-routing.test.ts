@@ -64,6 +64,8 @@ import {
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse/review-reuse';
 import { resolveReviewCoverageChangedFiles } from '../../../../src/gates/review-context/review-coverage-scope';
+import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
@@ -138,6 +140,7 @@ function populateTempRepo(repoRoot: string): void {
             balanced: {
                 description: 'Balanced test profile',
                 depth: 2,
+                task_decomposition: { enabled: false },
                 review_policy: { code: 'auto', test: 'auto' },
                 token_economy: {
                     enabled: true,
@@ -635,6 +638,12 @@ function writeReviewEvidence(
         reviewType,
         changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
     });
+    const reviewExecution = buildReviewRemediationReviewContract({
+        taskId,
+        reviewType,
+        preflightSha256: fileSha256(preflightPath),
+        fullReviewScope: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
+    });
     const reviewContext = {
         ...(options.contextSchemaVersion
             ? { schema_version: options.contextSchemaVersion }
@@ -645,6 +654,9 @@ function writeReviewEvidence(
         preflight_sha256: fileSha256(preflightPath),
         ...reviewContextScope,
         coverage_contract: coverageContract,
+        ...(Number(options.contextSchemaVersion || 0) >= 4
+            ? { review_execution: reviewExecution }
+            : {}),
         reviewer_routing: {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -825,6 +837,23 @@ function writeReviewEvidence(
     });
 }
 
+function resolveReviewExecutionFixture(reviewContext: Record<string, unknown>) {
+    const contract = reviewContext.review_execution as ReturnType<typeof buildReviewRemediationReviewContract>;
+    assert.ok(contract, 'Fixture review context must include review_execution.');
+    const evidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
+    assert.ok(evidence.bindings, evidence.violations.join('\n'));
+    return {
+        contract,
+        bindings: evidence.bindings,
+        declaration: {
+            mode: contract.mode,
+            contract_sha256: contract.contract_sha256,
+            covered_delta_targets: contract.delta?.required_delta_targets || [],
+            inspected_prior_finding_ids: contract.finding_reconciliation.resolvable_finding_ids
+        }
+    };
+}
+
 function writeJsonFocusedValidationReviewEvidence(
     repoRoot: string,
     taskId: string,
@@ -836,7 +865,7 @@ function writeJsonFocusedValidationReviewEvidence(
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'fail',
-        contextSchemaVersion: 3
+        contextSchemaVersion: 4
     });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
@@ -845,6 +874,7 @@ function writeJsonFocusedValidationReviewEvidence(
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveReviewExecutionFixture(reviewContext);
     assert.ok(coverageContract?.obligations?.length, 'fixture coverage contract must have obligations');
     const primaryObligation = coverageContract.obligations[0];
     const evidence = {
@@ -854,7 +884,7 @@ function writeJsonFocusedValidationReviewEvidence(
     const marker = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
     const markerField = options.markerField ?? 'title';
     const report = {
-        schema_version: 1,
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         review_context_sha256: fileSha256(reviewContextPath),
@@ -879,6 +909,7 @@ function writeJsonFocusedValidationReviewEvidence(
                 finding_ids: index === 0 ? ['F-000'] : []
             }))
         },
+        review_execution: reviewExecution.declaration,
         findings: {
             critical: [],
             high: [],
@@ -912,6 +943,7 @@ function writeJsonFocusedValidationReviewEvidence(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256,
         coverageContract,
+        expectedReviewExecutionContract: reviewExecution.contract,
         repoRoot
     });
     assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
@@ -948,6 +980,7 @@ function writeJsonFocusedValidationReviewEvidence(
     receipt.review_output_schema_version = findingsValidation.report?.schema_version ?? null;
     receipt.review_findings_report_sha256 = findingsValidation.report ? sha256Json(findingsValidation.report) : null;
     receipt.review_findings_report = findingsValidation.report;
+    Object.assign(receipt, reviewExecution.bindings);
     receipt.scope_sha256 = scopeSha256;
     receipt.review_scope_sha256 = reviewScopeSha256;
     receipt.code_scope_sha256 = codeScopeSha256;
@@ -971,6 +1004,7 @@ function writeJsonFocusedValidationReviewEvidence(
         review_artifact_sha256: artifactSha256,
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
+        ...reviewExecution.bindings,
         coverage_contract_sha256: coverageContract.contract_sha256,
         reviewer_identity: `agent:${reviewType}-reviewer`,
         reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
@@ -985,7 +1019,7 @@ function writeRejectedFindingsValidationReviewEvidence(
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
-        contextSchemaVersion: 3
+        contextSchemaVersion: 4
     });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
@@ -994,12 +1028,13 @@ function writeRejectedFindingsValidationReviewEvidence(
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveReviewExecutionFixture(reviewContext);
     const reviewContextSha256 = fileSha256(reviewContextPath);
     const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
     const metrics = preflight.metrics as Record<string, unknown> | undefined;
     const scopeSha256 = String(metrics?.scope_sha256 || metrics?.changed_files_sha256 || '').trim().toLowerCase() || null;
     const artifactText = `${JSON.stringify({
-        schema_version: 1,
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         review_context_sha256: reviewContextSha256,
@@ -1016,6 +1051,7 @@ function writeRejectedFindingsValidationReviewEvidence(
                 finding_ids: []
             }]
         },
+        review_execution: reviewExecution.declaration,
         findings: { critical: [], high: [], medium: [], low: [] },
         residual_risks: [],
         reviewer_notes: []
@@ -1028,6 +1064,7 @@ function writeRejectedFindingsValidationReviewEvidence(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256,
         coverageContract,
+        expectedReviewExecutionContract: reviewExecution.contract,
         repoRoot
     });
     assert.equal(validation.valid, false);
@@ -1061,7 +1098,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
-        contextSchemaVersion: 3
+        contextSchemaVersion: 4
     });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
@@ -1070,6 +1107,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveReviewExecutionFixture(reviewContext);
     const followUpFindingCount = options.followUpFindingCount ?? 1;
     const followUpFindingIds = Array.from({ length: followUpFindingCount }, (_, index) => `F-${String(index + 1).padStart(3, '0')}`);
     const followUpFindings = followUpFindingIds.map((findingId, index) => {
@@ -1088,7 +1126,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     const reviewContextSha256 = fileSha256(reviewContextPath);
     const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
     const artifactText = `${JSON.stringify({
-        schema_version: 1,
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         review_context_sha256: reviewContextSha256,
@@ -1113,6 +1151,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
                 finding_ids: followUpFindingIds[index] ? [followUpFindingIds[index]] : []
             }))
         },
+        review_execution: reviewExecution.declaration,
         findings: {
             critical: [],
             high: [],
@@ -1135,6 +1174,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256,
         coverageContract,
+        expectedReviewExecutionContract: reviewExecution.contract,
         repoRoot
     });
     assert.equal(validation.valid, true, validation.violations.join('\n'));
@@ -1188,6 +1228,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     receipt.review_output_schema_version = validation.report?.schema_version ?? null;
     receipt.review_findings_report_sha256 = validation.report ? sha256Json(validation.report) : null;
     receipt.review_findings_report = validation.report;
+    Object.assign(receipt, reviewExecution.bindings);
     receipt.scope_sha256 = scopeSha256;
     receipt.review_scope_sha256 = reviewScopeSha256;
     receipt.code_scope_sha256 = codeScopeSha256;
@@ -1228,6 +1269,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
         review_artifact_sha256: artifactSha256,
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
+        ...reviewExecution.bindings,
         coverage_contract_sha256: coverageContract.contract_sha256,
         reviewer_identity: `agent:${reviewType}-reviewer`,
         reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null

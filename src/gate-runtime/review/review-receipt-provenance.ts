@@ -39,6 +39,11 @@ export interface ReviewReceipt {
     reused_from_review_tree_state_sha256?: string | null;
     reused_from_review_scope_sha256?: string | null;
     reused_from_code_scope_sha256?: string | null;
+    reused_from_review_execution_mode?: 'FULL' | 'DELTA' | null;
+    reused_from_review_execution_contract_sha256?: string | null;
+    reused_from_review_execution_full_scope_sha256?: string | null;
+    reused_from_review_execution_complete_scope_lineage_sha256?: string | null;
+    reused_from_review_execution_finding_reconciliation_sha256?: string | null;
     reused_from_domain_scope_fingerprints?: DomainScopeFingerprints | null;
     recorded_at_utc: string;
     review_result_recorded_at_utc?: string | null;

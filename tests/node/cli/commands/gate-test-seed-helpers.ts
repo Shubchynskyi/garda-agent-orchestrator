@@ -39,6 +39,16 @@ import {
     validateReviewFindingsContract
 } from '../../../../src/gates/review/review-findings-artifact-verdict';
 import {
+    REVIEW_FINDINGS_SCHEMA_VERSION
+} from '../../../../src/gates/review/review-findings-schema';
+import {
+    resolveReviewContextExecutionEvidenceBindings
+} from '../../../../src/gates/review/review-evidence-contract';
+import {
+    type ReviewerRemediationCoverageDeclaration,
+    type ReviewRemediationReviewContract
+} from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath,
     getReviewFindingsValidationArtifactSnapshotPath,
@@ -63,6 +73,11 @@ import {
     buildReviewReceiptReviewerInvocationProvenance
 } from '../../../../src/gate-runtime/review-context';
 import {appendTaskEvent} from '../../../../src/gate-runtime/task-events';
+import {readReviewCatalogConfigFile} from '../../../../src/core/review-catalog';
+import {type ReviewCapabilitiesConfigMap} from '../../../../src/core/review-capabilities';
+import {buildEffectiveReviewSnapshot} from '../../../../src/policy/effective-review-snapshot';
+import {resolveProfileReviewCatalogPolicy} from '../../../../src/policy/profile-review-catalog-policy';
+import {type TaskProfilePolicySnapshot} from '../../../../src/policy/task-profile-policy-snapshot';
 
 import {getOrchestratorRoot, getReviewsRoot} from './gate-test-repo-bootstrap';
 
@@ -566,6 +581,15 @@ export function writePreflight(
         ...overrides
     };
     fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
+    if (!Object.prototype.hasOwnProperty.call(overrides, 'effective_review_snapshot')) {
+        bindFixtureEffectiveReviewSnapshot(
+            repoRoot,
+            taskId,
+            'code',
+            preflightPath,
+            path.join(reviewsRoot, `${taskId}-task-mode.json`)
+        );
+    }
     return preflightPath;
 }
 
@@ -968,6 +992,7 @@ function buildReceiptBackedReviewContextFixture(
         && fs.statSync(preflightPath).isFile()
         && options.allowLegacyManualReviewContext !== true
     ) {
+        bindFixtureEffectiveReviewSnapshot(repoRoot, taskId, reviewKey, preflightPath, '');
         prepareReviewDiffFixture(repoRoot, preflightPath);
         buildReviewContext({
             reviewType: reviewKey,
@@ -1262,12 +1287,30 @@ function attachFixtureFindingsDispositionEvidence(options: {
     };
 }
 
+function resolveFixtureReviewExecution(reviewContext: Record<string, unknown>): {
+    contract: ReviewRemediationReviewContract;
+    declaration: ReviewerRemediationCoverageDeclaration;
+} {
+    const contract = reviewContext.review_execution as ReviewRemediationReviewContract | undefined;
+    assert.ok(contract, 'Fixture review context is missing review_execution.');
+    return {
+        contract,
+        declaration: {
+            mode: contract.mode,
+            contract_sha256: contract.contract_sha256,
+            covered_delta_targets: contract.delta?.required_delta_targets || [],
+            inspected_prior_finding_ids: contract.finding_reconciliation.resolvable_finding_ids
+        }
+    };
+}
+
 function buildFixtureFindingsReport(options: {
     taskId: string;
     reviewKey: string;
     reviewContextSha256: string;
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
+    reviewExecution: ReviewerRemediationCoverageDeclaration;
     findingSeverity: 'critical' | 'high' | 'medium' | 'low' | null;
     findingDescription?: string;
     residualRisk?: boolean;
@@ -1296,7 +1339,7 @@ function buildFixtureFindingsReport(options: {
         }]
     };
     return {
-        schema_version: 1,
+        schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
         task_id: options.taskId,
         review_type: options.reviewKey,
         review_context_sha256: options.reviewContextSha256,
@@ -1323,6 +1366,7 @@ function buildFixtureFindingsReport(options: {
                 }))
                 : []
         },
+        review_execution: options.reviewExecution,
         findings: {
             critical: options.findingSeverity === 'critical' ? [finding] : [],
             high: options.findingSeverity === 'high' ? [finding] : [],
@@ -1340,6 +1384,7 @@ function buildFixtureFindingsContent(options: {
     reviewContextSha256: string;
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
+    reviewExecution: ReviewerRemediationCoverageDeclaration;
     verdict: string;
     findingDescription?: string;
     findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
@@ -1351,6 +1396,7 @@ function buildFixtureFindingsContent(options: {
         reviewContextSha256: options.reviewContextSha256,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
         coverageContract: options.coverageContract,
+        reviewExecution: options.reviewExecution,
         findingDescription: options.findingDescription,
         findingSeverity: options.findingSeverity === undefined
             ? (/\bFAILED\b/u.test(options.verdict) ? 'high' : null)
@@ -1377,12 +1423,14 @@ export function writePassingReviewOutputFromContext(options: {
     ).trim() || null;
     assert.ok(coverageContract, `Missing coverage_contract in ${options.reviewContextPath}`);
     assert.ok(reviewTreeStateSha256, `Missing tree_state_sha256 in ${options.reviewContextPath}`);
+    const reviewExecution = resolveFixtureReviewExecution(reviewContext);
     fs.writeFileSync(options.outputPath, buildFixtureFindingsContent({
         taskId: options.taskId,
         reviewKey: options.reviewType,
         reviewContextSha256: createHash('sha256').update(reviewContextText, 'utf8').digest('hex'),
         reviewTreeStateSha256,
         coverageContract,
+        reviewExecution: reviewExecution.declaration,
         verdict: 'REVIEW PASSED'
     }), 'utf8');
 }
@@ -1428,6 +1476,7 @@ export function writeReceiptBackedReviewArtifact(
     } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence, options);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveFixtureReviewExecution(reviewContext);
 
     const crypto = require('node:crypto');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
@@ -1439,6 +1488,7 @@ export function writeReceiptBackedReviewArtifact(
             reviewContextSha256: reviewContextHash,
             reviewTreeStateSha256,
             coverageContract,
+            reviewExecution: reviewExecution.declaration,
             verdict,
             findingDescription: explicitContent || undefined,
             findingSeverity: options.findingSeverity,
@@ -1532,6 +1582,9 @@ export function writeReceiptBackedReviewArtifact(
     );
 
     const reviewContextContractBindings = resolveReviewContextReuseContractBindings(reviewContext);
+    const reviewExecutionEvidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
+    assert.ok(reviewExecutionEvidence.bindings, reviewExecutionEvidence.violations.join('\n'));
+    const reviewExecutionBindings = reviewExecutionEvidence.bindings;
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -1541,6 +1594,13 @@ export function writeReceiptBackedReviewArtifact(
         codeScopeSha256,
         reviewContextSha256: reviewContextHash,
         reviewTreeStateSha256,
+        reviewExecutionMode: reviewExecutionBindings.review_execution_mode,
+        reviewExecutionContractSha256: reviewExecutionBindings.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: reviewExecutionBindings.review_execution_full_scope_sha256,
+        reviewExecutionCompleteScopeLineageSha256:
+            reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+        reviewExecutionFindingReconciliationSha256:
+            reviewExecutionBindings.review_execution_finding_reconciliation_sha256,
         reviewContextReuseSha256,
         reviewCoverageContractSha256: reviewContextContractBindings.coverageContractSha256,
         reviewRuleContextSha256: reviewContextContractBindings.ruleContextSha256,
@@ -1560,6 +1620,7 @@ export function writeReceiptBackedReviewArtifact(
             expectedReviewContextSha256: reviewContextHash,
             expectedTreeStateSha256: reviewTreeStateSha256 || undefined,
             coverageContract,
+            expectedReviewExecutionContract: reviewExecution.contract,
             repoRoot
         });
         if (!explicitContent) {
@@ -1631,6 +1692,7 @@ export function writeReceiptBackedReviewArtifact(
             review_artifact_sha256: artifactHash,
             review_context_sha256: reviewContextHash,
             review_tree_state_sha256: reviewTreeStateSha256,
+            ...reviewExecutionBindings,
             coverage_contract_sha256: coverageContract.contract_sha256,
             reviewer_identity: reviewerEvidence.reviewerIdentity,
             reviewer_provenance_event_sha256: reviewerProvenance?.event_sha256 ?? null
@@ -1682,6 +1744,7 @@ export function seedReusableReviewEvidence(
         reviewCoverageContractSha256Override?: string | null;
         reviewRuleContextSha256Override?: string | null;
         omitReviewRuleContextBinding?: boolean;
+        omitReviewFindingsValidationExecutionBinding?: boolean;
         sourceOfTruth?: string;
         invocationTimingOverride?: {
             launchPreparedAtUtc?: string;
@@ -1700,6 +1763,7 @@ export function seedReusableReviewEvidence(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`);
     let artifactText = '';
+    bindFixtureEffectiveReviewSnapshot(repoRoot, taskId, reviewKey, preflightPath, options.taskModePath || '');
     prepareReviewDiffFixture(repoRoot, preflightPath);
     prepareScopedDiffFixture(repoRoot, preflightPath, reviewKey);
     buildReviewContext({
@@ -1740,6 +1804,7 @@ export function seedReusableReviewEvidence(
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
     const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveFixtureReviewExecution(reviewContext);
     const reviewTreeStateSha256 = resolveFixtureReviewTreeStateSha256(reviewContext);
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     artifactText = Number(reviewContext.schema_version) >= 3
@@ -1749,6 +1814,7 @@ export function seedReusableReviewEvidence(
             reviewContextSha256: reviewContextHash,
             reviewTreeStateSha256,
             coverageContract,
+            reviewExecution: reviewExecution.declaration,
             verdict
         })
         : [
@@ -1846,6 +1912,9 @@ export function seedReusableReviewEvidence(
         ? computeReviewReuseCodeScopeFingerprint(reviewKey, preflight, repoRoot).code_scope_sha256
         : null;
     const reviewContextContractBindings = resolveReviewContextReuseContractBindings(reviewContext);
+    const reviewExecutionEvidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
+    assert.ok(reviewExecutionEvidence.bindings, reviewExecutionEvidence.violations.join('\n'));
+    const reviewExecutionBindings = reviewExecutionEvidence.bindings;
     const reviewCoverageContractSha256 = options.reviewCoverageContractSha256Override !== undefined
         ? options.reviewCoverageContractSha256Override
         : reviewContextContractBindings.coverageContractSha256;
@@ -1863,6 +1932,13 @@ export function seedReusableReviewEvidence(
         codeScopeSha256,
         reviewContextSha256: receiptReviewContextSha256,
         reviewTreeStateSha256,
+        reviewExecutionMode: reviewExecutionBindings.review_execution_mode,
+        reviewExecutionContractSha256: reviewExecutionBindings.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: reviewExecutionBindings.review_execution_full_scope_sha256,
+        reviewExecutionCompleteScopeLineageSha256:
+            reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+        reviewExecutionFindingReconciliationSha256:
+            reviewExecutionBindings.review_execution_finding_reconciliation_sha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
         reviewCoverageContractSha256,
         reviewRuleContextSha256,
@@ -1882,6 +1958,7 @@ export function seedReusableReviewEvidence(
             expectedReviewContextSha256: reviewContextHash,
             expectedTreeStateSha256: reviewTreeStateSha256 || undefined,
             coverageContract,
+            expectedReviewExecutionContract: reviewExecution.contract,
             repoRoot
         });
         assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
@@ -1903,6 +1980,10 @@ export function seedReusableReviewEvidence(
             reviewTreeStateSha256,
             coverageContract
         });
+        if (options.omitReviewFindingsValidationExecutionBinding === true) {
+            delete validationArtifact.validation_result.bindings.execution;
+            validationArtifact.validation_result_sha256 = sha256JsonFixture(validationArtifact.validation_result);
+        }
         const validationArtifactSha256 = sha256JsonFixture(validationArtifact);
         const validationArtifactSnapshotPath = getReviewFindingsValidationArtifactSnapshotPath(
             validationArtifactPath,
@@ -1951,6 +2032,7 @@ export function seedReusableReviewEvidence(
             review_artifact_sha256: artifactHash,
             review_context_sha256: reviewContextHash,
             review_tree_state_sha256: reviewTreeStateSha256,
+            ...reviewExecutionBindings,
             coverage_contract_sha256: coverageContract.contract_sha256,
             reviewer_identity: resolvedReviewerIdentity,
             reviewer_provenance_event_sha256: reviewerProvenance?.event_sha256 ?? null
@@ -1978,6 +2060,109 @@ export function seedReusableReviewEvidence(
         review_context_path: path.normalize(reviewContextPath).replace(/\\/g, '/')
     });
     return reviewContextPath;
+}
+
+export function bindFixtureEffectiveReviewSnapshot(
+    repoRoot: string,
+    taskId: string,
+    reviewKey: string,
+    preflightPath: string,
+    taskModePath: string
+): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, any>;
+    if (preflight.effective_review_snapshot) {
+        ensureFixtureReviewSkillEntrypoints(
+            getOrchestratorRoot(repoRoot),
+            preflight.effective_review_snapshot,
+            reviewKey
+        );
+        return;
+    }
+    const resolvedTaskModePath = taskModePath || path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const taskMode = fs.existsSync(resolvedTaskModePath)
+        ? JSON.parse(fs.readFileSync(resolvedTaskModePath, 'utf8')) as Record<string, unknown>
+        : {};
+    const profileSnapshotCandidate = taskMode.profile_policy_snapshot || preflight.profile_policy_snapshot;
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    const catalog = readReviewCatalogConfigFile(path.join(orchestratorRoot, 'live', 'config', 'review-catalog.json'));
+    const hasLockedProfileSnapshot = Boolean(
+        profileSnapshotCandidate
+        && typeof profileSnapshotCandidate === 'object'
+        && typeof (profileSnapshotCandidate as Record<string, unknown>).snapshot_hash === 'string'
+        && typeof (profileSnapshotCandidate as Record<string, unknown>).source === 'object'
+        && typeof (profileSnapshotCandidate as Record<string, unknown>).review_lane_selection === 'object'
+        && typeof (profileSnapshotCandidate as Record<string, unknown>).review_execution_policy === 'object'
+    );
+    const profileSnapshot = hasLockedProfileSnapshot
+        ? profileSnapshotCandidate as TaskProfilePolicySnapshot
+        : null;
+    const requiredReviews = preflight.required_reviews || {};
+    const fixtureProfilePolicy = Object.fromEntries(
+        catalog.review_types.map((definition) => [definition.id, requiredReviews[definition.id] === true])
+    );
+    const fixtureCapabilities = Object.fromEntries(
+        catalog.review_types.map((definition) => [definition.id, true])
+    ) as ReviewCapabilitiesConfigMap;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        profileSnapshot ? String(profileSnapshot.source.effective_profile) : 'fixture',
+        profileSnapshot?.review_lane_selection.profile_review_policy || fixtureProfilePolicy,
+        profileSnapshot?.review_lane_selection.review_capabilities || fixtureCapabilities,
+        catalog
+    );
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry: unknown) => String(entry))
+        : [];
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: profileSnapshot?.snapshot_hash || createHash('sha256')
+            .update(JSON.stringify({ taskId, requiredReviews }), 'utf8')
+            .digest('hex'),
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: String(preflight.scope_category || 'code'),
+        taskIntent: `Seed reusable review evidence for ${taskId}`,
+        changedFiles,
+        taskTriggers: preflight.triggers || {},
+        zeroDiffBaselineOnly: changedFiles.length === 0,
+        reviewExecutionPolicyMode: profileSnapshot?.review_execution_policy.mode || 'strict_sequential',
+        reviewDependencyGraph: profileSnapshot?.review_execution_policy.review_dependency_graph || null,
+        fullSuiteValidation: profileSnapshot?.review_execution_policy.full_suite_validation || {
+            enabled: false,
+            placement: 'after_compile_before_reviews'
+        }
+    });
+    ensureFixtureReviewSkillEntrypoints(orchestratorRoot, effectiveReviewSnapshot, reviewKey);
+    if (profileSnapshot) {
+        preflight.profile_policy_snapshot = profileSnapshot;
+    }
+    preflight.effective_review_snapshot = effectiveReviewSnapshot;
+    preflight.required_reviews = { ...effectiveReviewSnapshot.required_reviews };
+    preflight.review_execution_policy = {
+        mode: profileSnapshot?.review_execution_policy.mode || 'strict_sequential',
+        visible_summary_line:
+            `Review execution policy: ${profileSnapshot?.review_execution_policy.mode || 'strict_sequential'}`,
+        dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+    };
+    fs.writeFileSync(preflightPath, `${JSON.stringify(preflight, null, 2)}\n`, 'utf8');
+}
+
+function ensureFixtureReviewSkillEntrypoints(
+    orchestratorRoot: string,
+    effectiveReviewSnapshot: Record<string, any>,
+    reviewKey: string
+): void {
+    const lanes = Array.isArray(effectiveReviewSnapshot.lanes) ? effectiveReviewSnapshot.lanes : [];
+    const lane = lanes.find((candidate: Record<string, any>) => candidate.id === reviewKey);
+    const fixtureSkillIds = Array.isArray(lane?.definition?.skill_ids)
+        ? lane.definition.skill_ids.map((entry: unknown) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    for (const fixtureSkillId of fixtureSkillIds) {
+        const fixtureSkillPath = path.join(orchestratorRoot, 'live', 'skills', fixtureSkillId, 'SKILL.md');
+        if (!fs.existsSync(fixtureSkillPath)) {
+            fs.mkdirSync(path.dirname(fixtureSkillPath), { recursive: true });
+            fs.writeFileSync(fixtureSkillPath, `# ${fixtureSkillId} fixture\n`, 'utf8');
+        }
+    }
 }
 
 export function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {

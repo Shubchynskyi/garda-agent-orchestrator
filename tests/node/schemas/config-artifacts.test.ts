@@ -900,9 +900,30 @@ test('validateProfilesConfig validates template profiles.json', () => {
         (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
         'conservative_review_remediation_mode_v1'
     );
+    assert.deepEqual(builtIn.balanced.task_decomposition, { enabled: true });
 
     const user = normalized.user_profiles as Record<string, unknown>;
     assert.equal(Object.keys(user).length, 0);
+});
+
+test('validateProfilesConfig requires task_decomposition to be exactly enabled boolean', () => {
+    const withUnknownKey = structuredClone(readTemplateConfig('profiles'));
+    (
+        withUnknownKey.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.task_decomposition = { enabled: true, mode: 'guarded' };
+    assert.throws(
+        () => validateProfilesConfig(withUnknownKey),
+        /task_decomposition must be exactly/u
+    );
+
+    const withNonBoolean = structuredClone(readTemplateConfig('profiles'));
+    (
+        withNonBoolean.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.task_decomposition = { enabled: 'true' };
+    assert.throws(
+        () => validateProfilesConfig(withNonBoolean),
+        /task_decomposition\.enabled must be a boolean/u
+    );
 });
 
 test('validateProfilesConfig normalizes boolean-like review_policy values', () => {

@@ -12,6 +12,7 @@ import type {
     ReviewFindingsSeverity
 } from './review-findings-schema';
 import {
+    getReviewExecutionEvidenceBindingViolations,
     getReviewExecutionEvidenceContractViolations,
     resolveReviewContextExecutionEvidenceBindings,
     type ReviewExecutionEvidenceBindings
@@ -589,6 +590,7 @@ export function normalizeReviewFindingsValidationReceiptReference(
 export function validateReviewFindingsValidationArtifactForReceipt(
     options: ReviewFindingsValidationReceiptCheckOptions
 ): ReviewFindingsValidationReceiptCheckResult {
+    const reusedExistingReview = options.receipt.reused_existing_review === true;
     const reference = normalizeReviewFindingsValidationReceiptReference(options.receipt.review_findings_validation);
     const expectedArtifactPath = getReviewFindingsValidationArtifactPath(options.reviewArtifactPath);
     if (!reference) {
@@ -630,12 +632,42 @@ export function validateReviewFindingsValidationArtifactForReceipt(
         expectedCodeScopeSha256: options.expectedCodeScopeSha256,
         expectedReviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         expectedCoverageContractSha256: options.expectedCoverageContractSha256,
-        expectedReviewContext: options.expectedReviewContext,
+        expectedReviewContext: reusedExistingReview ? null : options.expectedReviewContext,
         requireAccepted: options.requireAccepted,
         expectedArtifactSha256: artifactSha256ToRead,
         expectedValidationResultSha256: reference.validation_result_sha256
     });
     violations.push(...result.violations);
+    const validationExecution = result.artifact?.validation_result.bindings.execution;
+    if (result.artifact) {
+        const expectedExecution = reusedExistingReview
+            ? {
+                review_execution_mode: options.receipt.reused_from_review_execution_mode,
+                review_execution_contract_sha256: options.receipt.reused_from_review_execution_contract_sha256,
+                review_execution_full_scope_sha256: options.receipt.reused_from_review_execution_full_scope_sha256,
+                review_execution_complete_scope_lineage_sha256:
+                    options.receipt.reused_from_review_execution_complete_scope_lineage_sha256,
+                review_execution_finding_reconciliation_sha256:
+                    options.receipt.reused_from_review_execution_finding_reconciliation_sha256
+            }
+            : {
+                review_execution_mode: options.receipt.review_execution_mode,
+                review_execution_contract_sha256: options.receipt.review_execution_contract_sha256,
+                review_execution_full_scope_sha256: options.receipt.review_execution_full_scope_sha256,
+                review_execution_complete_scope_lineage_sha256:
+                    options.receipt.review_execution_complete_scope_lineage_sha256,
+                review_execution_finding_reconciliation_sha256:
+                    options.receipt.review_execution_finding_reconciliation_sha256
+            };
+        violations.push(...getReviewExecutionEvidenceBindingViolations({
+            expectedEvidence: expectedExecution,
+            evidence: isRecord(validationExecution) ? validationExecution : null,
+            evidenceLabel: 'review findings validation artifact execution binding',
+            expectedEvidenceLabel: reusedExistingReview
+                ? 'the authenticated historical review receipt execution binding'
+                : 'the authenticated review receipt execution binding'
+        }));
+    }
     if (result.artifact) {
         if (reference.status !== result.artifact.validation_result.status) {
             violations.push(

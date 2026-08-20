@@ -217,9 +217,17 @@ export function getReviewRemediationModePolicyViolations(value: unknown): string
         const missing = REVIEW_REMEDIATION_FORCE_FULL_CATEGORIES.filter((category) => (
             !forceFullCategories.includes(category)
         ));
+        const unsupported = forceFullCategories.filter((category) => (
+            !(REVIEW_REMEDIATION_FORCE_FULL_CATEGORIES as readonly string[]).includes(category)
+        ));
         if (missing.length > 0) {
             violations.push(
                 `review_remediation_mode_policy.force_full_categories cannot omit mandatory floors: ${missing.join(', ')}.`
+            );
+        }
+        if (unsupported.length > 0) {
+            violations.push(
+                `review_remediation_mode_policy.force_full_categories contains unsupported categories: ${unsupported.join(', ')}.`
             );
         }
     }

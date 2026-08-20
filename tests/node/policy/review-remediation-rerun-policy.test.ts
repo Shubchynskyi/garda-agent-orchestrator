@@ -251,6 +251,10 @@ test('rejects mode policies that weaken protected lane, category, size, or perio
     weakenedCategory.force_full_categories = ['global'];
     assert.throws(() => validateReviewRemediationModePolicy(weakenedCategory), /mandatory floors/iu);
 
+    const extendedCategory = buildDefaultReviewRemediationModePolicy() as unknown as Record<string, unknown>;
+    extendedCategory.force_full_categories = ['ambiguous', 'generated_churn', 'global', 'local'];
+    assert.throws(() => validateReviewRemediationModePolicy(extendedCategory), /unsupported categories/iu);
+
     const weakenedBounds = buildDefaultReviewRemediationModePolicy();
     weakenedBounds.max_delta_changed_files = 50;
     weakenedBounds.max_delta_changed_lines = 50_000;

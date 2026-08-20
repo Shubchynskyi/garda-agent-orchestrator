@@ -462,6 +462,7 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
     const knownKeys = new Set([
         'description',
         'depth',
+        'task_decomposition',
         'review_policy',
         'review_finding_policy',
         'review_follow_up_policy',
@@ -474,6 +475,21 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
 
     normalized.description = normalizeNonEmptyString(raw.description, `${profilePath}.description`);
     normalized.depth = normalizeInteger(raw.depth, `${profilePath}.depth`, { minimum: 1, maximum: 3 });
+
+    if (raw.task_decomposition !== undefined) {
+        const taskDecompositionRaw = ensurePlainObject(
+            raw.task_decomposition,
+            `${profilePath}.task_decomposition`
+        );
+        const taskDecompositionKeys = Object.keys(taskDecompositionRaw);
+        if (taskDecompositionKeys.length !== 1 || taskDecompositionKeys[0] !== 'enabled') {
+            throw new Error(`${profilePath}.task_decomposition must be exactly { "enabled": boolean }.`);
+        }
+        if (typeof taskDecompositionRaw.enabled !== 'boolean') {
+            throw new Error(`${profilePath}.task_decomposition.enabled must be a boolean.`);
+        }
+        normalized.task_decomposition = { enabled: taskDecompositionRaw.enabled };
+    }
 
     const reviewPolicyRaw = ensurePlainObject(raw.review_policy, `${profilePath}.review_policy`);
     const reviewPolicy: Record<string, boolean | 'auto'> = {};

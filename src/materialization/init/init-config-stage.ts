@@ -71,13 +71,18 @@ export function mergeProfilesConfigWithTemplate(
         const mergedGroup = isPlainObject(merged[groupName])
             ? merged[groupName] as Record<string, unknown>
             : {};
+        const mergedNamesByLowercase = new Map<string, string>();
+        for (const candidate of Object.keys(mergedGroup)) {
+            const normalizedName = candidate.toLowerCase();
+            if (!mergedNamesByLowercase.has(normalizedName)) {
+                mergedNamesByLowercase.set(normalizedName, candidate);
+            }
+        }
         for (const [existingName, existingProfile] of Object.entries(existingGroup)) {
             if (!isPlainObject(existingProfile) || Object.hasOwn(existingProfile, 'review_remediation_mode_policy')) {
                 continue;
             }
-            const mergedName = Object.keys(mergedGroup).find((candidate) => (
-                candidate.toLowerCase() === existingName.toLowerCase()
-            ));
+            const mergedName = mergedNamesByLowercase.get(existingName.toLowerCase());
             if (mergedName && isPlainObject(mergedGroup[mergedName])) {
                 delete (mergedGroup[mergedName] as Record<string, unknown>).review_remediation_mode_policy;
             }

@@ -21,6 +21,7 @@ import {
 import type { ProfileEntry } from '../../../../src/cli/commands/profile/profile-types';
 import { handleUiProfileRequest } from '../../../../src/reports/ui/actions/profile-actions';
 import { buildHelpText } from '../../../../src/cli/commands/cli-help-output';
+import { resolveReviewRemediationModePolicyFromProfile } from '../../../../src/policy/review-remediation-mode-policy';
 
 const PACKAGE_JSON = { name: 'test-pkg', version: '1.0.0' };
 
@@ -504,6 +505,12 @@ test('profile create with --copy-from preserves legacy missing review finding po
     assert.equal(updated.user_profiles['legacy-copy'].description, 'Legacy clone');
     assert.equal(updated.user_profiles['legacy-copy'].review_policy.code, true);
     assert.equal(Object.hasOwn(updated.user_profiles['legacy-copy'], 'review_finding_policy'), false);
+    assert.equal(Object.hasOwn(updated.user_profiles['legacy-copy'], 'review_remediation_mode_policy'), false);
+    const remediationPolicy = resolveReviewRemediationModePolicyFromProfile(
+        updated.user_profiles['legacy-copy'].review_remediation_mode_policy,
+        'legacy-copy'
+    );
+    assert.equal(remediationPolicy.legacy_fallback, true);
 });
 
 test('profile create rejects name conflicting with built-in', () => {
