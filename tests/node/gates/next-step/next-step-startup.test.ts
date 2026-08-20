@@ -560,6 +560,25 @@ describe('gates/next-step startup routing', () => {
         assert.ok(text.includes('AfterCommand: rerun'));
     });
 
+    it('blocks malformed task required-review metadata before printing classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/test | Validate task metadata | gpt-5.6-sol | 2026-08-20 | balanced | Required reviews: code, security, api, and test; Terra High only. |`,
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'task-metadata-validation');
+        assert.match(result.reason, /invalid TASK\.md required-review declaration/);
+        assert.match(result.reason, /Required reviews: lane, lane\./);
+        assert.equal(result.commands.length, 0);
+    });
+
     it('uses task profile depth for fresh task-mode command defaults', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

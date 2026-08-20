@@ -157,8 +157,12 @@ import {
     readPreflightWorkspaceReadiness
 } from './next-step-compile-full-suite-readiness';
 import {
-    getClassificationConfig
+    getClassificationConfig,
+    getReviewCapabilities
 } from '../preflight/classify-change-config';
+import {
+    resolveTaskRequiredReviewDeclaration
+} from '../preflight/classify-change-task-required-reviews';
 import {
     assessReviewRemediationScopeBoundary,
     getTaskManualValidationBoundaryFiles
@@ -2435,6 +2439,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const taskEntries = readTaskQueueEntries(repoRoot);
     const taskEntry = taskEntries.get(taskId) || null;
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
+    let taskRequiredReviewDeclarationError: string | null = null;
+    if (taskEntry && !preflight) {
+        try {
+            resolveTaskRequiredReviewDeclaration({
+                taskId,
+                notes: taskEntry.notes,
+                reviewCapabilities: getReviewCapabilities(repoRoot)
+            });
+        } catch (error: unknown) {
+            taskRequiredReviewDeclarationError = error instanceof Error ? error.message : String(error);
+        }
+    }
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
     const findingPolicyResolution = resolveLockedReviewFindingPolicyFromPreflight(
@@ -2839,6 +2855,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
+    if (taskRequiredReviewDeclarationError) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'task-metadata-validation',
+            title: 'Correct the TASK.md required-review declaration.',
+            reason:
+                `${taskRequiredReviewDeclarationError} Correct the task notes to the exact form ` +
+                '`Required reviews: lane, lane.` and rerun the navigator before classify-change.',
+            commands: []
+        });
+    }
     const buildDecisionRouteResult = (
         route: NextStepDecisionRoutePayload,
         overrides: { qualityChecklist?: NextStepQualityChecklistSummary | null } = {}
