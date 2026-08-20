@@ -58,7 +58,6 @@ import {
     type ReviewRemediationRerunPolicy
 } from './review-remediation-rerun-policy';
 import {
-    buildDefaultReviewRemediationModePolicy,
     getReviewRemediationModePolicyViolations,
     resolveReviewRemediationModePolicyFromSnapshot,
     type ReviewRemediationModePolicy
@@ -181,6 +180,7 @@ export interface TaskProfilePolicySnapshotSummary {
     review_remediation_rerun_policy_diagnostics: string[];
     review_remediation_mode_policy: ReviewRemediationModePolicy;
     review_remediation_mode_policy_diagnostics: string[];
+    review_remediation_mode_policy_legacy_fallback: boolean;
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     review_trigger_policy: ReviewTriggerPolicy;
@@ -206,9 +206,6 @@ const LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC =
     'Legacy task profile policy snapshot missing review_finding_policy; resolved fail-closed to strict.';
 const REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC =
     'Snapshotted baseline-bound remediation rerun policy with deterministic affected-review lane selection.';
-const REVIEW_REMEDIATION_MODE_POLICY_DIAGNOSTIC =
-    'Snapshotted conservative FULL/DELTA remediation mode policy with protected floors and periodic FULL review.';
-
 const DEFAULT_REMEDIATION_POLICY = {
     schema_version: 1,
     policy_id: 'current_cycle_review_remediation_v1',
@@ -1171,6 +1168,7 @@ export function buildTaskProfilePolicySnapshot(
             ...Object.keys(profilesData.user_profiles)
         ]
     );
+    const remediationModePolicy = resolvedProfile.effective_policy.review_remediation_mode_policy;
     const body: Omit<TaskProfilePolicySnapshot, 'snapshot_hash'> = {
         schema_version: TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION,
         lock_timestamp_utc: options.lockTimestampUtc || new Date().toISOString(),
@@ -1216,8 +1214,10 @@ export function buildTaskProfilePolicySnapshot(
         review_follow_up_task_profile_assignment: followUpTaskProfileAssignment,
         review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
         review_remediation_rerun_policy_diagnostics: [REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC],
-        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
-        review_remediation_mode_policy_diagnostics: [REVIEW_REMEDIATION_MODE_POLICY_DIAGNOSTIC],
+        ...(remediationModePolicy.legacy_fallback ? {} : {
+            review_remediation_mode_policy: remediationModePolicy.policy,
+            review_remediation_mode_policy_diagnostics: [...remediationModePolicy.diagnostics]
+        }),
         finding_policy: buildTaskProfileFindingPolicySnapshot(resolvedProfile.effective_policy.review_finding_policy),
         remediation_policy: { ...DEFAULT_REMEDIATION_POLICY },
         token_economy: resolvedProfile.effective_policy.token_economy,
@@ -1407,6 +1407,7 @@ export function resolveTaskProfileSelectionFromSnapshot(
             review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
             review_follow_up_policy: resolveSnapshotReviewFollowUpPolicy(snapshot),
             review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
+            review_remediation_mode_policy: resolveTaskProfileReviewRemediationModePolicy(snapshot),
             token_economy: snapshot.token_economy,
             skills: snapshot.skills,
             installed_packs: snapshot.installed_packs,
@@ -1431,6 +1432,7 @@ export function resolveTaskProfileSelectionFromSnapshot(
 export function summarizeTaskProfilePolicySnapshot(
     snapshot: TaskProfilePolicySnapshot
 ): TaskProfilePolicySnapshotSummary {
+    const remediationModePolicy = resolveTaskProfileReviewRemediationModePolicy(snapshot);
     return {
         schema_version: snapshot.schema_version,
         lock_timestamp_utc: snapshot.lock_timestamp_utc,
@@ -1450,9 +1452,10 @@ export function summarizeTaskProfilePolicySnapshot(
         review_remediation_rerun_policy_diagnostics:
             resolveSnapshotReviewRemediationRerunPolicyDiagnostics(snapshot),
         review_remediation_mode_policy:
-            resolveTaskProfileReviewRemediationModePolicy(snapshot).policy,
+            remediationModePolicy.policy,
         review_remediation_mode_policy_diagnostics:
-            resolveTaskProfileReviewRemediationModePolicy(snapshot).diagnostics,
+            remediationModePolicy.diagnostics,
+        review_remediation_mode_policy_legacy_fallback: remediationModePolicy.legacy_fallback,
         finding_policy: resolveSnapshotFindingPolicy(snapshot),
         remediation_policy: snapshot.remediation_policy,
         review_trigger_policy: resolveTaskProfileReviewTriggerPolicy(snapshot),

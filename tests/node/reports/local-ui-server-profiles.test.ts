@@ -79,6 +79,12 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                     configured_mode: string;
                     diagnostics: string[];
                 };
+                review_remediation_mode_policy: {
+                    configured: boolean;
+                    legacy_full_only: boolean;
+                    policy_id: string;
+                    delta_eligible_review_types: string[];
+                };
             }>;
         };
         assert.equal(list.enabled, true);
@@ -91,6 +97,12 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         const balancedProfile = list.profiles.find((profile) => profile.name === 'balanced');
         assert.ok(balancedProfile);
         assert.equal(balancedProfile.task_decomposition.enabled, true);
+        assert.equal(balancedProfile.review_remediation_mode_policy.configured, true);
+        assert.equal(balancedProfile.review_remediation_mode_policy.legacy_full_only, false);
+        assert.deepEqual(
+            balancedProfile.review_remediation_mode_policy.delta_eligible_review_types,
+            ['code', 'refactor', 'test']
+        );
         assert.ok([
             'explicit_profile_config',
             'legacy_balanced_default'

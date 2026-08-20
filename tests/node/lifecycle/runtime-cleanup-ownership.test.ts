@@ -96,6 +96,15 @@ describe('runtime cleanup ownership contract', () => {
         }
     });
 
+    it('classifies authenticated remediation cycle and baseline snapshots as task-owned review evidence', () => {
+        const entry = findRuntimeCleanupOwnershipEntry('reviews-task-artifacts');
+        assert.ok(entry);
+        assert.equal(entry.candidateCategory, 'reviews');
+        assert.ok(entry.examples.includes('runtime/reviews/<task-id>-review-remediation-cycle.json'));
+        assert.ok(entry.examples.includes('runtime/reviews/<task-id>-<review-type>-remediation-baseline.json'));
+        assert.equal(entry.taskPurgeMode, 'delete-owned-artifacts-and-rebuild-shared-state');
+    });
+
     it('drives task purge category and side-effect decisions from the ownership map', () => {
         assert.deepEqual(listTaskPurgeableRuntimeCandidateCategories(), [
             'manual-validation',

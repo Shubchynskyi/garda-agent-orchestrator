@@ -49,6 +49,18 @@ export interface ReviewRemediationModePolicyResolution {
     legacy_fallback: boolean;
 }
 
+export interface ReviewRemediationModePolicySummary {
+    configured: boolean;
+    legacy_full_only: boolean;
+    policy_id: ReviewRemediationModePolicy['policy_id'];
+    initial_review_mode: 'FULL';
+    delta_eligible_review_types: string[];
+    max_delta_changed_files: number;
+    max_delta_changed_lines: number;
+    max_consecutive_delta_reviews: number;
+    diagnostics: string[];
+}
+
 export interface ReviewRemediationModeAssessment {
     policy_id: ReviewRemediationModePolicy['policy_id'];
     policy_sha256: string;
@@ -90,6 +102,9 @@ const DEFAULT_POLICY: ReviewRemediationModePolicy = {
 const LEGACY_FALLBACK_DIAGNOSTIC =
     'Legacy task profile policy snapshot missing review_remediation_mode_policy; resolved fail-closed to FULL-only remediation.';
 
+const LEGACY_PROFILE_FALLBACK_DIAGNOSTIC =
+    'is missing review_remediation_mode_policy; remediation reviews remain FULL-only until an explicit compatible policy is configured.';
+
 const DENY_ONLY_PATH_SIGNALS: ReadonlyArray<{
     signal: ReviewRemediationProtectedBoundarySignal;
     pattern: RegExp;
@@ -109,6 +124,7 @@ const DENY_ONLY_PATH_SIGNALS: ReadonlyArray<{
 const REVIEW_POLICY_SOURCE_PATH_PATTERNS: readonly RegExp[] = [
     /(?:^|\/)src\/policy(?:\/|$)/iu,
     /(?:^|\/)src\/core\/review-(?:catalog|dependency-graph|execution-policy)\.ts$/iu,
+    /(?:^|\/)template\/config\/profiles\.json$/iu,
     /(?:^|\/)garda-agent-orchestrator\/live\/config\/(?:profiles|paths|review-capabilities|workflow-config)\.json$/iu
 ];
 
@@ -232,6 +248,28 @@ export function validateReviewRemediationModePolicy(value: unknown): ReviewRemed
     return clonePolicy(value as unknown as ReviewRemediationModePolicy);
 }
 
+export function resolveReviewRemediationModePolicyFromProfile(
+    value: unknown,
+    profileName: string
+): ReviewRemediationModePolicyResolution {
+    if (value === undefined) {
+        return {
+            policy: buildDefaultReviewRemediationModePolicy(),
+            diagnostics: [`Profile '${profileName}' ${LEGACY_PROFILE_FALLBACK_DIAGNOSTIC}`],
+            legacy_fallback: true
+        };
+    }
+    const policy = validateReviewRemediationModePolicy(value);
+    return {
+        policy,
+        diagnostics: [
+            `Profile '${profileName}' explicitly enables conservative FULL/DELTA remediation ` +
+            `with policy '${policy.policy_id}'.`
+        ],
+        legacy_fallback: false
+    };
+}
+
 export function resolveReviewRemediationModePolicyFromSnapshot(
     snapshot: unknown
 ): ReviewRemediationModePolicyResolution {
@@ -249,6 +287,24 @@ export function resolveReviewRemediationModePolicyFromSnapshot(
         policy: validateReviewRemediationModePolicy(snapshot.review_remediation_mode_policy),
         diagnostics,
         legacy_fallback: false
+    };
+}
+
+export function summarizeReviewRemediationModePolicy(
+    resolution: ReviewRemediationModePolicyResolution
+): ReviewRemediationModePolicySummary {
+    return {
+        configured: !resolution.legacy_fallback,
+        legacy_full_only: resolution.legacy_fallback,
+        policy_id: resolution.policy.policy_id,
+        initial_review_mode: resolution.policy.initial_review_mode,
+        delta_eligible_review_types: resolution.legacy_fallback
+            ? []
+            : [...resolution.policy.delta_eligible_review_types],
+        max_delta_changed_files: resolution.policy.max_delta_changed_files,
+        max_delta_changed_lines: resolution.policy.max_delta_changed_lines,
+        max_consecutive_delta_reviews: resolution.policy.max_consecutive_delta_reviews,
+        diagnostics: [...resolution.diagnostics]
     };
 }
 

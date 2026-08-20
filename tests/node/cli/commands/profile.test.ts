@@ -2518,6 +2518,7 @@ test('buildProfileListOutput formats text correctly', () => {
     } as any;
     const output = buildProfileListOutput(data, '/bundle', false);
     assert.ok(output.includes('GARDA_PROFILES'));
+    assert.ok(output.includes('remediation=FULL-only'));
     assert.ok(output.includes('balanced'));
     assert.ok(output.includes('custom'));
     assert.ok(output.includes('User Profiles'));
@@ -2536,6 +2537,7 @@ test('buildProfileCurrentOutput text includes all fields', () => {
     assert.ok(output.includes('ActiveProfile: fast'));
     assert.ok(output.includes('Type: built-in'));
     assert.ok(output.includes('Depth: 1'));
+    assert.ok(output.includes('ReviewRemediationModePolicy: configured=false, legacy_full_only=true'));
     assert.ok(output.includes('Why: Active profile settings are used by default.'));
     assert.ok(output.includes('Tip: run "profile list" to inspect all available profiles.'));
 });
@@ -2572,6 +2574,10 @@ test('profile create accepts valid kebab-case names', () => {
     ], PACKAGE_JSON));
     const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
     assert.ok(data.user_profiles['my-profile-2']);
+    assert.equal(
+        data.user_profiles['my-profile-2'].review_remediation_mode_policy.policy_id,
+        'conservative_review_remediation_mode_v1'
+    );
 });
 
 test('profile create accepts localized lowercase profile names', () => {

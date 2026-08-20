@@ -195,6 +195,9 @@ test('detects review policy implementation and frozen configuration sources', ()
         'garda-agent-orchestrator/live/config/profiles.json'
     ]), true);
     assert.equal(hasReviewRemediationPolicySourceChange([
+        'template/config/profiles.json'
+    ]), true);
+    assert.equal(hasReviewRemediationPolicySourceChange([
         'src/services/review-summary.ts',
         'tests/node/policy/review-remediation-rerun-policy.test.ts'
     ]), false);

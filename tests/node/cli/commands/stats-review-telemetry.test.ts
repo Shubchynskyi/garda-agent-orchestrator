@@ -196,6 +196,45 @@ test('buildTaskStats separates fresh review attempts from reused review diagnost
     }
 });
 
+test('buildTaskStats exposes FULL, DELTA, legacy, and reused execution-mode telemetry separately', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        for (const [timestamp, reviewType, mode, reused] of [
+            ['2026-04-05T10:00:00Z', 'code', 'FULL', false],
+            ['2026-04-05T10:01:00Z', 'code', 'DELTA', false],
+            ['2026-04-05T10:02:00Z', 'test', null, false],
+            ['2026-04-05T10:03:00Z', 'test', 'FULL', true]
+        ] as const) {
+            writeEvent(eventsRoot, 'T-455', {
+                event_type: 'REVIEW_RECORDED',
+                outcome: 'PASS',
+                timestamp_utc: timestamp,
+                details: {
+                    ...writeReviewAttemptSnapshot(reviewsRoot, 'T-455', reviewType, 'REVIEW PASSED', reused),
+                    review_execution_mode: mode
+                }
+            });
+        }
+
+        const stats = buildTaskStats('T-455', tmpDir, eventsRoot, reviewsRoot);
+        assert.deepEqual(stats.review_execution_mode_summary, {
+            total_attempts: 3,
+            full_count: 1,
+            delta_count: 1,
+            legacy_unknown_count: 1,
+            by_review_type: {
+                code: { full_count: 1, delta_count: 1, legacy_unknown_count: 0 },
+                test: { full_count: 0, delta_count: 0, legacy_unknown_count: 1 }
+            },
+            visible_summary_line: 'Review execution modes: total=3; FULL=1; DELTA=1; legacy_unknown=1'
+        });
+        assert.match(stripAnsi(formatTaskStatsText(stats)), /FULL=1; DELTA=1; legacy_unknown=1/u);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('formatTaskStatsText shows review attempt counts while aggregate text remains unchanged', () => {
     const reviewAttemptSummary = {
         total_attempts: 3,

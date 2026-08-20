@@ -896,6 +896,10 @@ test('validateProfilesConfig validates template profiles.json', () => {
         (builtIn.balanced.review_follow_up_policy as Record<string, unknown>).materialization_mode,
         'grouped_by_parent'
     );
+    assert.equal(
+        (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
+        'conservative_review_remediation_mode_v1'
+    );
 
     const user = normalized.user_profiles as Record<string, unknown>;
     assert.equal(Object.keys(user).length, 0);
@@ -958,6 +962,19 @@ test('validateProfilesConfig allows legacy profiles without review_finding_polic
     const builtIn = normalized.built_in_profiles as Record<string, Record<string, unknown>>;
     assert.equal(builtIn.legacy.review_finding_policy, undefined);
     assert.equal(builtIn.legacy.review_follow_up_policy, undefined);
+    assert.equal(builtIn.legacy.review_remediation_mode_policy, undefined);
+});
+
+test('validateProfilesConfig rejects weakened remediation mode policy', () => {
+    const profiles = structuredClone(readTemplateConfig('profiles'));
+    const policy = (
+        profiles.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    policy.delta_eligible_review_types = ['code', 'security'];
+    assert.throws(
+        () => validateProfilesConfig(profiles),
+        /cannot weaken the protected lane floor/u
+    );
 });
 
 test('validateProfilesConfig rejects unknown grouped follow-up modes and keys', () => {

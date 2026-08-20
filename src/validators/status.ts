@@ -33,6 +33,10 @@ import { RECOMMENDED_UI_ACTIONS_COMMAND } from '../core/onboarding-contract';
 import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
 import { getWorkflowConfigPath, isConfiguredCompileGateCommand } from '../core/workflow-config';
 import { readLatestScopeBudgetStatus } from '../core/scope-budget-status';
+import {
+    resolveReviewRemediationModePolicyFromProfile,
+    summarizeReviewRemediationModePolicy
+} from '../policy/review-remediation-mode-policy';
 import type {
     AgentInitializationPendingCheckpoint,
     AgentInitializationPendingReason,
@@ -514,6 +518,49 @@ function readActiveProfile(bundlePath: string, bundlePresent: boolean): string |
     return null;
 }
 
+function readReviewRemediationModePolicyStatus(
+    bundlePath: string,
+    bundlePresent: boolean,
+    activeProfile: string | null
+): StatusSnapshot['reviewRemediationModePolicy'] {
+    if (!bundlePresent || !activeProfile) return null;
+    const profilesConfigPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
+    try {
+        const profilesRaw = JSON.parse(readTextFile(profilesConfigPath)) as Record<string, unknown>;
+        const builtIn = profilesRaw.built_in_profiles && typeof profilesRaw.built_in_profiles === 'object'
+            && !Array.isArray(profilesRaw.built_in_profiles)
+            ? profilesRaw.built_in_profiles as Record<string, unknown>
+            : {};
+        const user = profilesRaw.user_profiles && typeof profilesRaw.user_profiles === 'object'
+            && !Array.isArray(profilesRaw.user_profiles)
+            ? profilesRaw.user_profiles as Record<string, unknown>
+            : {};
+        const entry = (builtIn[activeProfile] ?? user[activeProfile]) as Record<string, unknown> | undefined;
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+        const summary = summarizeReviewRemediationModePolicy(
+            resolveReviewRemediationModePolicyFromProfile(entry.review_remediation_mode_policy, activeProfile)
+        );
+        return {
+            configured: summary.configured,
+            legacyFullOnly: summary.legacy_full_only,
+            policyId: summary.policy_id,
+            deltaEligibleReviewTypes: [...summary.delta_eligible_review_types],
+            diagnostics: [...summary.diagnostics]
+        };
+    } catch (error: unknown) {
+        return {
+            configured: false,
+            legacyFullOnly: true,
+            policyId: null,
+            deltaEligibleReviewTypes: [],
+            diagnostics: [
+                `Active profile remediation mode policy is invalid; resolved status fail-closed to FULL-only: ` +
+                `${error instanceof Error ? error.message : String(error)}`
+            ]
+        };
+    }
+}
+
 function readToxinMetricsSummary(
     targetRoot: string,
     bundlePath: string,
@@ -662,6 +709,11 @@ function collectStatusSnapshot(
         : readTaskQueueStatusMap(taskPath, taskPresent);
     const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses, options.taskId);
     const activeProfile = readActiveProfile(bundlePath, bundlePresent);
+    const reviewRemediationModePolicy = readReviewRemediationModePolicyStatus(
+        bundlePath,
+        bundlePresent,
+        activeProfile
+    );
     const toxinMetricsSummary = options.includeGlobalRuntimeMetrics
         ? readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent)
         : null;
@@ -712,6 +764,7 @@ function collectStatusSnapshot(
         recommendedUiCommand: RECOMMENDED_UI_ACTIONS_COMMAND,
         recommendedNextCommand,
         activeProfile,
+        reviewRemediationModePolicy,
         timelineTaskCount: timelineSummary.taskCount,
         timelineHealthy: timelineSummary.healthy,
         timelineWarnings: timelineSummary.warnings,

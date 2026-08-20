@@ -475,6 +475,14 @@ test('review coverage audit rejects stale schema-4 findings-validation execution
 
     const exact = buildReviewCoverageAuditSummary({ reviewsRoot, taskId, requiredReviews: { code: true } });
     assert.equal(exact.status, 'COMPLETE');
+    assert.equal(exact.entries[0]?.review_execution_mode, 'FULL');
+    assert.equal(exact.entries[0]?.review_execution_source, 'initial_full');
+    assert.deepEqual(exact.review_execution_modes, {
+        full_count: 1,
+        delta_count: 0,
+        legacy_unknown_count: 0
+    });
+    assert.match(exact.visible_summary_line, /modes=FULL:1,DELTA:0,legacy_unknown:0/u);
 
     const forgedExecution = buildReviewRemediationReviewContract({
         taskId,

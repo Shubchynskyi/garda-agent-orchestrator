@@ -11,6 +11,10 @@ import {
     resolveReviewFollowUpTaskProfileAssignment
 } from '../../policy/profile-resolver';
 import { loadReviewTriggerPolicy } from '../../policy/review-trigger-policy';
+import {
+    resolveReviewRemediationModePolicyFromProfile,
+    summarizeReviewRemediationModePolicy
+} from '../../policy/review-remediation-mode-policy';
 import { getKnownReviewTypeLabel } from '../review-type-setting-text';
 import type { ReportDataUnavailableEntry, ReportProfileRow, ReportProfilesTab } from './types';
 
@@ -79,6 +83,9 @@ function buildProfileRow(
             ...followUpTaskProfileAssignment,
             diagnostics: [...followUpTaskProfileAssignment.diagnostics]
         },
+        review_remediation_mode_policy: summarizeReviewRemediationModePolicy(
+            resolveReviewRemediationModePolicyFromProfile(entry.review_remediation_mode_policy, name)
+        ),
         token_economy: { ...entry.token_economy },
         skills: { ...entry.skills }
     };

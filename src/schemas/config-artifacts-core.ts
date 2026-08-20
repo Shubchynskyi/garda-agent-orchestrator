@@ -10,6 +10,7 @@ import {
 import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 import { normalizeReviewCatalog } from '../core/review-catalog';
 import { normalizeReviewDependencyGraphDeclaration } from '../core/review-dependency-graph';
+import { validateReviewRemediationModePolicy } from '../policy/review-remediation-mode-policy';
 import {
     ORDINARY_DOC_PATHS_CONFIG_KEY,
     normalizeOrdinaryDocPathPatterns
@@ -464,6 +465,7 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
         'review_policy',
         'review_finding_policy',
         'review_follow_up_policy',
+        'review_remediation_mode_policy',
         'review_dependency_graph',
         'token_economy',
         'skills'
@@ -490,6 +492,11 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
         normalized.review_follow_up_policy = validateReviewFollowUpPolicy(
             raw.review_follow_up_policy,
             `${profilePath}.review_follow_up_policy`
+        );
+    }
+    if (raw.review_remediation_mode_policy !== undefined) {
+        normalized.review_remediation_mode_policy = validateReviewRemediationModePolicy(
+            raw.review_remediation_mode_policy
         );
     }
     if (raw.review_dependency_graph !== undefined) {

@@ -185,7 +185,7 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Optional skill selection policy config merge status: ${configMergeStatuses['optional-skill-selection-policy'] || 'n/a'}`,
         '- Isolation mode config sync policy: preserve existing live values, fill missing keys from template.',
         `- Isolation mode config merge status: ${configMergeStatuses['isolation-mode'] || 'n/a'}`,
-        '- Profiles config sync policy: preserve existing live values and user profiles, fill missing keys from template.',
+        '- Profiles config sync policy: preserve existing live values and user profiles, fill ordinary missing keys from template, and keep legacy remediation-mode policy omission FULL-only until explicit migration.',
         `- Profiles config merge status: ${configMergeStatuses['profiles'] || 'n/a'}`,
         '- Review artifact storage config sync policy: preserve existing live values, fill missing keys from template.',
         `- Review artifact storage config merge status: ${configMergeStatuses['review-artifact-storage'] || 'n/a'}`,

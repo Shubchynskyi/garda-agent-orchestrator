@@ -301,6 +301,7 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         for (const entry of closeout.review_coverage_summary.entries) {
             lines.push(
                 `Review coverage ${entry.review_type}: status=${entry.status}; ` +
+                `mode=${entry.review_execution_mode || 'legacy_unknown'}; ` +
                 `obligations=${entry.completed_obligation_count}/${entry.obligation_count}; ` +
                 `omitted=${entry.omitted_obligation_ids.join(',') || 'none'}; ` +
                 `violations=${entry.violations.join(',') || 'none'}.`
@@ -451,6 +452,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         for (const entry of summary.review_coverage_summary.entries) {
             lines.push(
                 `  - ${entry.review_type}: status=${entry.status}; ` +
+                `mode=${entry.review_execution_mode || 'legacy_unknown'}; ` +
                 `obligations=${entry.completed_obligation_count}/${entry.obligation_count}; ` +
                 `omitted=${entry.omitted_obligation_ids.join(',') || 'none'}; ` +
                 `duplicate=${entry.duplicate_obligation_ids.join(',') || 'none'}; ` +

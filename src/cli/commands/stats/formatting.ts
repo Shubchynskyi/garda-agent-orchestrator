@@ -63,6 +63,12 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
         }
     }
 
+    if (stats.review_execution_mode_summary && stats.review_execution_mode_summary.total_attempts > 0) {
+        lines.push('');
+        lines.push(bold('Review Execution Modes:'));
+        lines.push(`  ${stats.review_execution_mode_summary.visible_summary_line}`);
+    }
+
     if (stats.budget_forecast) {
         lines.push('');
         lines.push(bold('Budget Forecast:'));
@@ -172,7 +178,11 @@ export function formatAggregateStatsJson(stats: AggregateStatsResult): string {
     const stableAggregateStats = {
         ...stats,
         per_task: stats.per_task.map((taskStats) => {
-            const { review_attempt_summary: _reviewAttemptSummary, ...aggregateTaskStats } = taskStats;
+            const {
+                review_attempt_summary: _reviewAttemptSummary,
+                review_execution_mode_summary: _reviewExecutionModeSummary,
+                ...aggregateTaskStats
+            } = taskStats;
             return aggregateTaskStats;
         })
     };

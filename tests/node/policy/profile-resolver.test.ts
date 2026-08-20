@@ -34,9 +34,11 @@ import {
 import {
     buildTaskProfilePolicySnapshot,
     computeTaskProfilePolicySnapshotHash,
+    resolveTaskProfileReviewRemediationModePolicy,
     resolveTaskProfileTaskDecompositionPolicy,
     validateTaskProfilePolicySnapshot
 } from '../../../src/policy/task-profile-policy-snapshot';
+import { buildDefaultReviewRemediationModePolicy } from '../../../src/policy/review-remediation-mode-policy';
 
 test('profile task decomposition enables strict and balanced defaults and disables other legacy profiles', () => {
     const strict = resolveProfileTaskDecompositionPolicy(undefined, 'strict');
@@ -376,6 +378,35 @@ test('task profile snapshot hash-binds explicit decomposition and migrates legac
         const migrated = resolveTaskProfileTaskDecompositionPolicy(legacy);
         assert.equal(migrated.enabled, true);
         assert.equal(migrated.provenance, 'legacy_snapshot_balanced_default');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('task profile snapshots preserve legacy FULL-only mode until the profile explicitly enables DELTA', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, Record<string, unknown>>;
+        };
+        const legacySnapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reviewExecutionPolicyConfigured: true
+        });
+        assert.equal(Object.hasOwn(legacySnapshot, 'review_remediation_mode_policy'), false);
+        assert.equal(resolveTaskProfileReviewRemediationModePolicy(legacySnapshot).legacy_fallback, true);
+
+        profiles.built_in_profiles.balanced.review_remediation_mode_policy =
+            buildDefaultReviewRemediationModePolicy();
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+        const explicitSnapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reviewExecutionPolicyConfigured: true
+        });
+        assert.equal(explicitSnapshot.review_remediation_mode_policy?.initial_review_mode, 'FULL');
+        assert.equal(resolveTaskProfileReviewRemediationModePolicy(explicitSnapshot).legacy_fallback, false);
+        assert.equal(validateTaskProfilePolicySnapshot(explicitSnapshot).status, 'PASS');
     } finally {
         cleanUp(bundleRoot);
     }

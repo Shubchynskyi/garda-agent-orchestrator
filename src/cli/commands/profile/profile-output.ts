@@ -11,6 +11,10 @@ import {
 } from '../../../policy/profile-resolver';
 import { loadReviewTriggerPolicy } from '../../../policy/review-trigger-policy';
 import {
+    resolveReviewRemediationModePolicyFromProfile,
+    summarizeReviewRemediationModePolicy
+} from '../../../policy/review-remediation-mode-policy';
+import {
     getAllProfileNames,
     getProfileEntry,
     isBuiltInProfile,
@@ -58,6 +62,18 @@ function buildProfileTaskDecompositionPolicies(data: ProfilesData) {
     );
 }
 
+function buildProfileReviewRemediationModePolicies(data: ProfilesData) {
+    return Object.fromEntries(
+        [...Object.entries(data.built_in_profiles), ...Object.entries(data.user_profiles)]
+            .map(([name, entry]) => [
+                name,
+                summarizeReviewRemediationModePolicy(
+                    resolveReviewRemediationModePolicyFromProfile(entry.review_remediation_mode_policy, name)
+                )
+            ])
+    );
+}
+
 function buildProfileReviewCatalogPolicy(
     profileName: string,
     entry: ProfileEntry,
@@ -95,12 +111,14 @@ function formatCatalogLaneSummary(policy: ProfileReviewCatalogPolicyOutput): str
 export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
     const catalogPolicies = buildProfileReviewCatalogPolicies(data, bundleRoot);
     const taskDecompositionPolicies = buildProfileTaskDecompositionPolicies(data);
+    const remediationModePolicies = buildProfileReviewRemediationModePolicies(data);
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             built_in_profiles: Object.keys(data.built_in_profiles),
             user_profiles: Object.keys(data.user_profiles),
             profile_task_decomposition_policies: taskDecompositionPolicies,
+            profile_review_remediation_mode_policies: remediationModePolicies,
             profile_review_catalog_policies: catalogPolicies,
             config_path: resolveProfilesPath(bundleRoot)
         }, null, 2);
@@ -116,9 +134,11 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
     for (const [name, entry] of Object.entries(data.built_in_profiles)) {
         const marker = name === data.active_profile ? '(*) ' : '    ';
         const decomposition = taskDecompositionPolicies[name];
+        const remediationMode = remediationModePolicies[name];
         lines.push(
             `  ${marker}${padRight(name, 16)} depth=${entry.depth} ` +
-            `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ${entry.description}`
+            `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ` +
+            `remediation=${remediationMode.legacy_full_only ? 'FULL-only' : 'FULL/DELTA'} ${entry.description}`
         );
     }
     const userNames = Object.keys(data.user_profiles);
@@ -128,9 +148,11 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
         for (const [name, entry] of Object.entries(data.user_profiles)) {
             const marker = name === data.active_profile ? '(*) ' : '    ';
             const decomposition = taskDecompositionPolicies[name];
+            const remediationMode = remediationModePolicies[name];
             lines.push(
                 `  ${marker}${padRight(name, 16)} depth=${entry.depth} ` +
-                `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ${entry.description}`
+                `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ` +
+                `remediation=${remediationMode.legacy_full_only ? 'FULL-only' : 'FULL/DELTA'} ${entry.description}`
             );
         }
     }
@@ -153,12 +175,19 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         data.active_profile
     );
     const reviewTriggerPolicy = loadReviewTriggerPolicy(path.join(bundleRoot, 'live', 'config', 'paths.json'));
+    const remediationModePolicy = summarizeReviewRemediationModePolicy(
+        resolveReviewRemediationModePolicyFromProfile(
+            entry.review_remediation_mode_policy,
+            data.active_profile
+        )
+    );
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             is_built_in: isBuiltInProfile(data, data.active_profile),
             entry: entry,
             task_decomposition: taskDecompositionPolicy,
+            review_remediation_mode_policy: remediationModePolicy,
             review_catalog_policy: catalogPolicy,
             review_trigger_policy: reviewTriggerPolicy,
             config_path: resolveProfilesPath(bundleRoot)
@@ -181,6 +210,12 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         lines.push(`ReviewCatalogPolicySha256: ${catalogPolicy.policy_sha256}`);
         lines.push(`ReviewFindingPolicy: ${formatReviewFindingPolicy(entry.review_finding_policy)}`);
         lines.push(`ReviewFollowUpPolicy: ${formatReviewFollowUpPolicy(entry.review_follow_up_policy)}`);
+        lines.push(
+            `ReviewRemediationModePolicy: configured=${String(remediationModePolicy.configured)}, ` +
+            `legacy_full_only=${String(remediationModePolicy.legacy_full_only)}, ` +
+            `policy_id=${remediationModePolicy.policy_id}, ` +
+            `delta_eligible=[${remediationModePolicy.delta_eligible_review_types.join(',') || 'none'}]`
+        );
         lines.push(`TokenEconomy: ${formatTokenEconomy(entry.token_economy)}`);
         lines.push(`Skills: ${formatSkills(entry.skills)}`);
         lines.push(`ReviewTriggerPolicy: ${formatReviewTriggerPolicy(reviewTriggerPolicy)}`);

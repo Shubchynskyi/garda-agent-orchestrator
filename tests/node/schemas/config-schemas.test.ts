@@ -296,6 +296,24 @@ test('template profiles.json validates against schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('profiles schema requires exact conservative remediation policy when explicitly configured', () => {
+    const template = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const invalid = structuredClone(template);
+    const policy = (
+        invalid.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    policy.force_full_categories = ['ambiguous', 'global'];
+    const invalidResult = validateAgainstSchema(invalid, profilesSchema);
+    assert.equal(invalidResult.valid, false);
+    assert.ok(invalidResult.errors.some((error) => error.path.includes('force_full_categories')));
+
+    const legacy = structuredClone(template);
+    delete (
+        legacy.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy;
+    assert.equal(validateAgainstSchema(legacy, profilesSchema).valid, true);
+});
+
 test('profiles schema enforces follow-up task profile mode and fixed profile combinations', () => {
     const template = readTemplateConfig('profiles.json') as Record<string, unknown>;
     const buildCandidate = (mode: string, fixedProfile: string | null): Record<string, unknown> => {
@@ -725,6 +743,21 @@ test('validateAgainstSchema validates triggers minProperties in paths', () => {
     const result = validateAgainstSchema(data, pathsSchema);
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.message.includes('minimum')));
+});
+
+test('profiles schema accepts only the exact task decomposition policy shape', () => {
+    const profiles = readTemplateConfig('profiles.json') as {
+        built_in_profiles: Record<string, Record<string, unknown>>;
+    };
+    const balanced = profiles.built_in_profiles.balanced;
+
+    assert.equal(validateAgainstSchema(profiles, profilesSchema).valid, true);
+
+    balanced.task_decomposition = { enabled: 'yes' };
+    assert.equal(validateAgainstSchema(profiles, profilesSchema).valid, false);
+
+    balanced.task_decomposition = { enabled: true, unexpected: true };
+    assert.equal(validateAgainstSchema(profiles, profilesSchema).valid, false);
 });
 
 

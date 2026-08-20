@@ -807,12 +807,58 @@ const REVIEW_FINDING_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
+const REVIEW_REMEDIATION_MODE_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'object',
+    description: 'Explicit conservative FULL/DELTA remediation policy. A missing policy preserves legacy FULL-only behavior.',
+    properties: {
+        schema_version: { type: 'integer', const: 1 },
+        policy_id: { type: 'string', const: 'conservative_review_remediation_mode_v1' },
+        initial_review_mode: { type: 'string', const: 'FULL' },
+        delta_eligible_review_types: {
+            type: 'array',
+            minItems: 1,
+            uniqueItems: true,
+            items: { type: 'string', enum: ['code', 'refactor', 'test'] }
+        },
+        force_full_categories: {
+            type: 'array',
+            minItems: 3,
+            maxItems: 3,
+            uniqueItems: true,
+            items: { type: 'string', enum: ['ambiguous', 'generated_churn', 'global'] }
+        },
+        max_delta_changed_files: { type: 'integer', minimum: 1, maximum: 5 },
+        max_delta_changed_lines: { type: 'integer', minimum: 1, maximum: 400 },
+        max_consecutive_delta_reviews: { type: 'integer', minimum: 1, maximum: 3 }
+    },
+    required: [
+        'schema_version',
+        'policy_id',
+        'initial_review_mode',
+        'delta_eligible_review_types',
+        'force_full_categories',
+        'max_delta_changed_files',
+        'max_delta_changed_lines',
+        'max_consecutive_delta_reviews'
+    ],
+    additionalProperties: false
+});
+
 const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
     type: 'object',
     description: 'A single workspace profile defining policy overlays.',
     properties: {
         description: { type: 'string', minLength: 1, description: 'Human-readable profile description.' },
         depth: { type: 'integer', minimum: 1, maximum: 3, description: 'Default task depth (1–3).' },
+        task_decomposition: {
+            type: 'object',
+            description: 'Whether the task-start workflow asks for guarded decomposition before implementation.',
+            properties: {
+                enabled: { type: 'boolean' }
+            },
+            required: ['enabled'],
+            additionalProperties: false
+        },
         review_policy: {
             type: 'object',
             description: 'Catalog review states keyed by canonical review id. Unknown ids are rejected against review-catalog.json by profile validation.',
@@ -825,6 +871,7 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
             additionalProperties: REVIEW_POLICY_VALUE
         },
         review_finding_policy: REVIEW_FINDING_POLICY_SCHEMA,
+        review_remediation_mode_policy: REVIEW_REMEDIATION_MODE_POLICY_SCHEMA,
         review_follow_up_policy: {
             type: 'object',
             description: 'Deferred finding task materialization and child-profile policy.',

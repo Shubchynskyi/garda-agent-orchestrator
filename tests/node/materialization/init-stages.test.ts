@@ -10,6 +10,7 @@ import {
 } from '../../../src/materialization/init';
 import { getProjectDiscovery } from '../../../src/materialization/project-discovery';
 import {
+    mergeProfilesConfigWithTemplate,
     runInitConfigStage
 } from '../../../src/materialization/init/init-config-stage';
 import {
@@ -46,6 +47,42 @@ function copyDirectoryRecursive(source: string, destination: string): void {
         }
     }
 }
+
+describe('profile config materialization migration', () => {
+    it('preserves legacy remediation policy omission while applying explicit policy to fresh profiles', () => {
+        const template = {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_remediation_mode_policy: { policy_id: 'conservative_review_remediation_mode_v1' }
+                }
+            },
+            user_profiles: {}
+        };
+        const legacy = structuredClone(template) as unknown as Record<string, unknown>;
+        delete (
+            (legacy.built_in_profiles as Record<string, Record<string, unknown>>).balanced
+        ).review_remediation_mode_policy;
+
+        const migrated = mergeProfilesConfigWithTemplate(template, legacy);
+        assert.equal(
+            Object.hasOwn(
+                (migrated.built_in_profiles as Record<string, Record<string, unknown>>).balanced,
+                'review_remediation_mode_policy'
+            ),
+            false
+        );
+        const fresh = mergeProfilesConfigWithTemplate(template, null);
+        assert.equal(
+            ((fresh.built_in_profiles as Record<string, Record<string, unknown>>)
+                .balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
+            'conservative_review_remediation_mode_v1'
+        );
+    });
+});
 
 function createStageWorkspace(repoRoot: string): {
     projectRoot: string;

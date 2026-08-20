@@ -28,6 +28,7 @@ import type {
     ReviewFollowUpTaskProfileAssignment
 } from '../../policy/profile-resolver';
 import type { ReviewTriggerPolicy } from '../../policy/review-trigger-policy';
+import type { ReviewRemediationModePolicySummary } from '../../policy/review-remediation-mode-policy';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -362,6 +363,7 @@ export interface ReportProfileRow {
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
     review_follow_up_task_profile_assignment: ReviewFollowUpTaskProfileAssignment;
+    review_remediation_mode_policy: ReviewRemediationModePolicySummary;
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }

@@ -22,10 +22,21 @@ import {
     shouldIncludeTelemetryForCurrentCycle
 } from '../../gates/task-events-summary/task-events-summary';
 import { GATE_FAIL_EVENTS, GATE_PASS_EVENTS } from './stats/constants';
-import type { AggregateStatsResult, TaskStatsResult, TokenContribution, TokenEconomySummary } from './stats/types';
+import type {
+    AggregateStatsResult,
+    ReviewExecutionModeSummary,
+    TaskStatsResult,
+    TokenContribution,
+    TokenEconomySummary
+} from './stats/types';
 import { resolveEffectiveReviewLaneSetOrLegacy } from '../../policy/effective-review-lane-set';
 
-export type { AggregateStatsResult, TaskStatsResult, TokenEconomySummary } from './stats/types';
+export type {
+    AggregateStatsResult,
+    ReviewExecutionModeSummary,
+    TaskStatsResult,
+    TokenEconomySummary
+} from './stats/types';
 export {
     formatAggregateStatsJson,
     formatAggregateStatsText,
@@ -40,6 +51,50 @@ function safeReadJson(filePath: string): Record<string, unknown> | null {
     } catch {
         return null;
     }
+}
+
+function buildReviewExecutionModeSummary(
+    events: readonly Record<string, unknown>[]
+): ReviewExecutionModeSummary {
+    const byReviewType: ReviewExecutionModeSummary['by_review_type'] = {};
+    let fullCount = 0;
+    let deltaCount = 0;
+    let legacyUnknownCount = 0;
+    for (const event of events) {
+        if (String(event.event_type || '').trim().toUpperCase() !== 'REVIEW_RECORDED') continue;
+        const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+            ? event.details as Record<string, unknown>
+            : {};
+        if (details.reused_existing_review === true) continue;
+        const reviewType = String(details.review_type || 'unknown').trim().toLowerCase() || 'unknown';
+        const entry = byReviewType[reviewType] ||= {
+            full_count: 0,
+            delta_count: 0,
+            legacy_unknown_count: 0
+        };
+        const mode = String(details.review_execution_mode || '').trim().toUpperCase();
+        if (mode === 'FULL') {
+            fullCount += 1;
+            entry.full_count += 1;
+        } else if (mode === 'DELTA') {
+            deltaCount += 1;
+            entry.delta_count += 1;
+        } else {
+            legacyUnknownCount += 1;
+            entry.legacy_unknown_count += 1;
+        }
+    }
+    const totalAttempts = fullCount + deltaCount + legacyUnknownCount;
+    return {
+        total_attempts: totalAttempts,
+        full_count: fullCount,
+        delta_count: deltaCount,
+        legacy_unknown_count: legacyUnknownCount,
+        by_review_type: Object.fromEntries(Object.entries(byReviewType).sort(([left], [right]) => left.localeCompare(right))),
+        visible_summary_line:
+            `Review execution modes: total=${totalAttempts}; FULL=${fullCount}; DELTA=${deltaCount}; ` +
+            `legacy_unknown=${legacyUnknownCount}`
+    };
 }
 
 function getReviewContextSummary(payload: Record<string, unknown> | null | undefined): TokenContribution | null {
@@ -244,6 +299,9 @@ export function buildTaskStats(
             taskId: safeTaskId,
             timelineEvents: events as ReviewReuseTelemetryEventLike[]
         });
+    const reviewExecutionModeSummary = options.includeReviewAttemptSummary === false
+        ? null
+        : buildReviewExecutionModeSummary(events);
 
     const budgetComparison = buildBudgetComparison(
         safeTaskId,
@@ -268,6 +326,7 @@ export function buildTaskStats(
         effective_depth: effectiveDepth,
         depth_escalated: depthEscalated,
         review_attempt_summary: reviewAttemptSummary,
+        review_execution_mode_summary: reviewExecutionModeSummary,
         budget_forecast: budgetForecast,
         budget_comparison: budgetComparison,
         token_economy: tokenEconomy

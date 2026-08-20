@@ -1,7 +1,8 @@
 import type {
     ProfileTaskDecompositionConfig,
     ReviewFindingPolicy,
-    ReviewFollowUpPolicy
+    ReviewFollowUpPolicy,
+    ProfileEntry as PolicyProfileEntry
 } from '../../../policy/profile-resolver';
 
 export type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
@@ -15,6 +16,7 @@ export interface ProfileEntry {
     review_policy: Record<string, boolean | 'auto'>;
     review_finding_policy?: ReviewFindingPolicy;
     review_follow_up_policy?: ReviewFollowUpPolicy;
+    review_remediation_mode_policy?: PolicyProfileEntry['review_remediation_mode_policy'];
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }

@@ -220,6 +220,16 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - `reviewer_identity`: provider-assigned reviewer id with `agent:` scope.
   - Historical `same_agent_fallback` receipts may be read for diagnostics only; they do not satisfy a fresh mandatory review cycle.
   - Gate diagnostics must explain whether each review has valid delegated fresh-context execution evidence.
+
+## Remediation Review Modes
+- `reviewer_execution_mode` remains `delegated_subagent`; `review_execution_mode` independently records review scope as `FULL` or `DELTA`.
+- The first accepted review for every effective lane is always `FULL`. `DELTA` is bounded repair verification chained to authenticated exhaustive coverage, never an initial or standalone review.
+- A workspace profile enables `DELTA` only by explicitly declaring a valid `review_remediation_mode_policy`. Profiles without that field, including legacy workspaces, resolve fail-closed to `FULL`-only behavior.
+- The immutable task profile snapshot owns the mode policy for the active lifecycle. Editing profile configuration never changes an already locked task snapshot.
+- Only eligible `code`, `refactor`, and `test` lanes may use `DELTA`, within configured file/line/consecutive-review bounds and only when task criteria, policy, catalog, dependency graph, full-scope membership, and authenticated baseline lineage remain unchanged.
+- Ambiguous or global impact, generated churn, protected control-plane/policy changes, API/auth/security/database/schema/dependency/infrastructure/secret/lockfile boundaries, unavailable impact, oversized changes, periodic-full thresholds, stale or tampered evidence, and dependency invalidation force `FULL`.
+- A `DELTA` context carries exact remediation targets plus complete prior-scope lineage. Findings outside the delta remain preserved until authenticated reconciliation resolves or disposition-locks them.
+- Status, profile output, stats, receipts, and task-audit reports expose the configured/legacy policy state and observed `FULL`/`DELTA` modes. These are diagnostics over gate-owned contracts, not alternate routing authority.
 - For new cycles, validated findings plus locked disposition state form the release gate; reviewer-authored verdicts are forbidden.
 - Historical verdict tokens remain readable for audit-only compatibility:
   - code: `REVIEW PASSED`

@@ -18,6 +18,8 @@ import {
 
 export interface ReviewCoverageAuditEntry {
     review_type: string;
+    review_execution_mode: 'FULL' | 'DELTA' | null;
+    review_execution_source: string | null;
     status: 'COMPLETE' | 'INCOMPLETE' | 'LEGACY_NOT_REQUIRED';
     contract_sha256: string | null;
     obligation_count: number;
@@ -34,6 +36,11 @@ export interface ReviewCoverageAuditSummary {
     status: 'COMPLETE' | 'INCOMPLETE' | 'NOT_REQUIRED';
     entries: ReviewCoverageAuditEntry[];
     omitted_obligation_ids: string[];
+    review_execution_modes: {
+        full_count: number;
+        delta_count: number;
+        legacy_unknown_count: number;
+    };
     visible_summary_line: string;
 }
 
@@ -75,6 +82,24 @@ function nestedStringValue(value: unknown, key: string): string | null {
         : null;
 }
 
+function resolveReviewExecutionTelemetry(
+    context: Record<string, unknown> | null,
+    receipt: Record<string, unknown> | null
+): { mode: 'FULL' | 'DELTA' | null; source: string | null } {
+    const reviewExecution = context?.review_execution
+        && typeof context.review_execution === 'object'
+        && !Array.isArray(context.review_execution)
+        ? context.review_execution as Record<string, unknown>
+        : null;
+    const contextMode = String(reviewExecution?.mode || '').trim().toUpperCase();
+    const receiptMode = String(receipt?.review_execution_mode || '').trim().toUpperCase();
+    const modeValue = contextMode === 'FULL' || contextMode === 'DELTA' ? contextMode : receiptMode;
+    return {
+        mode: modeValue === 'FULL' || modeValue === 'DELTA' ? modeValue : null,
+        source: stringValue(reviewExecution?.source)
+    };
+}
+
 export function buildReviewCoverageAuditSummary(options: {
     reviewsRoot: string;
     taskId: string;
@@ -91,6 +116,7 @@ export function buildReviewCoverageAuditSummary(options: {
         const receiptPath = path.join(options.reviewsRoot, `${options.taskId}-${reviewType}-receipt.json`);
         const context = readJson(contextPath);
         const receipt = readJson(receiptPath);
+        const reviewExecutionTelemetry = resolveReviewExecutionTelemetry(context, receipt);
         const contextSchemaVersion = Number(context?.schema_version);
         if (Number.isInteger(contextSchemaVersion) && contextSchemaVersion > 0 && contextSchemaVersion < 3) {
             const contextSha256 = sha256File(contextPath);
@@ -112,6 +138,8 @@ export function buildReviewCoverageAuditSummary(options: {
                 && recordedEventMatches) {
                 entries.push({
                     review_type: reviewType,
+                    review_execution_mode: reviewExecutionTelemetry.mode,
+                    review_execution_source: reviewExecutionTelemetry.source,
                     status: 'LEGACY_NOT_REQUIRED',
                     contract_sha256: null,
                     obligation_count: 0,
@@ -249,6 +277,8 @@ export function buildReviewCoverageAuditSummary(options: {
         const complete = violations.length === 0;
         entries.push({
             review_type: reviewType,
+            review_execution_mode: reviewExecutionTelemetry.mode,
+            review_execution_source: reviewExecutionTelemetry.source,
             status: complete ? 'COMPLETE' : 'INCOMPLETE',
             contract_sha256: receiptHash || null,
             obligation_count: obligationCount,
@@ -272,12 +302,20 @@ export function buildReviewCoverageAuditSummary(options: {
         completed: acc.completed + entry.completed_obligation_count,
         required: acc.required + entry.obligation_count
     }), { completed: 0, required: 0 });
+    const executionModes = entries.reduce((acc, entry) => {
+        if (entry.review_execution_mode === 'FULL') acc.full_count += 1;
+        else if (entry.review_execution_mode === 'DELTA') acc.delta_count += 1;
+        else acc.legacy_unknown_count += 1;
+        return acc;
+    }, { full_count: 0, delta_count: 0, legacy_unknown_count: 0 });
     return {
         status,
         entries,
         omitted_obligation_ids: omitted,
+        review_execution_modes: executionModes,
         visible_summary_line:
             `Review coverage: status=${status}; obligations=${totals.completed}/${totals.required}; ` +
+            `modes=FULL:${executionModes.full_count},DELTA:${executionModes.delta_count},legacy_unknown:${executionModes.legacy_unknown_count}; ` +
             `incomplete_reviews=${incomplete.map((entry) => entry.review_type).join(',') || 'none'}; ` +
             `omitted=${omitted.join(',') || 'none'}`
     };

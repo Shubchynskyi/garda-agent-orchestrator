@@ -15,6 +15,11 @@ import {
     loadReviewTriggerPolicy,
     type ReviewTriggerPolicy
 } from './review-trigger-policy';
+import {
+    resolveReviewRemediationModePolicyFromProfile,
+    type ReviewRemediationModePolicy,
+    type ReviewRemediationModePolicyResolution
+} from './review-remediation-mode-policy';
 
 export {
     analyzeProfileReviewCatalogPolicy,
@@ -131,6 +136,7 @@ export interface ProfileEntry {
     review_policy: ProfileReviewPolicy;
     review_finding_policy?: ReviewFindingPolicy;
     review_follow_up_policy?: ReviewFollowUpPolicy;
+    review_remediation_mode_policy?: ReviewRemediationModePolicy;
     review_dependency_graph?: ReviewDependencyGraphDeclaration;
     token_economy: ProfileTokenEconomy;
     skills: ProfileSkills;
@@ -193,6 +199,7 @@ export interface EffectivePolicy {
     review_finding_policy_diagnostics: string[];
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
+    review_remediation_mode_policy: ReviewRemediationModePolicyResolution;
     token_economy: TokenEconomyConfig;
     skills: ProfileSkills;
     installed_packs: string[];
@@ -1276,6 +1283,10 @@ export function resolveEffectivePolicy(
         entry.review_follow_up_policy,
         profileName
     );
+    const reviewRemediationModePolicy = resolveReviewRemediationModePolicyFromProfile(
+        entry.review_remediation_mode_policy,
+        profileName
+    );
     const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(
         entry.task_decomposition,
         profileName
@@ -1327,6 +1338,7 @@ export function resolveEffectivePolicy(
         review_finding_policy_diagnostics: reviewFindingPolicyResolution.diagnostics,
         review_follow_up_policy: reviewFollowUpPolicyResolution.policy,
         review_follow_up_policy_diagnostics: reviewFollowUpPolicyResolution.diagnostics,
+        review_remediation_mode_policy: reviewRemediationModePolicy,
         token_economy: tokenEconomy,
         skills,
         installed_packs,
@@ -1354,6 +1366,11 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     lines.push(
         `TaskDecomposition: enabled=${String(policy.task_decomposition.enabled)}, ` +
         `configured=${String(policy.task_decomposition.configured)}, provenance=${policy.task_decomposition.provenance}`
+    );
+    lines.push(
+        `ReviewRemediationModePolicy: configured=${String(!policy.review_remediation_mode_policy.legacy_fallback)}, ` +
+        `legacy_full_only=${String(policy.review_remediation_mode_policy.legacy_fallback)}, ` +
+        `policy_id=${policy.review_remediation_mode_policy.policy.policy_id}`
     );
     if (policy.scope_category) {
         lines.push(`ScopeCategory: ${policy.scope_category}`);

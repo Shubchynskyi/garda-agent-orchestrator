@@ -58,6 +58,34 @@ export interface InitConfigStageResult {
     optionalQualityChecksNotice: string | null;
 }
 
+export function mergeProfilesConfigWithTemplate(
+    templateConfig: Record<string, unknown>,
+    existingConfig: Record<string, unknown> | null
+): Record<string, unknown> {
+    const merged = mergeConfig(templateConfig, existingConfig);
+    if (!existingConfig) return merged;
+    for (const groupName of ['built_in_profiles', 'user_profiles']) {
+        const existingGroup = isPlainObject(existingConfig[groupName])
+            ? existingConfig[groupName] as Record<string, unknown>
+            : {};
+        const mergedGroup = isPlainObject(merged[groupName])
+            ? merged[groupName] as Record<string, unknown>
+            : {};
+        for (const [existingName, existingProfile] of Object.entries(existingGroup)) {
+            if (!isPlainObject(existingProfile) || Object.hasOwn(existingProfile, 'review_remediation_mode_policy')) {
+                continue;
+            }
+            const mergedName = Object.keys(mergedGroup).find((candidate) => (
+                candidate.toLowerCase() === existingName.toLowerCase()
+            ));
+            if (mergedName && isPlainObject(mergedGroup[mergedName])) {
+                delete (mergedGroup[mergedName] as Record<string, unknown>).review_remediation_mode_policy;
+            }
+        }
+    }
+    return merged;
+}
+
 export function getFullSuiteEnabledDiagnostic(config: Record<string, unknown>): string {
     const fullSuiteSection = isPlainObject(config.full_suite_validation)
         ? config.full_suite_validation
@@ -284,7 +312,9 @@ export function runInitConfigStage(
                             preserveMovedProjectQualityRulesAsCustom: isSourceCheckoutRoot(targetRoot)
                         }
                     ), discovery, preservedCompileGateCommand)
-                    : mergeConfig(templateConfig, existingConfig);
+                    : configName === 'profiles'
+                        ? mergeProfilesConfigWithTemplate(templateConfig, existingConfig)
+                        : mergeConfig(templateConfig, existingConfig);
 
             if (configName === 'token-economy') {
                 materializedConfig.enabled = tokenEconomyEnabled;

@@ -28,7 +28,7 @@ node bin/garda.js gate validate-config
 | `skills-headlines.json` | Compact task-start optional-skill selection surface with installed skill headlines and pack summaries | No, generated from live skill/pack manifests |
 
 `garda.config.json` is rewritten from the bundled template during init/reinit/update, so stale local edits do not become the long-term source of truth.
-The editable live configs above are merged forward during init/reinit/update: existing live values are preserved and missing template keys are filled in.
+The editable live configs above are merged forward during init/reinit/update: existing live values are preserved and ordinary missing template keys are filled in. The guarded `profiles.json` remediation-mode policy is the exception: omission is preserved for an existing profile so a legacy workspace cannot acquire DELTA behavior without explicit migration.
 
 ## Validation
 
@@ -254,6 +254,33 @@ garda profile policy apply balanced --preset strict \
 Use `--copy-from <profile>` to copy the source profile's effective policy or `--reset` to restore a built-in profile from the shipped definition. User-profile reset deterministically uses the shipped `balanced` policy and fails closed when that shipped baseline is unavailable. A legacy profile preview reports the fail-closed migration, and applying the unchanged preview materializes the explicit `strict` policy. Apply serializes all profile-config writers and rechecks the preview hash while holding the write lock. Changed mutations use an fsynced write-ahead audit transaction (`PREPARED` followed by `COMMITTED` or `ABORTED`); every CLI or UI profile writer removes a dead-owner lock and recovers an interrupted transaction from the current config hash before computing its mutation. Bounded hash-only evidence in `runtime/profile-finding-policy-audit.jsonl` stores the active-task count and full-list SHA-256 without raw task identifiers, distinguishes discovery failure from a verified empty result, and affects future task snapshots only; already-entered tasks retain their locked profile policy.
 
 For `--preset custom`, provide all five actions: `--critical fix_now`, `--high <action>`, `--medium <action>`, `--low <action>`, and `--residual-risk <action>`. Profile writers wait for a short bounded lock window before reporting contention, while active-task discovery is performed outside the serialized config-write section. Interactive profile creation also rejects a commit if `profiles.json` changed while prompts were open, preventing inheritance from a stale source snapshot.
+
+## Profile Remediation Review Mode Policy
+
+New shipped profiles declare an explicit conservative policy:
+
+```json
+{
+  "review_remediation_mode_policy": {
+    "schema_version": 1,
+    "policy_id": "conservative_review_remediation_mode_v1",
+    "initial_review_mode": "FULL",
+    "delta_eligible_review_types": ["code", "refactor", "test"],
+    "force_full_categories": ["ambiguous", "generated_churn", "global"],
+    "max_delta_changed_files": 4,
+    "max_delta_changed_lines": 240,
+    "max_consecutive_delta_reviews": 3
+  }
+}
+```
+
+The first review for every lane remains `FULL`. Eligible remediation may use
+`DELTA` only while the immutable task snapshot, exhaustive baseline lineage,
+scope membership, findings reconciliation, and bounded risk checks remain
+valid. Missing policy is not defaulted during init/update of an existing
+profile: it is preserved as a visible legacy `FULL`-only state. To migrate,
+create a current profile or add the exact schema-valid policy explicitly before
+starting the next task. Existing task snapshots never change retroactively.
 
 Profiles also control how non-blocking `create_follow_up` items become backlog work:
 

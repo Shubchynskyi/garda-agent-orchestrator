@@ -38,6 +38,24 @@
           "fixed_profile": null
         }
       },
+      "review_remediation_mode_policy": {
+        "schema_version": 1,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "code",
+          "refactor",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
+      },
       "token_economy": {
         "enabled": true,
         "strip_examples": true,
@@ -84,6 +102,24 @@
           "mode": "one_level_lighter",
           "fixed_profile": null
         }
+      },
+      "review_remediation_mode_policy": {
+        "schema_version": 1,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "code",
+          "refactor",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
       },
       "token_economy": {
         "enabled": true,
@@ -132,6 +168,24 @@
           "fixed_profile": null
         }
       },
+      "review_remediation_mode_policy": {
+        "schema_version": 1,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "code",
+          "refactor",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
+      },
       "token_economy": {
         "enabled": true,
         "strip_examples": false,
@@ -178,6 +232,24 @@
           "mode": "one_level_lighter",
           "fixed_profile": null
         }
+      },
+      "review_remediation_mode_policy": {
+        "schema_version": 1,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "code",
+          "refactor",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
       },
       "token_economy": {
         "enabled": true,

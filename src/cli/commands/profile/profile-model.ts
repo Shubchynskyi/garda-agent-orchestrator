@@ -8,6 +8,10 @@ import {
     REVIEW_FINDING_POLICY_PRESETS
 } from '../../../policy/profile-resolver';
 import {
+    buildDefaultReviewRemediationModePolicy,
+    getReviewRemediationModePolicyViolations
+} from '../../../policy/review-remediation-mode-policy';
+import {
     analyzeProfileReviewCatalogPolicy
 } from '../../../policy/profile-review-catalog-policy';
 import type { ReviewCapabilitiesConfigMap } from '../../../core/review-capabilities';
@@ -93,6 +97,10 @@ export function validateProfilesIntegrity(
                 `references unknown profile '${fixedFollowUpProfile}'.`
             );
         }
+        if (entry.review_remediation_mode_policy !== undefined) {
+            issues.push(...getReviewRemediationModePolicyViolations(entry.review_remediation_mode_policy)
+                .map((issue) => `Profile '${name}' ${issue}`));
+        }
         if (options) {
             const catalogPolicy = analyzeProfileReviewCatalogPolicy(
                 name,
@@ -156,6 +164,7 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
             materialization_mode: 'grouped_by_parent',
             task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
         },
+        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
         token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
         skills: { auto_suggest: true }
     };
@@ -192,6 +201,13 @@ export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry 
         prepared.review_follow_up_policy = {
             ...entry.review_follow_up_policy,
             task_profile: { ...entry.review_follow_up_policy.task_profile }
+        };
+    }
+    if (entry.review_remediation_mode_policy) {
+        prepared.review_remediation_mode_policy = {
+            ...entry.review_remediation_mode_policy,
+            delta_eligible_review_types: [...entry.review_remediation_mode_policy.delta_eligible_review_types],
+            force_full_categories: [...entry.review_remediation_mode_policy.force_full_categories]
         };
     }
     return prepared;
