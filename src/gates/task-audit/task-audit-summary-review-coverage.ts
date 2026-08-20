@@ -7,7 +7,6 @@ import {
     getReviewCoverageValidationSummaryContractViolations
 } from '../review/review-coverage-ledger';
 import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
-import { buildReviewContextPreflightDiffExpectations } from '../review-context/review-context-contract';
 import { getReviewReceiptExecutionEvidenceContractViolations } from '../review/review-evidence-contract';
 import { validateReviewFindingsValidationArtifactForReceipt } from '../review/review-findings-validation-artifact';
 import { resolvePersistedRemediationReviewExecutionAuthority } from '../review-remediation/review-remediation-execution-authority';
@@ -163,8 +162,7 @@ export function buildReviewCoverageAuditSummary(options: {
             if (!reviewExecution) {
                 violations.push('review context is missing the required schema-4 review_execution contract');
             } else {
-                const fullReviewScope = buildReviewContextPreflightDiffExpectations(preflight, reviewType)
-                    .expectedChangedFiles;
+                const fullReviewScope = authoritativeCoverageChangedFiles;
                 const initialAuthority: ReviewRemediationReviewContractValidationAuthority = {
                     taskId: options.taskId,
                     reviewType,

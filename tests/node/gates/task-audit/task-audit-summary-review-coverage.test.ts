@@ -344,7 +344,9 @@ test('review coverage audit rejects stale schema-4 findings-validation execution
     const contextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     const reviewArtifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
     const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
-    const preflight = { changed_files: [changedFile] };
+    const preflight = {
+        changed_files: [changedFile, 'tests/example.test.ts', 'docs/example.md']
+    };
     writeJson(preflightPath, preflight);
     const preflightSha256 = fileSha256(preflightPath);
     const coverageContract = buildReviewCoverageContract({ reviewType, changedFiles: [changedFile] });
