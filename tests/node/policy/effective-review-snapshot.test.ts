@@ -807,7 +807,7 @@ test('rejects catalog and profile drift before downstream review routing', () =>
     }
 });
 
-test('downstream routing rejects live profile input drift after preflight', () => {
+test('downstream routing preserves frozen policy across non-routing profile drift and rejects lane drift', () => {
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'effective-review-profile-drift-'));
     try {
         const bundleRoot = path.join(tmpRoot, 'garda-agent-orchestrator');
@@ -860,8 +860,15 @@ test('downstream routing rejects live profile input drift after preflight', () =
         assert.deepEqual(validatePreflightForReview(preflightPath, 'T-729-3').errors, []);
         fs.appendFileSync(path.join(configDir, 'profiles.json'), '\n', 'utf8');
 
+        assert.deepEqual(validatePreflightForReview(preflightPath, 'T-729-3').errors, []);
+
+        const profilesPath = path.join(configDir, 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as Record<string, any>;
+        profiles.built_in_profiles.balanced.review_policy.code = false;
+        fs.writeFileSync(profilesPath, `${JSON.stringify(profiles, null, 2)}\n`, 'utf8');
+
         assert.ok(validatePreflightForReview(preflightPath, 'T-729-3').errors.some(
-            (error) => /profile policy inputs changed after preflight \(profiles\)/iu.test(error)
+            (error) => /profile policy inputs changed after preflight \(review lane policy\)/iu.test(error)
         ));
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });

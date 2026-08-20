@@ -329,7 +329,7 @@ function assertReviewProfileInputsCurrent(
     const profileInputKeys = ['profiles', 'review_capabilities', 'token_economy', 'skill_packs', 'paths'];
     const changedInputs = profileInputKeys.filter(
         (key) => frozenSnapshot.config_hashes[key] !== liveSnapshot.config_hashes[key]
-    );
+    ).filter((key) => key !== 'profiles');
     const frozenPolicy = resolveProfileReviewCatalogPolicy(
         frozenSnapshot.source.effective_profile,
         frozenSnapshot.review_lane_selection.profile_review_policy,
