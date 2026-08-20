@@ -882,6 +882,78 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         }
     });
 
+    it('reset-for-rerun rolls back pending generated review follow-ups and their parent marker', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            taskStatus: 'IN_REVIEW',
+            hasEventsFile: true,
+            hasReviewArtifact: true
+        });
+        const fingerprint = 'a'.repeat(64);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(taskPath, [
+            '## Active Queue',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            `| ${taskId} | IN_REVIEW | P1 | workflow | Parent | codex | 2026-08-20 | balanced | Keep this note. Review follow-up tasks materialized: \`${taskId}-F1\`; artifact \`runtime/reviews/${taskId}-code-findings-follow-ups.json\`. |`,
+            `| ${taskId}-F1 | TODO | P2 | workflow | Deferred findings | codex | 2026-08-20 | fast | Child of \`${taskId}\`. review_follow_up_group_fingerprint=${fingerprint}. |`,
+            `| ${taskId}-F2 | DONE | P2 | workflow | Completed findings | codex | 2026-08-20 | fast | Child of \`${taskId}\`. review_follow_up_group_fingerprint=${fingerprint}. |`,
+            '| T-999 | TODO | P3 | other | Unrelated | codex | 2026-08-20 | fast | Keep. |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(
+            path.join(reviewsRoot, `${taskId}-code-findings-follow-ups.json`),
+            JSON.stringify({ task_id: taskId, status: 'MATERIALIZED' }) + '\n',
+            'utf8'
+        );
+
+        try {
+            const scope = resolveTaskResetScope({ taskId, repoRoot, eventsRoot, reviewsRoot });
+            assert.deepEqual(scope.pendingFollowUpTaskIds, [`${taskId}-F1`]);
+            assert.deepEqual(scope.preservedFollowUpTaskIds, [`${taskId}-F2`]);
+            assert.ok(scope.reviewArtifactNames.includes(`${taskId}-code-findings-follow-ups.json`));
+
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, reopen: true });
+            assert.equal(result.outcome, 'RESET_COMPLETE');
+            const taskMd = fs.readFileSync(taskPath, 'utf8');
+            assert.doesNotMatch(taskMd, new RegExp(`\\|\\s*${taskId}-F1\\s*\\|`, 'u'));
+            assert.match(taskMd, new RegExp(`\\|\\s*${taskId}-F2\\s*\\|`, 'u'));
+            assert.match(taskMd, /Keep this note\./u);
+            assert.doesNotMatch(taskMd, /Review follow-up tasks materialized:/u);
+            assert.match(taskMd, /\| T-999\s+\|/u);
+            assert.ok(!fs.existsSync(path.join(reviewsRoot, `${taskId}-code-findings-follow-ups.json`)));
+
+            const report = JSON.parse(fs.readFileSync(String(result.resetReportPath), 'utf8')) as Record<string, unknown>;
+            assert.deepEqual(report.removed_pending_follow_up_task_ids, [`${taskId}-F1`]);
+            assert.deepEqual(report.pending_follow_up_task_ids_planned_for_removal, [`${taskId}-F1`]);
+            assert.deepEqual(report.preserved_started_or_terminal_follow_up_task_ids, [`${taskId}-F2`]);
+            assert.ok(result.outputLines.includes(`PendingFollowUpTasksPlannedForRemoval: ${taskId}-F1`));
+            assert.ok(result.outputLines.includes(`PendingFollowUpTasksRemoved: ${taskId}-F1`));
+            assert.ok(result.outputLines.includes(`StartedOrTerminalFollowUpTasksPreserved: ${taskId}-F2`));
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('preserves the current reset breadcrumb across repeated resets', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            taskStatus: 'IN_REVIEW',
+            hasEventsFile: true
+        });
+        const resetReportPath = path.join(reviewsRoot, `${taskId}-reset-report.json`);
+        fs.writeFileSync(resetReportPath, JSON.stringify({ task_id: taskId, timestamp_utc: 'old' }) + '\n', 'utf8');
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, reopen: true });
+            assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.ok(fs.existsSync(resetReportPath));
+            const report = JSON.parse(fs.readFileSync(resetReportPath, 'utf8')) as Record<string, unknown>;
+            assert.equal(report.event_source, 'task-reset');
+            assert.notEqual(report.timestamp_utc, 'old');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
     it('is idempotent when no artifacts exist (no files to delete)', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ taskStatus: 'IN_PROGRESS' });
         try {
