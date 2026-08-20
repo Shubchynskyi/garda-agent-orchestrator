@@ -346,6 +346,24 @@ test('continues unchanged-source review navigation without activating the guard'
     assert.match(result.reason, /still matches the frozen preflight/);
 });
 
+test('authenticates unchanged frozen scope when failed-review readiness reports an empty remediation delta', () => {
+    const repoRoot = makeRepo();
+    const result = evaluatePostReviewSourceMutationGuard({
+        repoRoot,
+        preflight: preflightFor(repoRoot),
+        workspaceReadiness: {
+            ready: false,
+            reason: 'rejected reviewer output produced no source remediation delta',
+            currentChangedFiles: []
+        },
+        reviewStates: [acceptedDeferredState(), rejectedFailedState('code')],
+        authorizedImplementationTransition: false
+    });
+
+    assert.equal(result.blocked, false, result.reason);
+    assert.match(result.reason, /documentation or closeout domains/);
+});
+
 test('preserves normal stale-preflight recovery before any accepted review evidence', () => {
     const repoRoot = makeRepo();
     const preflight = preflightFor(repoRoot);

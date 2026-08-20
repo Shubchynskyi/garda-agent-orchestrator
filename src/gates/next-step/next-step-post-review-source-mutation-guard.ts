@@ -110,7 +110,28 @@ export function evaluatePostReviewSourceMutationGuard(options: {
     const metrics = isPlainRecord(options.preflight.metrics) ? options.preflight.metrics : {};
     const expectedFingerprints = normalizeDomainScopeFingerprints(metrics.domain_scope_fingerprints);
     const currentChangedFiles = options.workspaceReadiness.currentChangedFiles || [];
-    if (!expectedFingerprints || currentChangedFiles.length === 0) {
+    if (!expectedFingerprints) {
+        const acceptedReviewTypes = deferredStates.map((state) => state.reviewType);
+        return {
+            blocked: true,
+            reason:
+                `Accepted review findings are frozen as non-remediation dispositions `
+                + `[${deferredStates.map(describeDisposition).join(', ')}], but the stale workspace cannot be `
+                + 'authenticated against domain-scope fingerprints. Refusing ordinary classify-change recovery. '
+                + 'Restore the workspace to the frozen preflight state or move the change into the materialized follow-up task; '
+                + 'an operator hotfix must run outside this task cycle through its explicit maintenance authorization.',
+            accepted_review_types: acceptedReviewTypes,
+            mutated_domains: ['unknown'],
+            mutated_files: currentChangedFiles
+        };
+    }
+
+    const currentFingerprintFiles = currentChangedFiles.length > 0
+        ? currentChangedFiles
+        : [...new Set(SOURCE_MUTATION_DOMAINS.flatMap((domainName) => (
+            expectedFingerprints.domains[domainName].changed_files
+        )))].sort();
+    if (currentFingerprintFiles.length === 0) {
         const acceptedReviewTypes = deferredStates.map((state) => state.reviewType);
         return {
             blocked: true,
@@ -130,7 +151,7 @@ export function evaluatePostReviewSourceMutationGuard(options: {
         repoRoot: options.repoRoot,
         detectionSource: String(options.preflight.detection_source || 'git_auto'),
         includeUntracked: options.preflight.include_untracked !== false,
-        changedFiles: currentChangedFiles
+        changedFiles: currentFingerprintFiles
     });
     const mutatedDomains = SOURCE_MUTATION_DOMAINS.filter((domainName) => (
         !domainEntryMatches(
