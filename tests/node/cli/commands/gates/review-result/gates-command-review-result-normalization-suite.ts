@@ -507,6 +507,90 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result rejects an invocation-bound substituted review execution contract', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-992-result-execution-binding-tamper';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const invocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.ok(invocationEvent?.details);
+        const launchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        fs.writeFileSync(fixture.launchArtifactPath, `${JSON.stringify({
+            ...launchArtifact,
+            review_execution_contract_sha256: '0'.repeat(64)
+        }, null, 2)}\n`, 'utf8');
+        const substitutedLaunchArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(fixture.launchArtifactPath))
+            .digest('hex');
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_INVOCATION_ATTESTED',
+            'INFO',
+            'Reviewer invocation rebound to a substituted execution contract by regression fixture.',
+            {
+                ...(invocationEvent.details as Record<string, unknown>),
+                reviewer_launch_artifact_sha256: substitutedLaunchArtifactSha256
+            }
+        );
+        const reviewOutputDir = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code'
+        );
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes(
+                'Reviewer launch artifact review_execution_contract_sha256 does not match the current authenticated review context'
+            )),
+            result.errors.join('\n')
+        );
+        assert.equal(
+            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)),
+            false
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEW_RECORDED'),
+            false
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result does not convert PASS validation-boundary notes into deferred findings', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-496-validation-boundary-notes';
