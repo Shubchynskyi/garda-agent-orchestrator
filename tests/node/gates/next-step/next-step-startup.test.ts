@@ -1211,6 +1211,45 @@ describe('gates/next-step startup routing', () => {
         assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
     });
 
+    it('requires fresh startup diagnostics when late TASK_ENTRY recovers a failed post-preflight rule pack', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:code-reviewer';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOAD_FAILED', 'FAIL', {
+            stage: 'POST_PREFLIGHT'
+        });
+        const lateRulePackPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-recovery-task-entry-rule-pack.json`);
+        writeJson(lateRulePackPath, buildRulePackArtifact({
+            repoRoot,
+            taskId: TASK_ID,
+            stage: 'TASK_ENTRY',
+            taskModePath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`),
+            loadedRuleFiles: [
+                '00-core.md',
+                '15-project-memory.md',
+                '40-commands.md',
+                '80-task-workflow.md',
+                '90-skill-catalog.md'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOADED', 'PASS', {
+            stage: 'TASK_ENTRY',
+            artifact_path: normalizeForTimeline(lateRulePackPath)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'handshake-diagnostics');
+        assert.match(result.reason, /no HANDSHAKE_DIAGNOSTICS_RECORDED event exists after them/);
+        assert.ok(result.commands[0].command.includes('gate handshake-diagnostics'));
+    });
+
     it('routes late TASK_ENTRY after review phase through startup recovery before stale preflight refresh', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:security-reviewer';

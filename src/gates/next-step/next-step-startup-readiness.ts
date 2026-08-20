@@ -75,12 +75,23 @@ export function readStartupCycleReadiness(
         events,
         (entry) => entry.event_type === 'REVIEW_PHASE_STARTED' && entry.sequence > latestTaskMode.sequence
     );
+    const latestPostPreflightRulePackFailureBeforeLateStartup = latestRulePack && latestReviewPhaseStarted
+        ? findLatestTimelineEvent(
+            events,
+            (entry) =>
+                entry.event_type === 'RULE_PACK_LOAD_FAILED'
+                && String(entry.details?.stage || '').trim().toUpperCase() === 'POST_PREFLIGHT'
+                && entry.sequence > latestReviewPhaseStarted.sequence
+                && entry.sequence < latestRulePack.sequence
+        )
+        : null;
 
     if (
         !options.enforceLateRulePackAfterReviewPhase
         && latestRulePack
         && latestReviewPhaseStarted
         && latestRulePack.sequence > latestReviewPhaseStarted.sequence
+        && !latestPostPreflightRulePackFailureBeforeLateStartup
     ) {
         const latestPreReviewShellSmoke = findLatestTimelineEvent(
             events,
