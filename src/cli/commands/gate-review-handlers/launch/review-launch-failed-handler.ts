@@ -32,6 +32,12 @@ import {
     assertCanonicalReviewTypeId,
     resolveAuthenticatedReviewLaneContract
 } from '../review-lane-contract';
+import {
+    assertReviewExecutionRuntimeBindings,
+    readReviewExecutionRuntimeBindings,
+    resolveReviewExecutionRuntimeBindings,
+    type ReviewExecutionRuntimeBindings
+} from '../context/review-context-runtime-validation';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -317,7 +323,7 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
         const laneReservationPath = resolveTaskOwnedReviewerScratchArtifactPath({
             repoRoot,
             taskId,
-            artifactPath: getReviewerLaunchLaneReservationPath(launchArtifactPath),
+            artifactPath: getReviewerLaunchLaneReservationPath(canonicalLaunchArtifactPath),
             label: 'Reviewer launch lane reservation'
         });
         const laneReservation = readJsonFile(
@@ -325,10 +331,13 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
             'Reviewer launch lane reservation'
         );
         let reviewLaneContract: ReturnType<typeof resolveAuthenticatedReviewLaneContract> | null = null;
+        let currentReviewExecutionBindings: ReviewExecutionRuntimeBindings | null = null;
         try {
+            const reviewContext = readJsonFile(contextPath, 'Review context artifact');
+            currentReviewExecutionBindings = resolveReviewExecutionRuntimeBindings(reviewContext);
             reviewLaneContract = resolveAuthenticatedReviewLaneContract({
                 preflight: readJsonFile(preflightPath, 'Preflight artifact'),
-                reviewContext: readJsonFile(contextPath, 'Review context artifact'),
+                reviewContext,
                 reviewType
             });
         } catch {
@@ -348,6 +357,27 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 'Reviewer launch lane reservation'
             );
         }
+        const reviewExecutionBindings = readReviewExecutionRuntimeBindings(
+            artifact,
+            'Reviewer launch artifact'
+        );
+        if (currentReviewExecutionBindings) {
+            assertReviewExecutionRuntimeBindings(
+                artifact,
+                currentReviewExecutionBindings,
+                'Reviewer launch artifact'
+            );
+        }
+        assertReviewExecutionRuntimeBindings(
+            launchInputArtifact,
+            reviewExecutionBindings,
+            'Reviewer launch input artifact'
+        );
+        assertReviewExecutionRuntimeBindings(
+            laneReservation,
+            reviewExecutionBindings,
+            'Reviewer launch lane reservation'
+        );
         const attestationState = getStringField(artifact, 'attestation_state', 'attestationState');
         const recoveringPersistedFailure = attestationState === 'launch_failed';
         if (attestationState !== 'delegation_started' && !recoveringPersistedFailure) {
@@ -625,7 +655,8 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                             delegation_started_at_utc: delegationStartedAtUtc,
                             launch_failed_at_utc: launchFailedAtUtc,
                             launch_failure_reason: failureReason,
-                            failure_reason: failureReason
+                            failure_reason: failureReason,
+                            ...reviewExecutionBindings
                         }
                     }
                 );

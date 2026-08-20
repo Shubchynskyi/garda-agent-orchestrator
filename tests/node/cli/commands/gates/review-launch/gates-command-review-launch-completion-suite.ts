@@ -44,6 +44,7 @@ import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegat
 import {
     withFilesystemLockAsync
 } from '../../../../../../src/gate-runtime/timeline/task-events-locking';
+import { resolveReviewExecutionRuntimeBindings } from '../../../../../../src/cli/commands/gate-review-handlers/context/review-context-runtime-validation';
 
 const it = createPartitionedTestRegistrar(
     nodeIt,
@@ -583,6 +584,9 @@ describe('cli/commands/gates review launch completion', () => {
         assert.ok(capturedLines.some((line) => line.includes('REVIEWER_LAUNCH_COMPLETED: code')));
 
         const completedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
         assert.equal(completedArtifact.attestation_state, 'launched', 'Artifact state should be launched');
         assert.equal(completedArtifact.evidence_type, 'delegated_reviewer_launch', 'Evidence type should be updated');
         assert.equal(completedArtifact.attestation_source, 'claude_task_tool_launch', 'Attestation source should be set');
@@ -605,6 +609,14 @@ describe('cli/commands/gates review launch completion', () => {
         assert.equal(completedArtifact.launch_input_copy_paste_reviewer_launch_prompt_sha256, completedArtifact.copy_paste_reviewer_launch_prompt_sha256);
         assert.ok(capturedLines.some((line) => line.includes('LaunchInputMode: launch_artifact_path')));
         assert.ok(capturedLines.some((line) => line.includes(`LaunchInputArtifactPath: ${launchInputArtifact.normalizedPath}`)));
+        const completedEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_COMPLETED');
+        assert.ok(completedEvent?.details);
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(completedArtifact[field], expectedValue);
+            assert.equal((completedEvent.details as Record<string, unknown>)[field], expectedValue);
+        }
 
         const previousInvokeExitCode = process.exitCode;
         const previousInvokeCwd = process.cwd();
@@ -703,6 +715,13 @@ describe('cli/commands/gates review launch completion', () => {
         const startedEvent = events.find((event) => event.event_type === 'REVIEWER_DELEGATION_STARTED');
         assert.ok(startedEvent);
         assert.equal((startedEvent.details as Record<string, unknown>).provider_invocation_id, 'cursor-subagent-T-693-code');
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(startedArtifact[field], expectedValue);
+            assert.equal((startedEvent.details as Record<string, unknown>)[field], expectedValue);
+        }
         assert.equal(
             (startedEvent.details as Record<string, unknown>).delegation_started_at_utc,
             startedArtifact.delegation_started_at_utc
@@ -1266,6 +1285,13 @@ describe('cli/commands/gates review launch completion', () => {
             .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
         assert.ok(failureEvent);
         assert.equal((failureEvent.details as Record<string, unknown>).reviewer_launch_attempt_id, attemptId);
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(failedArtifact[field], expectedValue);
+            assert.equal((failureEvent.details as Record<string, unknown>)[field], expectedValue);
+        }
 
         const complete = await runCliWithCapturedOutput([
             'gate',
@@ -2070,6 +2096,53 @@ describe('cli/commands/gates review launch completion', () => {
             complete.errors.join('\n')
         );
         const artifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(artifact.attestation_state, 'prepared');
+        assert.equal(artifact.provider_invocation_id, undefined);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects a substituted review execution contract binding', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-992-review-execution-binding-tamper';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        const preparedArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        fs.writeFileSync(fixture.launchArtifactPath, `${JSON.stringify({
+            ...preparedArtifact,
+            review_execution_contract_sha256: '0'.repeat(64)
+        }, null, 2)}\n`, 'utf8');
+
+        const complete = await runCliWithCapturedOutput([
+            'gate', 'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-execution-tamper',
+            '--attestation-source', 'test_provider_controller',
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.ok(
+            complete.errors.some((line) => line.includes(
+                'Reviewer launch artifact review_execution_contract_sha256 does not match the current authenticated review context'
+            )),
+            complete.errors.join('\n')
+        );
+        const artifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
         assert.equal(artifact.attestation_state, 'prepared');
         assert.equal(artifact.provider_invocation_id, undefined);
 

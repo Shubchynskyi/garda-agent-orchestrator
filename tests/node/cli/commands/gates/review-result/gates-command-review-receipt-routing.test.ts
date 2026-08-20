@@ -38,12 +38,14 @@ import {
     manualReviewContextTaskScopeFixture,
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
+    writeManualReviewerHandoffFixture,
     recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
     buildNoFindingsJsonReviewReport,
     buildFailedJsonReviewReport,
     seedPromptBoundReviewFixture} from './gates-command-review-result-fixtures';
 import { writeBudgetOutputFilters } from '../../gate-test-helpers';
+import { buildTaskProfilePolicySnapshot } from '../../../../../../src/policy/task-profile-policy-snapshot';
 
 describe('gates command review receipt - routing', () => {
 
@@ -654,7 +656,15 @@ describe('gates command review receipt - routing', () => {
         loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
         runHandshakeForTask(repoRoot, taskId, 'Antigravity');
         runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+        const postPreflightRulePack = loadPostPreflightRulePack(
+            repoRoot,
+            taskId,
+            preflightPath,
+            true,
+            '',
+            customTaskModePath
+        );
+        assert.equal(postPreflightRulePack.exitCode, 0, postPreflightRulePack.outputLines.join('\n'));
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
             taskId,
@@ -1097,6 +1107,32 @@ describe('gates command review receipt - routing', () => {
         const taskId = 'T-904a-result-legacy-backfill';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+            getOrchestratorRoot(repoRoot),
+            'balanced',
+            {
+                reviewExecutionPolicyMode: 'strict_sequential',
+                reviewExecutionPolicyConfigured: true,
+                fullSuiteValidationEnabled: false,
+                fullSuiteValidationPlacement: 'after_compile_before_reviews'
+            }
+        );
+        preflight.profile_policy_snapshot = profilePolicySnapshot;
+        fs.writeFileSync(preflightPath, `${JSON.stringify(preflight, null, 2)}\n`, 'utf8');
         const reviewsRoot = getReviewsRoot(repoRoot);
         const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
         fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -1111,7 +1147,15 @@ describe('gates command review receipt - routing', () => {
             effective_depth: 2,
             task_summary: 'Record a review against a legacy provider-bridge review-context after upgrade',
             provider: 'Codex',
-            routed_to: '.antigravity/agents/orchestrator.md'
+            routed_to: '.antigravity/agents/orchestrator.md',
+            task_profile: profilePolicySnapshot.source.task_profile,
+            profile_selection_source: profilePolicySnapshot.source.profile_selection_source,
+            active_profile: profilePolicySnapshot.source.effective_profile,
+            profile_source: profilePolicySnapshot.source.effective_profile_source,
+            runtime_active_profile: profilePolicySnapshot.source.runtime_active_profile,
+            runtime_profile_source: profilePolicySnapshot.source.runtime_profile_source,
+            profile_policy_snapshot_required: true,
+            profile_policy_snapshot: profilePolicySnapshot
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'TASK_MODE_ENTERED', 'PASS', 'Legacy provider-bridge task-mode entry before runtime identity split.', {
             artifact_path: taskModePath.replace(/\\/g, '/'),
@@ -1120,7 +1164,16 @@ describe('gates command review receipt - routing', () => {
             effective_depth: 2,
             task_summary: 'Record a review against a legacy provider-bridge review-context after upgrade',
             provider: 'Codex',
-            routed_to: '.antigravity/agents/orchestrator.md'
+            routed_to: '.antigravity/agents/orchestrator.md',
+            task_profile: profilePolicySnapshot.source.task_profile,
+            profile_selection_source: profilePolicySnapshot.source.profile_selection_source,
+            active_profile: profilePolicySnapshot.source.effective_profile,
+            profile_source: profilePolicySnapshot.source.effective_profile_source,
+            runtime_active_profile: profilePolicySnapshot.source.runtime_active_profile,
+            runtime_profile_source: profilePolicySnapshot.source.runtime_profile_source,
+            profile_policy_snapshot_required: true,
+            profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash,
+            profile_policy_snapshot_config_hash: profilePolicySnapshot.config_hash
         });
         initializeGitRepo(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
@@ -1129,20 +1182,15 @@ describe('gates command review receipt - routing', () => {
         runHandshakeForTask(repoRoot, taskId, 'Antigravity');
         runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
 
-        const preflightPath = writePreflight(repoRoot, taskId, {
-            required_reviews: {
-                code: true,
-                db: false,
-                security: false,
-                refactor: false,
-                api: false,
-                test: false,
-                performance: false,
-                infra: false,
-                dependency: false
-            }
-        });
-        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath).exitCode, 0);
+        const postPreflightRulePack = loadPostPreflightRulePack(
+            repoRoot,
+            taskId,
+            preflightPath,
+            true,
+            '',
+            taskModePath
+        );
+        assert.equal(postPreflightRulePack.exitCode, 0, postPreflightRulePack.outputLines.join('\n'));
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
             taskId,
@@ -1176,6 +1224,7 @@ describe('gates command review receipt - routing', () => {
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             tree_state: reviewTreeState,
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: writeManualReviewerHandoffFixture(repoRoot, taskId, 'code'),
             preflight_path: preflightPath.replace(/\\/g, '/'),
             preflight_sha256: preflightSha256,
             reviewer_routing: {
@@ -1208,16 +1257,32 @@ describe('gates command review receipt - routing', () => {
         const previousCwd = process.cwd();
         process.exitCode = 0;
         let observedExitCode = 0;
+        let resultOutput: string[] = [];
         try {
             process.chdir(repoRoot);
-            await recordReviewRoutingViaCli({
+            const routedReview = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', reviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ], { cwd: repoRoot });
+            assert.equal(
+                routedReview.exitCode,
+                0,
+                [...routedReview.logs, ...routedReview.errors].join('\n')
+            );
+            attestReviewerInvocationForTest({
+                repoRoot,
                 taskId,
                 reviewType: 'code',
-                repoRoot,
-                reviewerExecutionMode: 'delegated_subagent',
+                reviewContextPath,
                 reviewerIdentity: 'agent:code-reviewer'
             });
-            await runCliMainWithHandling([
+            const recordedResult = await runCliWithCapturedOutput([
                 'gate',
                 'record-review-result',
                 '--task-id', taskId,
@@ -1228,14 +1293,15 @@ describe('gates command review receipt - routing', () => {
                 '--repo-root', repoRoot,
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
-            ]);
-            observedExitCode = process.exitCode ?? 0;
+            ], { cwd: repoRoot });
+            observedExitCode = recordedResult.exitCode;
+            resultOutput = [...recordedResult.logs, ...recordedResult.errors];
         } finally {
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
+        assert.equal(observedExitCode, 0, resultOutput.join('\n'));
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));

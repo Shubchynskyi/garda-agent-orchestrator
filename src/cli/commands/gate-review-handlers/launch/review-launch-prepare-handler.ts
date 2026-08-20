@@ -53,6 +53,9 @@ import {
     isCompletedReviewerLaunchAttemptConsumed,
     isReviewerLaunchAttemptSupersededByAuthenticatedRestart
 } from './reviewer-handoff-support';
+import {
+    resolveReviewExecutionRuntimeBindings
+} from '../context/review-context-runtime-validation';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
 export type PrepareReviewerLaunchHandler = (gateArgv: string[]) => Promise<void>;
@@ -259,6 +262,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         requireStrictBindingMetadata: !!options.reviewContextPath,
         repoRoot
     });
+    const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(parsedReviewContext);
     const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
         preflight: preflightPayload,
         reviewContext: parsedReviewContext,
@@ -699,7 +703,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             outputTemplateSha256: handoffBindings.outputTemplateSha256,
             evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
-            reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
+            reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
+            reviewExecutionBindings
         });
         const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
         const launchPreparedAtUtc = getStringField(
@@ -909,6 +914,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
             reviewOutputAttemptSha256,
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
+            reviewExecutionBindings,
             copyPasteReviewerLaunchPromptSha256,
             preparedLaunchEventSha256,
             preparedLaunchEventTaskSequence,
@@ -1267,7 +1273,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
-        reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
+        reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
+        reviewExecutionBindings
     });
     const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
     const launchPreparedAtUtc = new Date().toISOString();
@@ -1283,6 +1290,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         'copy_paste_reviewer_launch_prompt_sha256',
         'review_output_attempt_sha256',
         'review_tree_state_sha256',
+        ...Object.keys(reviewExecutionBindings),
         'launch_binding_sha256',
         'prepared_launch_event_sha256',
         'prepared_launch_event_task_sequence',
@@ -1330,6 +1338,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
+        ...reviewExecutionBindings,
         launch_binding_sha256: launchBindingSha256,
         ...reviewLaneArtifactEvidence,
         launch_prepared_at_utc: launchPreparedAtUtc,
@@ -1374,6 +1383,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
         review_context_sha256: contextSha256,
         routing_event_sha256: routingEventProvenance.event_sha256,
+        ...reviewExecutionBindings,
         launch_binding_sha256: launchBindingSha256,
         ...reviewLaneArtifactEvidence,
         reserved_at_utc: launchPreparedAtUtc,
@@ -1427,6 +1437,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
         reviewOutputAttemptSha256,
         reviewTreeStateSha256: reviewTreeStateSha256 || null,
+        reviewExecutionBindings,
         copyPasteReviewerLaunchPromptSha256,
         preparedLaunchEventSha256,
         preparedLaunchEventTaskSequence,

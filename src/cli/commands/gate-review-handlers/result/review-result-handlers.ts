@@ -108,6 +108,11 @@ import {
 import {
     assertReviewReceiptRoutingMatchesContext
 } from './review-receipt-validation';
+import {
+    assertReviewExecutionRuntimeBindings,
+    readReviewExecutionRuntimeBindings,
+    resolveReviewExecutionRuntimeBindings
+} from '../context/review-context-runtime-validation';
 import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
 import {
     resolveReviewCoverageEvidenceSnapshotCommit,
@@ -821,6 +826,10 @@ async function emitFindingsValidationLaunchFailure(options: {
     validationArtifactPath: string;
     validationArtifactSha256: string;
 }): Promise<Awaited<ReturnType<typeof emitReviewerLaunchFailedEventAsync>>> {
+    const reviewExecutionBindings = readReviewExecutionRuntimeBindings(
+        options.launchArtifact,
+        'Reviewer launch artifact'
+    );
     return emitReviewerLaunchFailedEventAsync(
         gateHelpers.joinOrchestratorPath(options.repoRoot, ''),
         options.taskId,
@@ -858,7 +867,8 @@ async function emitFindingsValidationLaunchFailure(options: {
                 launch_failure_stage: 'review_findings_validation',
                 launch_failure_reason: options.validationReason,
                 review_findings_validation_artifact_path: normalizePath(options.validationArtifactPath),
-                review_findings_validation_artifact_sha256: options.validationArtifactSha256
+                review_findings_validation_artifact_sha256: options.validationArtifactSha256,
+                ...reviewExecutionBindings
             }
         }
     );
@@ -890,6 +900,9 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
     persistValidationEvidence: () => Promise<void>;
 }): Promise<void> {
     const reviewContextSha256 = fileSha256(options.reviewContextPath) || '';
+    const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+        JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>
+    );
     const timelinePath = gateHelpers.joinOrchestratorPath(
         options.repoRoot,
         path.join('runtime', 'task-events', `${options.taskId}.jsonl`)
@@ -956,6 +969,11 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
         await options.persistValidationEvidence();
         return;
     }
+    assertReviewExecutionRuntimeBindings(
+        launchArtifact,
+        reviewExecutionBindings,
+        'Reviewer launch artifact'
+    );
     const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
     if (
         attestationState === 'launch_failed'
@@ -1576,6 +1594,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         requireStrictBindingMetadata: options.requireStrictBindingMetadata,
         repoRoot: options.repoRoot
     });
+    const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(parsedReviewContext);
     const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
         preflight,
         reviewContext: parsedReviewContext,
@@ -1715,6 +1734,61 @@ async function recordReviewReceiptFromArtifacts(options: {
             'Run the real delegated reviewer launch path before recording reviewer output; local routing telemetry alone is not enough.'
         );
     }
+    if (options.reviewerExecutionMode === 'delegated_subagent') {
+        const invocationDetails = invocationEvent?.details;
+        const expectedLaunchArtifactSha256 = getArtifactStringField(
+            invocationDetails || {},
+            'reviewer_launch_artifact_sha256',
+            'reviewerLaunchArtifactSha256'
+        ).toLowerCase();
+        const invocationLaunchArtifactPath = getArtifactStringField(
+            invocationDetails || {},
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        );
+        const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            artifactPathValue: invocationLaunchArtifactPath || undefined
+        });
+        if (
+            !/^[0-9a-f]{64}$/u.test(expectedLaunchArtifactSha256)
+            || !invocationLaunchArtifactPath
+            || !fs.existsSync(launchArtifactPath)
+            || !fs.statSync(launchArtifactPath).isFile()
+        ) {
+            throw new Error(
+                `Review receipts require an invocation-bound reviewer launch artifact for '${options.reviewType}'.`
+            );
+        }
+        const launchArtifact = JSON.parse(
+            fs.readFileSync(launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const currentLaunchArtifactSha256 = fileSha256(launchArtifactPath)?.toLowerCase() || '';
+        const acceptedFindingsCorrection =
+            getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState') === 'launch_failed'
+            && getArtifactStringField(
+                launchArtifact,
+                'launch_failure_stage',
+                'launchFailureStage'
+            ) === 'review_findings_validation'
+            && getArtifactStringField(
+                launchArtifact,
+                'rejected_reviewer_launch_artifact_sha256',
+                'rejectedReviewerLaunchArtifactSha256'
+            ).toLowerCase() === expectedLaunchArtifactSha256;
+        if (currentLaunchArtifactSha256 !== expectedLaunchArtifactSha256 && !acceptedFindingsCorrection) {
+            throw new Error(
+                `Reviewer launch artifact hash does not match REVIEWER_INVOCATION_ATTESTED provenance for '${options.reviewType}'.`
+            );
+        }
+        assertReviewExecutionRuntimeBindings(
+            launchArtifact,
+            reviewExecutionBindings,
+            'Reviewer launch artifact'
+        );
+    }
     assertReviewOutputNotOlderThanDelegation({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -1843,6 +1917,13 @@ async function recordReviewReceiptFromArtifacts(options: {
         }),
         reviewContextSha256: contextSha256,
         reviewTreeStateSha256,
+        reviewExecutionMode: reviewExecutionBindings.review_execution_mode,
+        reviewExecutionContractSha256: reviewExecutionBindings.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: reviewExecutionBindings.review_execution_full_scope_sha256,
+        reviewExecutionCompleteScopeLineageSha256:
+            reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+        reviewExecutionFindingReconciliationSha256:
+            reviewExecutionBindings.review_execution_finding_reconciliation_sha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),
         reviewCoverageContractSha256: reviewContextContractBindings.coverageContractSha256,
         reviewRuleContextSha256: reviewContextContractBindings.ruleContextSha256,
@@ -1903,6 +1984,7 @@ async function recordReviewReceiptFromArtifacts(options: {
             review_artifact_sha256: artifactSha256,
             review_context_sha256: contextSha256,
             review_tree_state_sha256: reviewTreeStateSha256,
+            ...reviewExecutionBindings,
             coverage_contract_sha256: findingsReport.coverage_ledger.coverage_contract_sha256,
             reviewer_identity: options.reviewerIdentity,
             reviewer_provenance_event_sha256: reviewerProvenance?.event_sha256 ?? null
@@ -2161,12 +2243,22 @@ async function handleRecordReviewResultUnlocked(
         && !Array.isArray(parsedReviewContext.reviewer_routing)
         ? parsedReviewContext.reviewer_routing as Record<string, unknown>
         : null;
-    dependencies.assertReviewContextRuntimeIdentityMetadataPresent({
+    const runtimeIdentity = dependencies.assertExplicitReviewContextRuntimeIdentity({
+        repoRoot,
+        taskId,
         reviewType,
         contextPath,
-        reviewContext: parsedReviewContext,
-        reviewerRouting: currentRouting
+        reviewerRouting: currentRouting,
+        taskModePath: String(options.taskModePath || '').trim()
     });
+    if (!runtimeIdentity.task_mode_identity_backfilled) {
+        dependencies.assertReviewContextRuntimeIdentityMetadataPresent({
+            reviewType,
+            contextPath,
+            reviewContext: parsedReviewContext,
+            reviewerRouting: currentRouting
+        });
+    }
     if (reviewType === 'test') {
         assertRequiredUpstreamReviewDependencies({
             taskId,
@@ -2232,14 +2324,6 @@ async function handleRecordReviewResultUnlocked(
         contextPath,
         reviewContext: parsedReviewContext,
         gateName: 'record-review-result'
-    });
-    const runtimeIdentity = dependencies.assertExplicitReviewContextRuntimeIdentity({
-        repoRoot,
-        taskId,
-        reviewType,
-        contextPath,
-        reviewerRouting: currentRouting,
-        taskModePath: String(options.taskModePath || '').trim()
     });
     dependencies.assertRoutingCompatibility({
         reviewType,

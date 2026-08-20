@@ -38,6 +38,10 @@ import {
     assertCanonicalReviewTypeId,
     resolveAuthenticatedReviewLaneContract
 } from '../review-lane-contract';
+import {
+    assertReviewExecutionRuntimeBindings,
+    resolveReviewExecutionRuntimeBindings
+} from '../context/review-context-runtime-validation';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -255,6 +259,7 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         throw new Error(`Reviewer launch completion requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
     }
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(parsedReviewContext);
     const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
         preflight: readJsonFile(preflightPath, 'Preflight artifact'),
         reviewContext: parsedReviewContext,
@@ -281,18 +286,35 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const originalArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const launchInputArtifact = readJsonFile(launchInputArtifactPath, 'Reviewer launch input artifact');
+    const laneReservation = readJsonFile(
+        getReviewerLaunchLaneReservationPath(canonicalLaunchArtifactPath),
+        'Reviewer launch lane reservation'
+    );
     assertArtifactReviewLaneEvidence(preparedArtifact, reviewLaneContract, 'Reviewer launch artifact');
     assertArtifactReviewLaneEvidence(
-        readJsonFile(launchInputArtifactPath, 'Reviewer launch input artifact'),
+        launchInputArtifact,
         reviewLaneContract,
         'Reviewer launch input artifact'
     );
     assertArtifactReviewLaneEvidence(
-        readJsonFile(
-            getReviewerLaunchLaneReservationPath(launchArtifactPath),
-            'Reviewer launch lane reservation'
-        ),
+        laneReservation,
         reviewLaneContract,
+        'Reviewer launch lane reservation'
+    );
+    assertReviewExecutionRuntimeBindings(
+        preparedArtifact,
+        reviewExecutionBindings,
+        'Reviewer launch artifact'
+    );
+    assertReviewExecutionRuntimeBindings(
+        launchInputArtifact,
+        reviewExecutionBindings,
+        'Reviewer launch input artifact'
+    );
+    assertReviewExecutionRuntimeBindings(
+        laneReservation,
+        reviewExecutionBindings,
         'Reviewer launch lane reservation'
     );
     const artifactEvidenceType = getStringField(
@@ -587,7 +609,8 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
                             delegation_started_at_utc: effectiveDelegationStartedAtUtc,
                             launched_at_utc: effectiveDelegationStartedAtUtc,
                             launch_completed_at_utc: launchCompletedAtUtc,
-                            review_tree_state_sha256: reviewTreeStateSha256 || null
+                            review_tree_state_sha256: reviewTreeStateSha256 || null,
+                            ...reviewExecutionBindings
                         }
                     }
                 );

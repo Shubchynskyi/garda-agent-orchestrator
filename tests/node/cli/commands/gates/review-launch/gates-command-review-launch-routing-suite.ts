@@ -26,6 +26,7 @@ import {
     seedInitAnswers,
     seedRoutedReviewerLaunchFixture,
     seedTaskQueue,
+    writeManualReviewerHandoffFixture,
     writePreflight
 } from './gates-command-review-launch-fixtures';
 import { createPartitionedTestRegistrar } from '../../gate-test-partition';
@@ -218,6 +219,7 @@ describe('cli/commands/gates review launch routing', () => {
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: writeManualReviewerHandoffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -468,21 +470,11 @@ describe('cli/commands/gates review launch routing', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
-        fs.writeFileSync(artifactPath, [
-            '# Code Review T-904z-late-reroute',
-            '## Summary',
-            'Verified delegated reviewer routing with concrete implementation detail and realistic wording.',
-            '## Findings by Severity',
-            'none',
-            '## Residual Risks',
-            'none',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: writeManualReviewerHandoffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -504,6 +496,56 @@ describe('cli/commands/gates review launch routing', () => {
                 reviewerExecutionMode: 'delegated_subagent',
                 reviewerIdentity: 'agent:first-code-reviewer'
             });
+            const launchArtifactPath = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                taskId,
+                'code',
+                'reviewer-launch.json'
+            );
+            await prepareReviewerLaunchForTest({
+                repoRoot,
+                taskId,
+                reviewerIdentity: 'agent:first-code-reviewer',
+                launchArtifactPath
+            });
+            await recordReviewerDelegationStartedForTest({
+                repoRoot,
+                taskId,
+                reviewerIdentity: 'agent:first-code-reviewer',
+                launchArtifactPath,
+                providerInvocationId: 'test-late-reroute-reviewer'
+            });
+            const completed = await runCliWithCapturedOutput([
+                'gate',
+                'complete-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:first-code-reviewer',
+                '--reviewer-launch-artifact-path', launchArtifactPath,
+                '--provider-invocation-id', 'test-late-reroute-reviewer',
+                '--attestation-source', 'test_provider_controller',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
+                '--fork-context', 'false',
+                '--record-invocation'
+            ], { cwd: repoRoot });
+            assert.equal(completed.exitCode, 0, completed.errors.join('\n'));
+            fs.writeFileSync(artifactPath, [
+                '# Code Review T-904z-late-reroute',
+                '## Summary',
+                'Verified delegated reviewer routing with concrete implementation detail and realistic wording.',
+                '## Findings by Severity',
+                'none',
+                '## Residual Risks',
+                'none',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
             await runCliMainWithHandling([
                 'gate',
                 'record-review-receipt',
@@ -533,7 +575,10 @@ describe('cli/commands/gates review launch routing', () => {
         }
 
         assert.ok(rerouteExitCode !== 0, `Expected non-zero exit code, got ${rerouteExitCode}`);
-        assert.ok(capturedErrors.some((line) => line.includes("Review routing for 'code' is locked")));
+        assert.ok(
+            capturedErrors.some((line) => line.includes("Review routing for 'code' is locked")),
+            capturedErrors.join('\n')
+        );
         assert.ok(capturedErrors.some((line) => line.includes('restart-review-cycle')));
         assert.ok(capturedErrors.some((line) => line.includes('does not require a full task reset')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));

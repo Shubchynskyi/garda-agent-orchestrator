@@ -38,6 +38,8 @@ import {
 } from '../../../../../../src/gate-runtime/timeline/task-events-locking';
 import { quoteCommandValue } from '../../../../../../src/core/command-quoting';
 import { buildReviewerTerminalContractLines } from '../../../../../../src/gates/review/reviewer-execution-contract';
+import { resolveReviewExecutionRuntimeBindings } from '../../../../../../src/cli/commands/gate-review-handlers/context/review-context-runtime-validation';
+import { getReviewerLaunchLaneReservationPath } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-launch-lane-transaction';
 
 const it = createPartitionedTestRegistrar(
     nodeIt,
@@ -456,6 +458,8 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(observedExitCode, 0);
         assert.equal(fs.existsSync(launchArtifactPath), true);
         const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(reviewContext);
         const reviewOutputPath = String(launchArtifact.review_output_path);
         assert.equal(launchArtifact.schema_version, 1);
         assert.equal(launchArtifact.evidence_type, 'delegated_reviewer_launch_preparation');
@@ -553,6 +557,24 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             launchInputArtifactText
         );
         const launchInputArtifact = JSON.parse(launchInputArtifactText);
+        const laneReservation = JSON.parse(fs.readFileSync(
+            getReviewerLaunchLaneReservationPath(launchArtifactPath),
+            'utf8'
+        ));
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(launchArtifact[field], expectedValue);
+            assert.equal(launchInputArtifact[field], expectedValue);
+            assert.equal(laneReservation[field], expectedValue);
+        }
+        assert.ok(
+            String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(
+                `Required review execution binding: mode=${reviewExecutionBindings.review_execution_mode}; ` +
+                `contract_sha256=${reviewExecutionBindings.review_execution_contract_sha256}; ` +
+                `full_scope_sha256=${reviewExecutionBindings.review_execution_full_scope_sha256}; ` +
+                `complete_scope_lineage_sha256=${reviewExecutionBindings.review_execution_complete_scope_lineage_sha256}; ` +
+                `finding_reconciliation_sha256=${reviewExecutionBindings.review_execution_finding_reconciliation_sha256}.`
+            )
+        );
         assert.equal(launchInputArtifact.artifact_type, 'delegated_reviewer_handoff');
         assert.equal(launchInputArtifact.handoff_role, 'delegated_reviewer');
         assert.equal(launchInputArtifact.task_id, taskId);
@@ -619,6 +641,11 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             'copy_paste_reviewer_launch_prompt_sha256',
             'review_output_attempt_sha256',
             'review_tree_state_sha256',
+            'review_execution_mode',
+            'review_execution_contract_sha256',
+            'review_execution_full_scope_sha256',
+            'review_execution_complete_scope_lineage_sha256',
+            'review_execution_finding_reconciliation_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
             'prepared_launch_event_task_sequence',

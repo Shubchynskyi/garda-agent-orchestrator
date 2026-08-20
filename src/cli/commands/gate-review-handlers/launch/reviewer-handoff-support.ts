@@ -31,6 +31,7 @@ import { inspectTaskEventFile } from '../../../../gate-runtime/task-events-integ
 import { resolveLaunchBindingReviewerIdentity } from '../../../../gate-runtime/review/reviewer-identity-contract';
 import { isAuthenticatedReviewRestartBoundary } from '../../../../gates/review/review-restart-boundary';
 import { buildReviewerLaunchBindingSha256 } from './review-launch-input-attestation';
+import type { ReviewExecutionRuntimeBindings } from '../context/review-context-runtime-validation';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -284,6 +285,7 @@ export interface ReviewerLaunchPromptOptions {
     evidenceManifestPath: string;
     evidenceManifestSha256: string;
     reviewOutputPath: string;
+    reviewExecutionBindings?: ReviewExecutionRuntimeBindings | null;
 }
 
 export function buildReviewerCompletenessCheckNotice(executionProvider: unknown): string {
@@ -305,6 +307,7 @@ export interface ReviewerLaunchInputHandoffArtifactOptions extends ReviewerLaunc
     launchBindingSha256: string;
     reviewOutputAttemptSha256: string;
     reviewTreeStateSha256: string | null;
+    reviewExecutionBindings: ReviewExecutionRuntimeBindings;
     copyPasteReviewerLaunchPromptSha256: string;
     preparedLaunchEventSha256: string;
     preparedLaunchEventTaskSequence: number | null;
@@ -545,6 +548,9 @@ export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPrompt
         `OutputTemplateSha256: ${options.outputTemplateSha256}`,
         'Required JSON fields: schema_version, task_id, review_type, review_context_sha256, tree_state_sha256, validation_notes, coverage_ledger, findings, residual_risks, reviewer_notes.',
         `Required JSON binding values: task_id=${options.taskId || '<task-id>'}; review_type=${options.reviewType}; review_context_sha256=${options.reviewContextSha256 || '<review-context-sha256>'}; tree_state_sha256=${options.reviewTreeStateSha256 || '<tree-state-sha256>'}.`,
+        ...(options.reviewExecutionBindings
+            ? [`Required review execution binding: mode=${options.reviewExecutionBindings.review_execution_mode}; contract_sha256=${options.reviewExecutionBindings.review_execution_contract_sha256}; full_scope_sha256=${options.reviewExecutionBindings.review_execution_full_scope_sha256}; complete_scope_lineage_sha256=${options.reviewExecutionBindings.review_execution_complete_scope_lineage_sha256}; finding_reconciliation_sha256=${options.reviewExecutionBindings.review_execution_finding_reconciliation_sha256}.`]
+            : []),
         'Active finding object fields: id, title, description, evidence[{location, observation}], coverage_obligation_ids. Put each active finding object in exactly one severity array: findings.critical, findings.high, findings.medium, or findings.low.',
         'Return exactly one JSON object; do not wrap it in Markdown fences and do not append prose outside the JSON object.',
         'Do not include review verdict, PASS/FAIL, status, downstream disposition, profile strictness, or remediation policy fields.',
@@ -597,6 +603,7 @@ export function buildReviewerLaunchInputHandoffArtifact(
         review_output_path: options.reviewOutputPath,
         review_output_attempt_sha256: options.reviewOutputAttemptSha256,
         review_tree_state_sha256: options.reviewTreeStateSha256,
+        ...options.reviewExecutionBindings,
         copy_paste_reviewer_launch_prompt: copyPasteReviewerLaunchPrompt,
         copy_paste_reviewer_launch_prompt_sha256: options.copyPasteReviewerLaunchPromptSha256,
         reviewer_only_instructions: [

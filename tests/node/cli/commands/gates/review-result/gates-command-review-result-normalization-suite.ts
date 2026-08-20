@@ -19,6 +19,8 @@ import {
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
     writeManualReviewerHandoffFixture,
+    buildNoFindingsJsonReviewReport,
+    buildReviewExecutionEvidenceFixture,
     recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
     seedPromptBoundReviewFixture
@@ -31,6 +33,7 @@ import { readReviewArtifactState } from '../../../../../../src/gates/next-step/n
 import {
     getCurrentReviewerLaunchArtifactEvidenceForInvocation
 } from '../../../../../../src/gates/next-step/next-step-reviewer-launch-evidence';
+import { resolveReviewExecutionRuntimeBindings } from '../../../../../../src/cli/commands/gate-review-handlers/context/review-context-runtime-validation';
 
 const it = createPartitionedTestRegistrar(
     nodeIt,
@@ -58,46 +61,7 @@ function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
 }
 
 function buildNoFindingsJsonReport(reviewContextPath: string, taskId: string, reviewType = 'code'): Record<string, unknown> {
-    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
-        coverage_contract: {
-            contract_sha256: string;
-            obligations: Array<{ id: string; kind: string; target: string }>;
-        };
-        task_scope: { changed_files: string[] };
-        tree_state: { tree_state_sha256: string };
-    };
-    const defaultFile = reviewContext.task_scope.changed_files[0];
-    const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
-    return {
-        schema_version: 1,
-        task_id: taskId,
-        review_type: reviewType,
-        review_context_sha256: reviewContextSha256,
-        tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
-        validation_notes: [{
-            id: 'N-001',
-            topic: 'complete-scope-sweep',
-            note: 'Reviewed the complete assigned code scope and generated coverage obligations for verdict-free findings JSON ingestion.',
-            evidence: [{
-                location: `${defaultFile}:1`,
-                observation: 'Validated concrete source behavior and receipt materialization for the assigned review contract.'
-            }]
-        }],
-        coverage_ledger: {
-            coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
-            entries: reviewContext.coverage_contract.obligations.map((obligation) => ({
-                obligation_id: obligation.id,
-                evidence: [{
-                    location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
-                    observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against the assigned review contract.`
-                }],
-                finding_ids: []
-            }))
-        },
-        findings: { critical: [], high: [], medium: [], low: [] },
-        residual_risks: [],
-        reviewer_notes: ['No legacy verdict token is present in this JSON output.']
-    };
+    return buildNoFindingsJsonReviewReport(reviewContextPath, taskId, reviewType);
 }
 
 function writeProfilesConfig(repoRoot: string, activeProfile: 'soft' | 'balanced' | 'strict' | 'custom-reviewer'): void {
@@ -142,7 +106,7 @@ function balancedProfilePolicySnapshot(): Record<string, unknown> {
             findings: {
                 critical: 'fix_now',
                 high: 'fix_now',
-                medium: 'create_follow_up',
+                medium: 'fix_now',
                 low: 'create_follow_up'
             },
             residual_risk: 'create_follow_up'
@@ -518,9 +482,26 @@ describe('gates command review result - normalization', () => {
         assert.ok(artifactContent.includes('## Residual Risks\nnone'));
         assert.ok(artifactContent.includes('## Verdict\nREVIEW FAILED'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
         assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(receipt[field], expectedValue);
+        }
+        const invocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.equal(
+            receipt.reviewer_provenance.reviewer_launch_artifact_path,
+            (invocationEvent?.details as Record<string, unknown>)?.reviewer_launch_artifact_path
+        );
+        assert.equal(
+            receipt.reviewer_provenance.reviewer_launch_artifact_sha256,
+            (invocationEvent?.details as Record<string, unknown>)?.reviewer_launch_artifact_sha256
+        );
         assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1365,6 +1346,14 @@ describe('gates command review result - normalization', () => {
         assert.equal(coverage.status, 'PASS');
         assert.equal(coverage.completed_obligation_count, coverage.obligation_count);
         assert.equal(receipt.review_output_format, 'findings_json');
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
+        const reviewOutputContract = receipt.review_output_contract as Record<string, unknown>;
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(receipt[field], expectedValue);
+            assert.equal(reviewOutputContract[field], expectedValue);
+        }
         const acceptedValidationArtifactPath = path.join(
             fixture.reviewsRoot,
             `${taskId}-code-findings-validation.json`
@@ -1634,11 +1623,12 @@ describe('gates command review result - normalization', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         const outputPath = path.join(outputDir, 'review-output.md');
         fs.writeFileSync(outputPath, `${JSON.stringify({
-            schema_version: 1,
+            schema_version: 2,
             task_id: taskId,
             review_type: 'code',
             review_context_sha256: reviewContextSha256,
             tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            review_execution: buildReviewExecutionEvidenceFixture(fixture.reviewContextPath),
             validation_notes: [{
                 id: 'N-001',
                 topic: 'complete-scope-sweep',
@@ -1701,7 +1691,7 @@ describe('gates command review result - normalization', () => {
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.deepEqual(receipt.review_coverage.finding_ids, ['F-001']);
         assert.equal(receipt.review_output_format, 'findings_json');
-        assert.equal(receipt.review_output_schema_version, 1);
+        assert.equal(receipt.review_output_schema_version, 2);
         assert.equal(receipt.review_output_contract.format, 'findings_json');
         assert.equal(receipt.review_output_contract.review_context_sha256, reviewContextSha256);
         assert.equal(receipt.review_output_contract.review_tree_state_sha256, reviewContext.tree_state.tree_state_sha256);
@@ -3017,11 +3007,12 @@ describe('gates command review result - normalization', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         const outputPath = path.join(outputDir, 'review-output.md');
         fs.writeFileSync(outputPath, `${JSON.stringify({
-            schema_version: 1,
+            schema_version: 2,
             task_id: taskId,
             review_type: 'code',
             review_context_sha256: reviewContextSha256,
             tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            review_execution: buildReviewExecutionEvidenceFixture(fixture.reviewContextPath),
             validation_notes: [{
                 id: 'N-001',
                 topic: 'complete-scope-sweep',
@@ -3439,6 +3430,7 @@ describe('gates command review result - normalization', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -3483,6 +3475,13 @@ describe('gates command review result - normalization', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -3507,11 +3506,11 @@ describe('gates command review result - normalization', () => {
         assert.equal(fs.existsSync(rawReviewOutputPath), false);
         assert.ok(capturedErrors.some((line) => line.includes('trivial or obviously synthetic')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
         const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
         const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
-        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3720,6 +3719,7 @@ describe('gates command review result - normalization', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -3767,6 +3767,13 @@ describe('gates command review result - normalization', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
