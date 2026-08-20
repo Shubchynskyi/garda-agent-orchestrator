@@ -207,10 +207,10 @@ export function resolveSplitRequiredTaskQueueRoute(options: {
 export function resolveDoneTaskQueueTerminalRoute(options: {
     taskId: string;
     conflictBlockers: readonly string[];
-    allowCompletedClearedLatchEvidence: boolean;
+    allowAuthorizedTerminalEvidence: boolean;
     reopenPreviewCommand: TerminalRoutingCommand;
 }): TerminalStatusRoute {
-    if (options.conflictBlockers.length > 0 && !options.allowCompletedClearedLatchEvidence) {
+    if (options.conflictBlockers.length > 0 && !options.allowAuthorizedTerminalEvidence) {
         const blockerSummary = options.conflictBlockers.slice(0, 4).join('; ');
         const extraBlockerCount = options.conflictBlockers.length > 4
             ? ` (+${options.conflictBlockers.length - 4} more blocker(s))`

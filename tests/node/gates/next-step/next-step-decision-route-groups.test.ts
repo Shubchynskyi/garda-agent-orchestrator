@@ -125,6 +125,97 @@ test('resolveTaskQueueTerminalDecisionRoute preserves DONE conflict routing thro
     assert.match(route.reason, /completion-gate: missing or not passed/);
 });
 
+test('resolveTaskQueueTerminalDecisionRoute keeps an operator terminal discard DONE without completion evidence', () => {
+    const runtime = makeTempRuntime();
+    fs.writeFileSync(
+        path.join(runtime.reviewsRoot, 'T-1-reset-report.json'),
+        JSON.stringify({
+            timestamp_utc: new Date().toISOString(),
+            event_source: 'task-reset',
+            task_id: 'T-1',
+            previous_status: 'TODO',
+            target_status: 'DONE',
+            reset_by: 'operator'
+        }) + '\n',
+        'utf8'
+    );
+    try {
+        const route = resolveTaskQueueTerminalDecisionRoute({
+            ...runtime,
+            taskId: 'T-1',
+            cliPrefix: 'node bin/garda.js',
+            taskEntries: new Map(),
+            taskEntry: {
+                taskId: 'T-1',
+                status: 'DONE',
+                area: 'workflow/test',
+                title: 'Operator-discarded task',
+                profile: 'fast',
+                notes: ''
+            },
+            completionGatePassed: false,
+            latestCompletionCurrent: false,
+            finalReportContractReady: false,
+            finalReportContractBlocker: 'final report missing',
+            summaryBlockers: ['project-memory-impact: missing'],
+            filteredMissingArtifacts: [],
+            corePresentArtifacts: []
+        });
+
+        assert.ok(route);
+        assert.equal(route.status, 'DONE');
+        assert.equal(route.nextGate, null);
+        assert.deepEqual(route.commands, []);
+    } finally {
+        fs.rmSync(runtime.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('resolveTaskQueueTerminalDecisionRoute rejects terminal discard evidence bound to another task', () => {
+    const runtime = makeTempRuntime();
+    fs.writeFileSync(
+        path.join(runtime.reviewsRoot, 'T-1-reset-report.json'),
+        JSON.stringify({
+            timestamp_utc: new Date().toISOString(),
+            event_source: 'task-reset',
+            task_id: 'T-OTHER',
+            previous_status: 'TODO',
+            target_status: 'DONE',
+            reset_by: 'operator'
+        }) + '\n',
+        'utf8'
+    );
+    try {
+        const route = resolveTaskQueueTerminalDecisionRoute({
+            ...runtime,
+            taskId: 'T-1',
+            cliPrefix: 'node bin/garda.js',
+            taskEntries: new Map(),
+            taskEntry: {
+                taskId: 'T-1',
+                status: 'DONE',
+                area: 'workflow/test',
+                title: 'False DONE task',
+                profile: 'fast',
+                notes: ''
+            },
+            completionGatePassed: false,
+            latestCompletionCurrent: false,
+            finalReportContractReady: false,
+            finalReportContractBlocker: 'final report missing',
+            summaryBlockers: [],
+            filteredMissingArtifacts: [],
+            corePresentArtifacts: []
+        });
+
+        assert.ok(route);
+        assert.equal(route.status, 'BLOCKED');
+        assert.equal(route.nextGate, 'task-reset');
+    } finally {
+        fs.rmSync(runtime.repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('resolveScopeBudgetGuardDecisionRoute materializes a blocking latch and preserves sync failure', () => {
     const evaluation = {
         active: true,
