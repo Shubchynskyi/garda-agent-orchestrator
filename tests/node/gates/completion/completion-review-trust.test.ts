@@ -37,6 +37,10 @@ import {
     writePreflight,
     writeReceiptBackedReviewArtifact
 } from '../../cli/commands/gate-test-helpers';
+import {
+    rewriteValidationExecutionBinding,
+    writeSchema4ReviewPackage
+} from '../review/review-execution-lineage-test-fixture';
 
 function fileSha256(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -332,6 +336,84 @@ describe('gates/completion review trust', () => {
                 'INDEPENDENT_AUDITED',
                 errors.join('\n')
             );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects stale schema-4 receipt and findings-validation execution lineage', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-992-completion-execution-lineage';
+
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+            writeProjectMemoryWorkflowConfig(repoRoot, false);
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                scope_category: 'code',
+                required_reviews: { code: true }
+            });
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject stale completion execution lineage',
+                provider: 'Codex',
+                routedTo: 'AGENTS.md'
+            });
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            const reviewEvidencePath = path.join(reviewsRoot, `${taskId}-review-gate.json`);
+            writeJson(reviewEvidencePath, { task_id: taskId, status: 'PASSED', outcome: 'PASS' });
+            const collectErrors = (): string[] => {
+                const errors: string[] = [];
+                collectRequiredReviewEvidence({
+                    reviewsRoot,
+                    taskId,
+                    preflight,
+                    preflightPath,
+                    preflightSha256: fileSha256(preflightPath),
+                    reviewEvidencePath,
+                    requiredReviews: preflight.required_reviews as Record<string, unknown>,
+                    scopeCategory: 'code',
+                    orderedEvents: [],
+                    errors
+                });
+                return errors;
+            };
+            let reviewPackage = writeSchema4ReviewPackage({
+                reviewsRoot,
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                preflightPath,
+                preflight
+            });
+            const receipt = JSON.parse(fs.readFileSync(reviewPackage.receiptPath, 'utf8')) as Record<string, unknown>;
+            delete receipt.review_execution_complete_scope_lineage_sha256;
+            writeJson(reviewPackage.receiptPath, receipt);
+
+            assert.ok(collectErrors().some((error) =>
+                error.includes('review receipt is missing valid review_execution_complete_scope_lineage_sha256')
+            ));
+
+            reviewPackage = writeSchema4ReviewPackage({
+                reviewsRoot,
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                preflightPath,
+                preflight
+            });
+            rewriteValidationExecutionBinding({
+                reviewPackage,
+                field: 'review_execution_finding_reconciliation_sha256',
+                value: '9'.repeat(64)
+            });
+
+            assert.ok(collectErrors().some((error) =>
+                error.includes('review findings validation artifact execution binding')
+                && error.includes('review_execution_finding_reconciliation_sha256')
+            ));
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
