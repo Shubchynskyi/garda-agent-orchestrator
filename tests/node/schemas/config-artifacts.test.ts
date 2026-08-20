@@ -897,6 +897,10 @@ test('validateProfilesConfig validates template profiles.json', () => {
         'grouped_by_parent'
     );
     assert.equal(
+        (builtIn.fast.review_follow_up_policy as Record<string, unknown>).materialization_mode,
+        'grouped_by_parent'
+    );
+    assert.equal(
         (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
         'conservative_review_remediation_mode_v1'
     );
