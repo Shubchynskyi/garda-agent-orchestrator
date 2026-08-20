@@ -82,10 +82,7 @@ const DEFAULT_POLICY: ReviewRemediationRerunPolicy = {
             strategy: 'affected_dependent_reviews',
             ordered_rerun_lanes: ['code', 'refactor', 'test']
         },
-        production: {
-            strategy: 'affected_dependent_reviews',
-            ordered_rerun_lanes: REVIEW_REMEDIATION_ALL_REQUIRED_LANES
-        },
+        production: { strategy: 'current_review_only' },
         global: {
             strategy: 'affected_dependent_reviews',
             ordered_rerun_lanes: REVIEW_REMEDIATION_ALL_REQUIRED_LANES

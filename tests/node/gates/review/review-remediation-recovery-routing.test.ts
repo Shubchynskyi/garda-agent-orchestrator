@@ -18,7 +18,9 @@ import {
     resolveAuthoritativeReviewRemediationDecision,
     type AuthoritativeReviewRemediationDecision,
     type BuildReviewRemediationRecoveryRouteOptions,
+    type ResolveAuthoritativeReviewRemediationDecisionOptions,
     type ReviewRemediationCompletedReceipt,
+    type ReviewRemediationModePolicyValidationInputs,
     type ReviewRemediationReusableReceipt
 } from '../../../../src/gates/review-remediation/review-remediation-recovery-routing';
 import type { ReviewRemediationDeltaClassification } from '../../../../src/gates/review-remediation/review-remediation-delta';
@@ -32,6 +34,10 @@ import {
     buildDefaultReviewRemediationRerunPolicy,
     type ReviewRemediationDeltaCategory
 } from '../../../../src/policy/review-remediation-rerun-policy';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    evaluateReviewRemediationMode
+} from '../../../../src/policy/review-remediation-mode-policy';
 
 const TASK_ID = 'T-979-40-fixture';
 const REVIEWS_ROOT = 'garda-agent-orchestrator/runtime/reviews';
@@ -132,13 +138,27 @@ function makeSnapshot(): Record<string, unknown> {
     return {
         schema_version: 1,
         review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
-        review_remediation_rerun_policy_diagnostics: ['fixture policy']
+        review_remediation_rerun_policy_diagnostics: ['fixture policy'],
+        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
+        review_remediation_mode_policy_diagnostics: ['fixture mode policy']
     };
 }
 
-function makeDelta(category: ReviewRemediationDeltaCategory, reviewType = 'test'): ReviewRemediationDeltaClassification {
-    const changedFile = 'tests/node/example.test.ts';
+function makeDelta(
+    category: ReviewRemediationDeltaCategory,
+    reviewType = 'test',
+    changedFile = 'tests/node/example.test.ts'
+): ReviewRemediationDeltaClassification {
     const changedLine = 'assert.equal(actual, expected);\n';
+    const modePolicy = buildDefaultReviewRemediationModePolicy();
+    const modePolicyAssessment = evaluateReviewRemediationMode({
+        policy: modePolicy,
+        reviewType,
+        category,
+        changedFilesCount: 1,
+        changedLinesTotal: 1,
+        consecutiveDeltaReviews: 0
+    });
     const core: Omit<ReviewRemediationDeltaClassification, 'classification_sha256'> = {
         schema_version: 1,
         task_id: TASK_ID,
@@ -153,8 +173,8 @@ function makeDelta(category: ReviewRemediationDeltaCategory, reviewType = 'test'
             delta_base_snapshot_sha256: hash('delta-base')
         },
         current_snapshot_sha256: hash('current'),
-        full_review_required: false,
-        full_review_reasons: [],
+        full_review_required: modePolicyAssessment.mode === 'FULL',
+        full_review_reasons: modePolicyAssessment.full_review_reasons,
         scope: {
             full_review_scope: [changedFile],
             full_review_scope_sha256: hash(changedFile),
@@ -197,12 +217,44 @@ function makeDelta(category: ReviewRemediationDeltaCategory, reviewType = 'test'
                 text: changedLine,
                 source_line_sha256: hash(changedLine)
             }]
-        }])
+        }]),
+        mode_policy_assessment: modePolicyAssessment
     };
     return {
         ...core,
         classification_sha256: sha256RedactedJsonPayload(core)
     };
+}
+
+function rehashDelta(delta: ReviewRemediationDeltaClassification): ReviewRemediationDeltaClassification {
+    const { classification_sha256: _, ...core } = delta;
+    return {
+        ...core,
+        classification_sha256: sha256RedactedJsonPayload(core)
+    };
+}
+
+function modePolicyValidationInputs(
+    overrides: Partial<ReviewRemediationModePolicyValidationInputs> = {}
+): ReviewRemediationModePolicyValidationInputs {
+    return {
+        consecutiveDeltaReviews: 0,
+        protectedBoundarySignals: [],
+        taskCriteriaChanged: false,
+        policyChanged: false,
+        uncertainCrossFileImpact: false,
+        ...overrides
+    };
+}
+
+function resolveFixtureAuthoritativeDecision(
+    options: ResolveAuthoritativeReviewRemediationDecisionOptions,
+    validationInputOverrides: Partial<ReviewRemediationModePolicyValidationInputs> = {}
+) {
+    return resolveAuthoritativeReviewRemediationDecision({
+        ...options,
+        modePolicyValidationInputs: modePolicyValidationInputs(validationInputOverrides)
+    });
 }
 
 function component(role: BuildReviewRemediationValidationComponentInput['role']): BuildReviewRemediationValidationComponentInput {
@@ -226,7 +278,7 @@ function component(role: BuildReviewRemediationValidationComponentInput['role'])
 }
 
 function readArtifactState(artifactPath: string): ReviewRemediationValidationArtifactState | null {
-    if (artifactPath.endsWith('-test-remediation-baseline.json')) {
+    if (/(?:-code|-test)-remediation-baseline\.json$/u.test(artifactPath)) {
         return { sha256: hash('baseline'), size_bytes: 1 };
     }
     for (const role of ['focused', 'affected', 'expanded', 'full'] as const) {
@@ -252,7 +304,7 @@ function readArtifactState(artifactPath: string): ReviewRemediationValidationArt
     return null;
 }
 
-function validationEvidence(category: ReviewRemediationDeltaCategory) {
+function validationEvidence(category: ReviewRemediationDeltaCategory, reviewType = 'test') {
     const roles = category === 'leaf_test'
         ? ['focused'] as const
         : category === 'structural_test'
@@ -261,7 +313,7 @@ function validationEvidence(category: ReviewRemediationDeltaCategory) {
     return buildReviewRemediationValidationEvidence({
         reviewsRoot: REVIEWS_ROOT,
         artifactStateReader: readArtifactState,
-        delta: makeDelta(category),
+        delta: makeDelta(category, reviewType),
         components: roles.map(component)
     });
 }
@@ -328,6 +380,7 @@ function routeOptions(
         delta: makeDelta(category),
         requiredReviews: { code: true, refactor: true, test: true },
         reviewExecutionPolicyMode: 'strict_sequential',
+        modePolicyValidationInputs: modePolicyValidationInputs(),
         reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('refactor'), acceptedReceipt('test')],
         completedReceipts: [],
         reviewContextSha256ByType: {
@@ -366,7 +419,7 @@ describe('review remediation selective recovery routing', () => {
         const fixture = makePersistedReusePolicyFixture();
         try {
             const profilePolicySnapshot = makeSnapshot();
-            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+            appendRestartDecision(fixture, resolveFixtureAuthoritativeDecision({
                 taskId: TASK_ID,
                 currentReviewType: 'test',
                 classification: {
@@ -392,7 +445,7 @@ describe('review remediation selective recovery routing', () => {
         const fixture = makePersistedReusePolicyFixture();
         try {
             const profilePolicySnapshot = makeSnapshot();
-            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+            appendRestartDecision(fixture, resolveFixtureAuthoritativeDecision({
                 taskId: TASK_ID,
                 currentReviewType: 'test',
                 classification: {
@@ -405,7 +458,7 @@ describe('review remediation selective recovery routing', () => {
                 reviewExecutionPolicyMode: 'strict_sequential',
                 reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('test')]
             }));
-            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+            appendRestartDecision(fixture, resolveFixtureAuthoritativeDecision({
                 taskId: TASK_ID,
                 currentReviewType: 'code',
                 classification: {
@@ -432,7 +485,7 @@ describe('review remediation selective recovery routing', () => {
         const fixture = makePersistedReusePolicyFixture();
         try {
             const profilePolicySnapshot = makeSnapshot();
-            const decision = resolveAuthoritativeReviewRemediationDecision({
+            const decision = resolveFixtureAuthoritativeDecision({
                 taskId: TASK_ID,
                 currentReviewType: 'test',
                 classification: {
@@ -461,7 +514,7 @@ describe('review remediation selective recovery routing', () => {
         const fixture = makePersistedReusePolicyFixture();
         try {
             const profilePolicySnapshot = makeSnapshot();
-            appendRestartDecision(fixture, resolveAuthoritativeReviewRemediationDecision({
+            appendRestartDecision(fixture, resolveFixtureAuthoritativeDecision({
                 taskId: TASK_ID,
                 currentReviewType: 'test',
                 classification: {
@@ -489,7 +542,7 @@ describe('review remediation selective recovery routing', () => {
 
     it('emits one hash-bound REUSE, DELTA, or FULL decision for every effective lane', () => {
         const profilePolicySnapshot = makeSnapshot();
-        const decision = resolveAuthoritativeReviewRemediationDecision({
+        const decision = resolveFixtureAuthoritativeDecision({
             taskId: TASK_ID,
             currentReviewType: 'test',
             classification: {
@@ -552,13 +605,13 @@ describe('review remediation selective recovery routing', () => {
             requiredReviews: { code: true, test: true },
             reviewExecutionPolicyMode: 'strict_sequential' as const
         };
-        const pending = resolveAuthoritativeReviewRemediationDecision(baseOptions);
+        const pending = resolveFixtureAuthoritativeDecision(baseOptions);
         assert.deepEqual(pending.lane_decisions.map((entry) => entry.mode), ['FULL', 'DELTA']);
         assert.match(pending.lane_decisions[0].reason, /reuse validation has not accepted/iu);
 
         const foreignDelta = makeDelta('leaf_test');
         foreignDelta.task_id = 'T-foreign';
-        const foreign = resolveAuthoritativeReviewRemediationDecision({
+        const foreign = resolveFixtureAuthoritativeDecision({
             ...baseOptions,
             classification: { ...baseOptions.classification, delta: foreignDelta }
         });
@@ -568,7 +621,7 @@ describe('review remediation selective recovery routing', () => {
 
         const tamperedDelta = makeDelta('leaf_test');
         tamperedDelta.classification_sha256 = hash('tampered');
-        const tampered = resolveAuthoritativeReviewRemediationDecision({
+        const tampered = resolveFixtureAuthoritativeDecision({
             ...baseOptions,
             classification: { ...baseOptions.classification, delta: tamperedDelta }
         });
@@ -576,9 +629,83 @@ describe('review remediation selective recovery routing', () => {
         assert.match(tampered.blocked_reasons.join(' '), /classification_sha256/iu);
     });
 
+    it('rejects a self-consistent DELTA assessment that underreports the authenticated periodic-FULL depth', () => {
+        const profilePolicySnapshot = makeSnapshot();
+        const delta = makeDelta('leaf_test');
+        const decision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'test',
+            classification: {
+                source: 'delta',
+                delta: rehashDelta(delta),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            },
+            requiredReviews: { code: true, test: true },
+            reviewExecutionPolicyMode: 'strict_sequential'
+        }, {
+            consecutiveDeltaReviews:
+                buildDefaultReviewRemediationModePolicy().max_consecutive_delta_reviews
+        });
+
+        assert.equal(decision.status, 'BLOCKED');
+        assert.match(
+            decision.blocked_reasons.join(' '),
+            /does not match authenticated timeline and preflight mode-policy inputs/iu
+        );
+    });
+
+    it('rejects self-consistent DELTA assessments that weaken legacy or protected FULL floors', () => {
+        const legacyDelta = makeDelta('production', 'code');
+        const legacyAssessment = legacyDelta.mode_policy_assessment!;
+        const { assessment_sha256: _legacyHash, ...legacyAssessmentCore } = {
+            ...legacyAssessment,
+            legacy_fallback: true
+        };
+        legacyDelta.mode_policy_assessment = {
+            ...legacyAssessmentCore,
+            assessment_sha256: sha256RedactedJsonPayload(legacyAssessmentCore)
+        };
+        const legacyDecision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'code',
+            classification: {
+                source: 'delta',
+                delta: rehashDelta(legacyDelta),
+                profilePolicySnapshot: { schema_version: 1 },
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload({ schema_version: 1 })
+            },
+            requiredReviews: { code: true },
+            reviewExecutionPolicyMode: 'strict_sequential'
+        });
+        assert.equal(legacyDecision.status, 'BLOCKED');
+        assert.match(legacyDecision.blocked_reasons.join(' '), /legacy.*requires FULL/iu);
+
+        const protectedDelta = makeDelta('production', 'code', 'src/app.ts');
+        const protectedDecision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'code',
+            classification: {
+                source: 'delta',
+                delta: protectedDelta,
+                profilePolicySnapshot: makeSnapshot(),
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(makeSnapshot())
+            },
+            requiredReviews: { code: true, security: true },
+            reviewExecutionPolicyMode: 'strict_sequential'
+        }, {
+            protectedBoundarySignals: ['security']
+        });
+        assert.equal(protectedDecision.status, 'BLOCKED');
+        assert.match(
+            protectedDecision.blocked_reasons.join(' '),
+            /does not match authenticated timeline and preflight mode-policy inputs/iu
+        );
+    });
+
     it('records fresh invalidated evidence as satisfied without misclassifying it as reuse', () => {
         const profilePolicySnapshot = makeSnapshot();
-        const decision = resolveAuthoritativeReviewRemediationDecision({
+        const decision = resolveFixtureAuthoritativeDecision({
             taskId: TASK_ID,
             currentReviewType: 'test',
             classification: {
@@ -686,6 +813,15 @@ describe('review remediation selective recovery routing', () => {
         assert.deepEqual(route.preserved_review_types, ['security']);
         assert.deepEqual(route.reused_review_types, ['security']);
         assert.deepEqual(route.review_required_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(route.authoritative_decision.lane_decisions.map((entry) => ({
+            review_type: entry.review_type,
+            mode: entry.mode
+        })), [
+            { review_type: 'code', mode: 'DELTA' },
+            { review_type: 'security', mode: 'REUSE' },
+            { review_type: 'architecture-boundary', mode: 'FULL' },
+            { review_type: 'test', mode: 'FULL' }
+        ]);
         assert.deepEqual(route.dependency_edges, [
             { review_type: 'code', depends_on: [] },
             { review_type: 'architecture-boundary', depends_on: ['code'] },
@@ -694,8 +830,24 @@ describe('review remediation selective recovery routing', () => {
     });
 
     it('routes broad impact to ordinary validation and invalidates only currently required lanes', () => {
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'security', 'test'],
+            activeLaneIds: ['code', 'security', 'test'],
+            requiredReviewIds: ['code', 'security', 'test'],
+            mode: 'strict_sequential',
+            declaration: {
+                preparation_order: ['code', 'security', 'test'],
+                dependencies: {
+                    security: ['code'],
+                    test: ['code', 'security']
+                }
+            }
+        });
         const beforeValidation = buildReviewRemediationRecoveryRoute(routeOptions('production', {
+            currentReviewType: 'code',
+            delta: makeDelta('production', 'code'),
             requiredReviews: { code: true, security: true, api: false, test: true },
+            reviewDependencyGraph,
             reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('security'), acceptedReceipt('test')]
         }));
         assert.equal(beforeValidation.validation_route, 'ordinary');
@@ -705,9 +857,12 @@ describe('review remediation selective recovery routing', () => {
         assert.equal(beforeValidation.next_action?.command, validationCommands.ordinary.command);
 
         const afterValidation = buildReviewRemediationRecoveryRoute(routeOptions('production', {
+            currentReviewType: 'code',
+            delta: makeDelta('production', 'code'),
             requiredReviews: { code: true, security: true, api: false, test: true },
+            reviewDependencyGraph,
             reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('security'), acceptedReceipt('test')],
-            validationEvidence: validationEvidence('production')
+            validationEvidence: validationEvidence('production', 'code')
         }));
         assert.equal(afterValidation.next_action?.target, 'code');
     });
@@ -784,9 +939,12 @@ describe('review remediation selective recovery routing', () => {
 
     it('uses the conservative all-required fallback for legacy task snapshots', () => {
         const profilePolicySnapshot = { schema_version: 1 };
+        const legacyDelta = makeDelta('leaf_test');
+        delete legacyDelta.mode_policy_assessment;
         const route = buildReviewRemediationRecoveryRoute(routeOptions('leaf_test', {
             profilePolicySnapshot,
             baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot),
+            delta: rehashDelta(legacyDelta),
             requiredReviews: { code: true, test: true },
             reusableReceipts: [acceptedReceipt('code'), acceptedReceipt('test')]
         }));

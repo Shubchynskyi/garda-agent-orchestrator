@@ -372,6 +372,41 @@ export function getReviewRemediationDeltaClassificationViolations(
     } else if (delta.full_review_required !== (delta.full_review_reasons.length > 0)) {
         violations.push('delta.full_review_required must agree with full_review_reasons.');
     }
+    if (delta.mode_policy_assessment !== undefined) {
+        const assessment = delta.mode_policy_assessment;
+        if (!isPlainRecord(assessment)) {
+            violations.push('delta.mode_policy_assessment must be a JSON object.');
+        } else {
+            const { assessment_sha256: _, ...assessmentWithoutHash } = assessment;
+            if (
+                !/^[0-9a-f]{64}$/u.test(String(assessment.assessment_sha256 || ''))
+                || assessment.assessment_sha256 !== sha256RedactedJsonPayload(assessmentWithoutHash)
+            ) {
+                violations.push('delta.mode_policy_assessment hash is invalid.');
+            }
+            if (!['FULL', 'DELTA'].includes(String(assessment.mode || ''))) {
+                violations.push('delta.mode_policy_assessment mode must be FULL or DELTA.');
+            }
+            if (
+                assessment.mode === 'FULL'
+                && delta.full_review_required !== true
+            ) {
+                violations.push('delta.mode_policy_assessment FULL requires delta.full_review_required=true.');
+            }
+            if (
+                assessment.mode === 'DELTA'
+                && delta.full_review_required === true
+            ) {
+                violations.push('delta.mode_policy_assessment DELTA cannot accompany a FULL classification.');
+            }
+            if (
+                !Array.isArray(assessment.full_review_reasons)
+                || JSON.stringify(assessment.full_review_reasons) !== JSON.stringify(delta.full_review_reasons)
+            ) {
+                violations.push('delta.mode_policy_assessment reasons must match delta.full_review_reasons.');
+            }
+        }
+    }
     const normalizePathList = (value: unknown): string[] | null => {
         if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
             return null;

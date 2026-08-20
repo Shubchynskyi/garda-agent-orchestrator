@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto';
 import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { DEFAULT_REVIEW_TRIGGER_POLICY } from '../../policy/review-trigger-policy';
 import type { ReviewRemediationDeltaCategory } from '../../policy/review-remediation-rerun-policy';
+import {
+    evaluateReviewRemediationMode,
+    type ReviewRemediationModeAssessment,
+    type ReviewRemediationModePolicy,
+    type ReviewRemediationProtectedBoundarySignal
+} from '../../policy/review-remediation-mode-policy';
 import { normalizePath } from '../shared/helpers';
 import { isTestLikeRemediationPath } from './review-remediation-scope-boundary';
 import {
@@ -93,6 +99,7 @@ export interface ReviewRemediationDeltaClassification {
     deletions_total: number | null;
     changed_lines_total: number | null;
     readable_diff: ReviewRemediationReadableDiffEvidence;
+    mode_policy_assessment?: ReviewRemediationModeAssessment;
     classification_sha256: string;
 }
 
@@ -106,6 +113,13 @@ export interface ClassifyReviewRemediationDeltaOptions {
     testPathRegexes?: readonly string[];
     structuralTestPathRegexes?: readonly string[];
     structuralTestChangedLinesThreshold?: number;
+    modePolicy?: ReviewRemediationModePolicy;
+    modePolicyLegacyFallback?: boolean;
+    consecutiveDeltaReviews?: number;
+    protectedBoundarySignals?: readonly ReviewRemediationProtectedBoundarySignal[];
+    taskCriteriaChanged?: boolean;
+    policyChanged?: boolean;
+    uncertainCrossFileImpact?: boolean;
 }
 
 const GENERATED_PATH_PATTERN = /(?:^|\/)(?:\.node-build|\.scripts-build|coverage|dist|generated|snapshots?)(?:\/|$)|\.snap$|\.generated\.[^/]+$/iu;
@@ -460,7 +474,7 @@ export function classifyReviewRemediationDelta(
     if (!Number.isInteger(structuralThreshold) || structuralThreshold < 1) {
         throw new Error('Review remediation delta structural test changed-lines threshold must be a positive integer.');
     }
-    return classifyFromBaseline({
+    const delta = classifyFromBaseline({
         repoRoot: options.repoRoot,
         taskId: options.taskId,
         reviewType,
@@ -473,6 +487,44 @@ export function classifyReviewRemediationDelta(
             ?? DEFAULT_REVIEW_TRIGGER_POLICY.test_refactor_structural_path_regexes,
         structuralTestChangedLinesThreshold: structuralThreshold
     });
+    if (!options.modePolicy) {
+        return delta;
+    }
+    const assessment = evaluateReviewRemediationMode({
+        policy: options.modePolicy,
+        legacyFallback: options.modePolicyLegacyFallback,
+        reviewType,
+        category: delta.category,
+        changedFilesCount: delta.changed_files.length,
+        changedLinesTotal: delta.changed_lines_total,
+        consecutiveDeltaReviews: options.consecutiveDeltaReviews ?? 0,
+        protectedBoundarySignals: options.protectedBoundarySignals,
+        taskCriteriaChanged: options.taskCriteriaChanged,
+        policyChanged: options.policyChanged,
+        scopeMembershipChanged: !delta.scope.membership_unchanged,
+        uncertainCrossFileImpact: options.uncertainCrossFileImpact,
+        existingFullReviewReasons: delta.full_review_reasons
+    });
+    const deltaWithoutHash = { ...delta } as Omit<ReviewRemediationDeltaClassification, 'classification_sha256'>
+        & { classification_sha256?: string };
+    delete deltaWithoutHash.classification_sha256;
+    const fullReviewReasons = [...new Set([
+        ...delta.full_review_reasons,
+        ...assessment.full_review_reasons
+    ])].sort();
+    const classified = {
+        ...deltaWithoutHash,
+        reason: fullReviewReasons.length > 0
+            ? `${delta.reason}; conservative mode policy requires FULL: ${fullReviewReasons.join('; ')}`
+            : delta.reason,
+        full_review_required: fullReviewReasons.length > 0,
+        full_review_reasons: fullReviewReasons,
+        mode_policy_assessment: assessment
+    };
+    return {
+        ...classified,
+        classification_sha256: sha256RedactedJsonPayload(classified)
+    };
 }
 
 export const reviewRemediationDeltaInternals = {

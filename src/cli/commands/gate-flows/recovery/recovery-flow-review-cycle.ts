@@ -5,6 +5,11 @@ import { getReviewExecutionPreparationBatches, resolveReviewExecutionPolicyModeF
 import { resolveCompiledReviewDependencyGraphFromPreflight } from '../../../../core/review-dependency-graph';
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { resolveTaskProfileReviewTriggerPolicy } from '../../../../policy/task-profile-policy-snapshot';
+import {
+    collectReviewRemediationProtectedBoundarySignals,
+    hasReviewRemediationPolicySourceChange,
+    resolveReviewRemediationModePolicyFromSnapshot
+} from '../../../../policy/review-remediation-mode-policy';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
 import { getPreflightContext, getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import {
@@ -23,6 +28,7 @@ import {
     resolveAuthoritativeReviewRemediationDecision,
     type AuthoritativeReviewRemediationDecision,
     type ReviewRemediationDecisionClassification,
+    type ReviewRemediationModePolicyValidationInputs,
     type ReviewRemediationReusableReceipt
 } from '../../../../gates/review-remediation/review-remediation-recovery-routing';
 import { buildReviewContextPreflightDiffExpectations } from '../../../../gates/review-context/review-context-contract';
@@ -107,6 +113,34 @@ function getDependencyBlockReason(error: unknown, reviewType: string): string | 
     return message.trim();
 }
 
+export function resolveRuntimeReviewRemediationModeGuards(options: {
+    currentChangedFiles: readonly string[];
+    preflightPayload?: unknown;
+    authenticatedTaskCriteria?: string | null;
+    currentTaskCriteria?: string | null;
+}) {
+    const protectedBoundarySignals = collectReviewRemediationProtectedBoundarySignals({
+        changedFiles: options.currentChangedFiles,
+        preflight: options.preflightPayload
+    });
+    const criteriaComparisonRequested = options.authenticatedTaskCriteria !== undefined
+        || options.currentTaskCriteria !== undefined;
+    const authenticatedTaskCriteria = String(options.authenticatedTaskCriteria || '').trim();
+    const currentTaskCriteria = String(options.currentTaskCriteria || '').trim();
+    const criteriaBindingChanged = criteriaComparisonRequested
+        && (
+            !authenticatedTaskCriteria
+            || !currentTaskCriteria
+            || authenticatedTaskCriteria !== currentTaskCriteria
+        );
+    return {
+        protectedBoundarySignals,
+        taskCriteriaChanged:
+            protectedBoundarySignals.includes('task_criteria_or_policy') || criteriaBindingChanged,
+        policyChanged: hasReviewRemediationPolicySourceChange(options.currentChangedFiles)
+    };
+}
+
 export function resolveRuntimeDecisionInputs(options: {
     repoRoot: string;
     taskId: string;
@@ -126,9 +160,13 @@ export function resolveRuntimeDecisionInputs(options: {
         test_refactor_changed_lines_threshold: number;
     };
     allowAuthenticatedDelta: boolean;
+    preflightPayload?: unknown;
+    authenticatedTaskCriteria?: string | null;
+    currentTaskCriteria?: string | null;
 }): {
     currentReviewType: string;
     classification: ReviewRemediationDecisionClassification;
+    modePolicyValidationInputs: ReviewRemediationModePolicyValidationInputs | null;
 } {
     const currentReviewType = options.remediationReviewType
         || options.remediationFixClassification.invalidated_review_types[0]
@@ -140,8 +178,10 @@ export function resolveRuntimeDecisionInputs(options: {
     const buildFullFallback = (reason: string): {
         currentReviewType: string;
         classification: ReviewRemediationDecisionClassification;
+        modePolicyValidationInputs: null;
     } => ({
         currentReviewType,
+        modePolicyValidationInputs: null,
         classification: {
             source: 'runtime_fix',
             classification: {
@@ -164,6 +204,7 @@ export function resolveRuntimeDecisionInputs(options: {
         const orchestratorRoot = resolveOrchestratorRoot(options.repoRoot);
         const timelinePath = path.join(orchestratorRoot, 'runtime', 'task-events', `${options.taskId}.jsonl`);
         const recordedEvent = { details: null as Record<string, unknown> | null };
+        let consecutiveDeltaReviews = 0;
         const timelineIntegrity = inspectTaskEventFile(timelinePath, options.taskId, {
             onIntegrityEvent: (event) => {
                 const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
@@ -173,10 +214,17 @@ export function resolveRuntimeDecisionInputs(options: {
                     String(event.event_type || '').trim().toUpperCase() === 'REVIEW_RECORDED'
                     && String(event.outcome || '').trim().toUpperCase() === 'PASS'
                     && String(details?.review_type || '').trim().toLowerCase() === currentReviewType
-                    && String(details?.remediation_baseline_snapshot_path || '').trim()
-                    && String(details?.remediation_baseline_snapshot_sha256 || '').trim()
                 ) {
-                    recordedEvent.details = details;
+                    const recordedMode = String(details?.review_execution_mode || '').trim().toUpperCase();
+                    consecutiveDeltaReviews = recordedMode === 'DELTA'
+                        ? consecutiveDeltaReviews + 1
+                        : 0;
+                    if (
+                        String(details?.remediation_baseline_snapshot_path || '').trim()
+                        && String(details?.remediation_baseline_snapshot_sha256 || '').trim()
+                    ) {
+                        recordedEvent.details = details;
+                    }
                 }
             }
         });
@@ -212,6 +260,10 @@ export function resolveRuntimeDecisionInputs(options: {
             );
         }
         try {
+            const modePolicyResolution = resolveReviewRemediationModePolicyFromSnapshot(
+                options.profilePolicySnapshot
+            );
+            const modeGuards = resolveRuntimeReviewRemediationModeGuards(options);
             const delta = classifyReviewRemediationDelta({
                 repoRoot: options.repoRoot,
                 taskId: options.taskId,
@@ -222,13 +274,29 @@ export function resolveRuntimeDecisionInputs(options: {
                 testPathRegexes: options.reviewTriggerPolicy.test_path_regexes,
                 structuralTestPathRegexes: options.reviewTriggerPolicy.test_refactor_structural_path_regexes,
                 structuralTestChangedLinesThreshold:
-                    options.reviewTriggerPolicy.test_refactor_changed_lines_threshold
+                    options.reviewTriggerPolicy.test_refactor_changed_lines_threshold,
+                modePolicy: modePolicyResolution.policy,
+                modePolicyLegacyFallback: modePolicyResolution.legacy_fallback,
+                consecutiveDeltaReviews,
+                protectedBoundarySignals: modeGuards.protectedBoundarySignals,
+                taskCriteriaChanged: modeGuards.taskCriteriaChanged,
+                policyChanged: modeGuards.policyChanged,
+                uncertainCrossFileImpact:
+                    options.remediationFixClassification.category === 'unknown'
             });
             const baseline = JSON.parse(fs.readFileSync(baselineSnapshotPath, 'utf8')) as Record<string, unknown>;
             const bindings = baseline.bindings as Record<string, unknown> | undefined;
             const policy = bindings?.policy as Record<string, unknown> | undefined;
             return {
                 currentReviewType,
+                modePolicyValidationInputs: {
+                    consecutiveDeltaReviews,
+                    protectedBoundarySignals: modeGuards.protectedBoundarySignals,
+                    taskCriteriaChanged: modeGuards.taskCriteriaChanged,
+                    policyChanged: modeGuards.policyChanged,
+                    uncertainCrossFileImpact:
+                        options.remediationFixClassification.category === 'unknown'
+                },
                 classification: {
                     source: 'delta',
                     delta,
@@ -246,6 +314,7 @@ export function resolveRuntimeDecisionInputs(options: {
     }
     return {
         currentReviewType,
+        modePolicyValidationInputs: null,
         classification: {
             source: 'runtime_fix',
             classification: {
@@ -644,6 +713,7 @@ export async function runRestartReviewCycleCommand(
                     taskId: resolvedTaskId,
                     currentReviewType: evidenceOnlyDecisionInputs.currentReviewType,
                     classification: evidenceOnlyDecisionInputs.classification,
+                    modePolicyValidationInputs: evidenceOnlyDecisionInputs.modePolicyValidationInputs,
                     requiredReviews,
                     reviewExecutionPolicyMode,
                     reviewDependencyGraph
@@ -877,13 +947,17 @@ export async function runRestartReviewCycleCommand(
             profilePolicySnapshot: previousTaskMode.profile_policy_snapshot,
             currentChangedFiles: scopeBoundary.currentChangedFiles,
             reviewTriggerPolicy,
-            allowAuthenticatedDelta: true
+            allowAuthenticatedDelta: true,
+            preflightPayload: refreshedPreflight.preflight,
+            authenticatedTaskCriteria: previousTaskMode.task_summary,
+            currentTaskCriteria: taskSummary
         });
         const preliminaryAuthoritativeDecisionWithoutPreflight = requireReadyAuthoritativeDecision(
             resolveAuthoritativeReviewRemediationDecision({
                 taskId: resolvedTaskId,
                 currentReviewType: authoritativeDecisionInputs.currentReviewType,
                 classification: authoritativeDecisionInputs.classification,
+                modePolicyValidationInputs: authoritativeDecisionInputs.modePolicyValidationInputs,
                 requiredReviews: refreshedRequiredReviews,
                 reviewExecutionPolicyMode,
                 reviewDependencyGraph
@@ -1041,6 +1115,7 @@ export async function runRestartReviewCycleCommand(
                 taskId: resolvedTaskId,
                 currentReviewType: authoritativeDecisionInputs.currentReviewType,
                 classification: authoritativeDecisionInputs.classification,
+                modePolicyValidationInputs: authoritativeDecisionInputs.modePolicyValidationInputs,
                 requiredReviews: refreshedRequiredReviews,
                 reviewExecutionPolicyMode,
                 reviewDependencyGraph,

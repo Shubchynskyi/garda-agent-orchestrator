@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 
 import { compileReviewDependencyGraph } from '../../../src/core/review-dependency-graph';
 import {
+    resolveRuntimeReviewRemediationModeGuards
+} from '../../../src/cli/commands/gate-flows/recovery/recovery-flow-review-cycle';
+import {
     REVIEW_REMEDIATION_DELTA_CATEGORIES,
     buildDefaultReviewRemediationRerunPolicy,
     resolveReviewRemediationRerunLanes,
@@ -11,6 +14,14 @@ import {
     type ReviewRemediationDeltaCategory,
     type ReviewRemediationRerunPolicy
 } from '../../../src/policy/review-remediation-rerun-policy';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    collectReviewRemediationProtectedBoundarySignals,
+    evaluateReviewRemediationMode,
+    hasReviewRemediationPolicySourceChange,
+    resolveReviewRemediationModePolicyFromSnapshot,
+    validateReviewRemediationModePolicy
+} from '../../../src/policy/review-remediation-mode-policy';
 
 const allRequiredReviews = {
     dependency: true,
@@ -68,11 +79,193 @@ test('maps every remediation delta category to the snapshotted minimal affected-
         { review_type: 'test', depends_on: ['code', 'refactor'] }
     ]);
 
-    for (const category of ['production', 'global', 'generated_churn', 'ambiguous'] as const) {
+    const production = resolve('production', 'code');
+    assert.deepEqual(production.ordered_rerun_lanes, ['code']);
+
+    for (const category of ['global', 'generated_churn', 'ambiguous'] as const) {
         const broad = resolve(category);
         assert.deepEqual(broad.ordered_rerun_lanes, canonicalReviewOrder, category);
         assert.match(broad.reason, /every currently required review lane/iu, category);
     }
+});
+
+test('allows only bounded non-protected code, refactor, and test remediation to use DELTA', () => {
+    const policy = buildDefaultReviewRemediationModePolicy();
+    const localCode = evaluateReviewRemediationMode({
+        policy,
+        reviewType: 'code',
+        category: 'production',
+        changedFilesCount: 1,
+        changedLinesTotal: 12,
+        consecutiveDeltaReviews: 0
+    });
+    assert.equal(localCode.mode, 'DELTA');
+    assert.deepEqual(localCode.delta_eligible_review_types, ['code', 'refactor', 'test']);
+
+    const protectedLane = evaluateReviewRemediationMode({
+        policy,
+        reviewType: 'security',
+        category: 'production',
+        changedFilesCount: 1,
+        changedLinesTotal: 12,
+        consecutiveDeltaReviews: 0
+    });
+    assert.equal(protectedLane.mode, 'FULL');
+    assert.match(protectedLane.full_review_reasons.join(' '), /security.*not DELTA-eligible/iu);
+
+    const periodicFull = evaluateReviewRemediationMode({
+        policy,
+        reviewType: 'test',
+        category: 'leaf_test',
+        changedFilesCount: 1,
+        changedLinesTotal: 2,
+        consecutiveDeltaReviews: policy.max_consecutive_delta_reviews
+    });
+    assert.equal(periodicFull.mode, 'FULL');
+    assert.match(periodicFull.full_review_reasons.join(' '), /periodic FULL/iu);
+});
+
+test('rejects protected scope evidence into FULL and never treats path keywords as allow evidence', () => {
+    const policy = buildDefaultReviewRemediationModePolicy();
+    const signals = collectReviewRemediationProtectedBoundarySignals({
+        changedFiles: ['src/auth/permission-contract.ts', 'package-lock.json'],
+        preflight: {
+            triggers: { security: true, dependency: true },
+            required_reviews: { security: true, dependency: true }
+        }
+    });
+    assert.deepEqual(signals, [
+        'api_contract',
+        'auth_or_permission',
+        'dependency',
+        'lockfile',
+        'security'
+    ]);
+    const assessment = evaluateReviewRemediationMode({
+        policy,
+        reviewType: 'code',
+        category: 'production',
+        changedFilesCount: 2,
+        changedLinesTotal: 20,
+        consecutiveDeltaReviews: 0,
+        protectedBoundarySignals: signals
+    });
+    assert.equal(assessment.mode, 'FULL');
+    assert.match(assessment.full_review_reasons.join(' '), /protected boundary signal/iu);
+});
+
+test('detects protected implementation paths without relying on preflight review flags', () => {
+    const policy = buildDefaultReviewRemediationModePolicy();
+    const signals = collectReviewRemediationProtectedBoundarySignals({
+        changedFiles: [
+            'src/db/orders-repository.ts',
+            'src/dependencies/client-adapter.ts',
+            'src/security/crypto-provider.ts',
+            'src/routes/orders-endpoint.ts'
+        ],
+        preflight: {}
+    });
+    assert.deepEqual(signals, [
+        'api_contract',
+        'database',
+        'dependency',
+        'security'
+    ]);
+    const assessment = evaluateReviewRemediationMode({
+        policy,
+        reviewType: 'code',
+        category: 'production',
+        changedFilesCount: 4,
+        changedLinesTotal: 40,
+        consecutiveDeltaReviews: 0,
+        protectedBoundarySignals: signals
+    });
+    assert.equal(assessment.mode, 'FULL');
+    assert.equal(assessment.protected_boundary_signals.length, 4);
+});
+
+test('detects review policy implementation and frozen configuration sources', () => {
+    assert.equal(hasReviewRemediationPolicySourceChange([
+        'src/policy/review-remediation-mode-policy.ts'
+    ]), true);
+    assert.equal(hasReviewRemediationPolicySourceChange([
+        'src/core/review-dependency-graph.ts'
+    ]), true);
+    assert.equal(hasReviewRemediationPolicySourceChange([
+        'garda-agent-orchestrator/live/config/profiles.json'
+    ]), true);
+    assert.equal(hasReviewRemediationPolicySourceChange([
+        'src/services/review-summary.ts',
+        'tests/node/policy/review-remediation-rerun-policy.test.ts'
+    ]), false);
+});
+
+test('recovery mode guards force the policyChanged input for policy-source remediation', () => {
+    const policySource = resolveRuntimeReviewRemediationModeGuards({
+        currentChangedFiles: ['src/policy/review-remediation-mode-policy.ts'],
+        preflightPayload: { triggers: {}, required_reviews: { code: true } }
+    });
+    assert.equal(policySource.policyChanged, true);
+    assert.equal(policySource.taskCriteriaChanged, false);
+
+    const ordinarySource = resolveRuntimeReviewRemediationModeGuards({
+        currentChangedFiles: ['src/services/review-summary.ts'],
+        preflightPayload: { triggers: {}, required_reviews: { code: true } }
+    });
+    assert.equal(ordinarySource.policyChanged, false);
+});
+
+test('recovery mode guards force taskCriteriaChanged for authenticated criteria drift or missing values', () => {
+    const unchanged = resolveRuntimeReviewRemediationModeGuards({
+        currentChangedFiles: ['src/app.ts'],
+        authenticatedTaskCriteria: 'Keep the authenticated task criteria.',
+        currentTaskCriteria: 'Keep the authenticated task criteria.'
+    });
+    assert.equal(unchanged.taskCriteriaChanged, false);
+
+    const changed = resolveRuntimeReviewRemediationModeGuards({
+        currentChangedFiles: ['src/app.ts'],
+        authenticatedTaskCriteria: 'Keep the authenticated task criteria.',
+        currentTaskCriteria: 'Expand the task criteria.'
+    });
+    assert.equal(changed.taskCriteriaChanged, true);
+
+    const missing = resolveRuntimeReviewRemediationModeGuards({
+        currentChangedFiles: ['src/app.ts'],
+        authenticatedTaskCriteria: 'Keep the authenticated task criteria.',
+        currentTaskCriteria: null
+    });
+    assert.equal(missing.taskCriteriaChanged, true);
+});
+
+test('rejects mode policies that weaken protected lane, category, size, or periodic FULL floors', () => {
+    const weakenedLane = buildDefaultReviewRemediationModePolicy();
+    weakenedLane.delta_eligible_review_types.push('security');
+    weakenedLane.delta_eligible_review_types.sort();
+    assert.throws(() => validateReviewRemediationModePolicy(weakenedLane), /protected lane floor/iu);
+
+    const weakenedCategory = buildDefaultReviewRemediationModePolicy();
+    weakenedCategory.force_full_categories = ['global'];
+    assert.throws(() => validateReviewRemediationModePolicy(weakenedCategory), /mandatory floors/iu);
+
+    const weakenedBounds = buildDefaultReviewRemediationModePolicy();
+    weakenedBounds.max_delta_changed_files = 50;
+    weakenedBounds.max_delta_changed_lines = 50_000;
+    weakenedBounds.max_consecutive_delta_reviews = 50;
+    assert.throws(() => validateReviewRemediationModePolicy(weakenedBounds), /safety ceiling/iu);
+
+    const legacy = resolveReviewRemediationModePolicyFromSnapshot({ schema_version: 1 });
+    assert.equal(legacy.legacy_fallback, true);
+    const legacyAssessment = evaluateReviewRemediationMode({
+        policy: legacy.policy,
+        legacyFallback: legacy.legacy_fallback,
+        reviewType: 'code',
+        category: 'production',
+        changedFilesCount: 1,
+        changedLinesTotal: 1,
+        consecutiveDeltaReviews: 0
+    });
+    assert.equal(legacyAssessment.mode, 'FULL');
 });
 
 test('filters configured affected lanes to required reviews and fails closed when current review is unavailable', () => {

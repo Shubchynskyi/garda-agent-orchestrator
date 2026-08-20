@@ -57,6 +57,12 @@ import {
     resolveReviewRemediationRerunPolicyFromSnapshot,
     type ReviewRemediationRerunPolicy
 } from './review-remediation-rerun-policy';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    getReviewRemediationModePolicyViolations,
+    resolveReviewRemediationModePolicyFromSnapshot,
+    type ReviewRemediationModePolicy
+} from './review-remediation-mode-policy';
 
 export const TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
@@ -125,6 +131,8 @@ export interface TaskProfilePolicySnapshot {
     review_follow_up_task_profile_assignment?: ReviewFollowUpTaskProfileAssignment;
     review_remediation_rerun_policy?: ReviewRemediationRerunPolicy;
     review_remediation_rerun_policy_diagnostics?: string[];
+    review_remediation_mode_policy?: ReviewRemediationModePolicy;
+    review_remediation_mode_policy_diagnostics?: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     token_economy: TokenEconomyConfig;
@@ -171,6 +179,8 @@ export interface TaskProfilePolicySnapshotSummary {
     review_follow_up_task_profile_assignment: ReviewFollowUpTaskProfileAssignment;
     review_remediation_rerun_policy: ReviewRemediationRerunPolicy;
     review_remediation_rerun_policy_diagnostics: string[];
+    review_remediation_mode_policy: ReviewRemediationModePolicy;
+    review_remediation_mode_policy_diagnostics: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     review_trigger_policy: ReviewTriggerPolicy;
@@ -196,6 +206,8 @@ const LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC =
     'Legacy task profile policy snapshot missing review_finding_policy; resolved fail-closed to strict.';
 const REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC =
     'Snapshotted baseline-bound remediation rerun policy with deterministic affected-review lane selection.';
+const REVIEW_REMEDIATION_MODE_POLICY_DIAGNOSTIC =
+    'Snapshotted conservative FULL/DELTA remediation mode policy with protected floors and periodic FULL review.';
 
 const DEFAULT_REMEDIATION_POLICY = {
     schema_version: 1,
@@ -999,6 +1011,12 @@ function resolveSnapshotReviewRemediationRerunPolicyDiagnostics(snapshot: TaskPr
     return resolveReviewRemediationRerunPolicyFromSnapshot(snapshot).diagnostics;
 }
 
+export function resolveTaskProfileReviewRemediationModePolicy(
+    snapshot: TaskProfilePolicySnapshot
+): ReturnType<typeof resolveReviewRemediationModePolicyFromSnapshot> {
+    return resolveReviewRemediationModePolicyFromSnapshot(snapshot);
+}
+
 function validateReviewFollowUpPolicySnapshot(value: unknown, violations: string[]): void {
     if (!isPlainRecord(value)) {
         violations.push('Task profile policy snapshot review_follow_up_policy must be a JSON object.');
@@ -1198,6 +1216,8 @@ export function buildTaskProfilePolicySnapshot(
         review_follow_up_task_profile_assignment: followUpTaskProfileAssignment,
         review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
         review_remediation_rerun_policy_diagnostics: [REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC],
+        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
+        review_remediation_mode_policy_diagnostics: [REVIEW_REMEDIATION_MODE_POLICY_DIAGNOSTIC],
         finding_policy: buildTaskProfileFindingPolicySnapshot(resolvedProfile.effective_policy.review_finding_policy),
         remediation_policy: { ...DEFAULT_REMEDIATION_POLICY },
         token_economy: resolvedProfile.effective_policy.token_economy,
@@ -1280,6 +1300,19 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
         validateStringArray(
             value.review_remediation_rerun_policy_diagnostics,
             'review_remediation_rerun_policy_diagnostics',
+            violations
+        );
+    }
+    if (
+        value.review_remediation_mode_policy !== undefined
+        || value.review_remediation_mode_policy_diagnostics !== undefined
+    ) {
+        violations.push(...getReviewRemediationModePolicyViolations(
+            value.review_remediation_mode_policy
+        ).map((violation) => `Task profile policy snapshot ${violation}`));
+        validateStringArray(
+            value.review_remediation_mode_policy_diagnostics,
+            'review_remediation_mode_policy_diagnostics',
             violations
         );
     }
@@ -1416,6 +1449,10 @@ export function summarizeTaskProfilePolicySnapshot(
         review_remediation_rerun_policy: resolveSnapshotReviewRemediationRerunPolicy(snapshot),
         review_remediation_rerun_policy_diagnostics:
             resolveSnapshotReviewRemediationRerunPolicyDiagnostics(snapshot),
+        review_remediation_mode_policy:
+            resolveTaskProfileReviewRemediationModePolicy(snapshot).policy,
+        review_remediation_mode_policy_diagnostics:
+            resolveTaskProfileReviewRemediationModePolicy(snapshot).diagnostics,
         finding_policy: resolveSnapshotFindingPolicy(snapshot),
         remediation_policy: snapshot.remediation_policy,
         review_trigger_policy: resolveTaskProfileReviewTriggerPolicy(snapshot),
