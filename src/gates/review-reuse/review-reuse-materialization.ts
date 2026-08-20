@@ -94,6 +94,7 @@ export interface MaterializeReusedReviewEvidenceOptions {
     historicalReviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
     expectedContextSha256: string | null;
     expectedContextReuseSha256: string | null;
+    historicalSchema3ContextReuseHashMatches: boolean;
     expectedReviewTreeStateSha256: string | null;
     expectedReviewScopeSha256: string | null;
     expectedCodeScopeSha256: string | null;
@@ -112,7 +113,7 @@ interface ReusedReviewFindingsValidationEvidence {
     rawOutputSha256: string | null;
     policyResolution: LockedReviewFindingPolicyResolution;
     dispositionEvidence: ReusedReviewFindingsDispositionEvidence;
-    historicalExecutionBindings: ReviewExecutionEvidenceBindings;
+    historicalExecutionBindings: ReviewExecutionEvidenceBindings | null;
 }
 
 export function getReusedReviewCoverageContractViolations(options: {
@@ -560,7 +561,8 @@ function buildReusedReviewFindingsValidationEvidence(
         expectedReviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         expectedCoverageContractSha256: getReceiptOutputContractString(options.receipt, 'coverage_contract_sha256'),
         requireAccepted: true,
-        preferSnapshot: true
+        preferSnapshot: true,
+        allowLegacyMissingExecutionBinding: options.historicalSchema3ContextReuseHashMatches
     });
     if (!sourceValidation.valid || !sourceValidation.artifact) {
         return { reason: `reused review findings validation failed: ${sourceValidation.violations.join(' ')}` };
@@ -568,17 +570,24 @@ function buildReusedReviewFindingsValidationEvidence(
     if (!sourceValidation.reference || !sourceValidation.artifact_sha256) {
         return { reason: 'reused review findings validation failed: source receipt evidence is incomplete.' };
     }
-    const historicalExecutionBindings = sourceValidation.artifact.validation_result.bindings.execution;
-    const historicalExecutionViolations = getReviewExecutionEvidenceBindingViolations({
-        expectedEvidence: historicalExecutionBindings ?? null,
-        evidence: historicalExecutionBindings ?? null,
-        evidenceLabel: 'historical review findings validation artifact execution binding',
-        expectedEvidenceLabel: 'historical review findings validation artifact execution binding'
-    });
-    if (!historicalExecutionBindings || historicalExecutionViolations.length > 0) {
-        return {
-            reason: `reused review findings validation failed: ${historicalExecutionViolations.join(' ')}`
-        };
+    const historicalValidationBindings = sourceValidation.artifact.validation_result.bindings;
+    const historicalExecutionBindingDeclared = Object.prototype.hasOwnProperty.call(
+        historicalValidationBindings,
+        'execution'
+    );
+    const historicalExecutionBindings = historicalValidationBindings.execution ?? null;
+    if (historicalExecutionBindingDeclared) {
+        const historicalExecutionViolations = getReviewExecutionEvidenceBindingViolations({
+            expectedEvidence: historicalExecutionBindings,
+            evidence: historicalExecutionBindings,
+            evidenceLabel: 'historical review findings validation artifact execution binding',
+            expectedEvidenceLabel: 'historical review findings validation artifact execution binding'
+        });
+        if (!historicalExecutionBindings || historicalExecutionViolations.length > 0) {
+            return {
+                reason: `reused review findings validation failed: ${historicalExecutionViolations.join(' ')}`
+            };
+        }
     }
     const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
     if (gateHelpers.normalizePath(sourceValidation.reference.artifact_path) !== gateHelpers.normalizePath(validationArtifactPath)) {
@@ -669,15 +678,17 @@ function attachReusedReviewFindingsReceiptEvidence(
     const receiptRecord = refreshedReceipt as unknown as Record<string, unknown>;
     const executionBindings = resolveReviewContextExecutionEvidenceBindings(currentReviewContext).bindings;
     const historicalExecutionBindings = evidence.historicalExecutionBindings;
-    receiptRecord.reused_from_review_execution_mode = historicalExecutionBindings.review_execution_mode;
-    receiptRecord.reused_from_review_execution_contract_sha256 =
-        historicalExecutionBindings.review_execution_contract_sha256;
-    receiptRecord.reused_from_review_execution_full_scope_sha256 =
-        historicalExecutionBindings.review_execution_full_scope_sha256;
-    receiptRecord.reused_from_review_execution_complete_scope_lineage_sha256 =
-        historicalExecutionBindings.review_execution_complete_scope_lineage_sha256;
-    receiptRecord.reused_from_review_execution_finding_reconciliation_sha256 =
-        historicalExecutionBindings.review_execution_finding_reconciliation_sha256;
+    if (historicalExecutionBindings) {
+        receiptRecord.reused_from_review_execution_mode = historicalExecutionBindings.review_execution_mode;
+        receiptRecord.reused_from_review_execution_contract_sha256 =
+            historicalExecutionBindings.review_execution_contract_sha256;
+        receiptRecord.reused_from_review_execution_full_scope_sha256 =
+            historicalExecutionBindings.review_execution_full_scope_sha256;
+        receiptRecord.reused_from_review_execution_complete_scope_lineage_sha256 =
+            historicalExecutionBindings.review_execution_complete_scope_lineage_sha256;
+        receiptRecord.reused_from_review_execution_finding_reconciliation_sha256 =
+            historicalExecutionBindings.review_execution_finding_reconciliation_sha256;
+    }
     const reportSha256 = sha256RedactedJsonPayload(report);
     receiptRecord.review_output_sha256 = evidence.rawOutputSha256;
     receiptRecord.review_output_format = 'findings_json';
@@ -757,6 +768,9 @@ function buildReusedReviewReceipt(
         reusedFromDomainScopeFingerprints: normalizeDomainScopeFingerprints(options.receipt.domain_scope_fingerprints)
     });
     const refreshedReceiptRecord = refreshedReceipt as unknown as Record<string, unknown>;
+    if (options.historicalSchema3ContextReuseHashMatches) {
+        refreshedReceiptRecord.reused_from_review_context_schema_version = 3;
+    }
     const executionBindings = resolveReviewContextExecutionEvidenceBindings(currentReviewContext).bindings;
     if (executionBindings) {
         Object.assign(refreshedReceiptRecord, executionBindings);

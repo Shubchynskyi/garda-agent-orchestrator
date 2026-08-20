@@ -821,11 +821,11 @@ export function computeReviewRelevantScopeFingerprint(
     };
 }
 
-export function computeReviewContextReuseHash(reviewContext: Record<string, unknown>): string | null {
-    if (!reviewContext || typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
-        return null;
-    }
-
+function buildReviewContextReuseHashSnapshot(
+    reviewContext: Record<string, unknown>,
+    schemaVersion: number | null,
+    includeReviewExecution: boolean
+): Record<string, unknown> {
     const rulePack = toRecord(reviewContext.rule_pack);
     const tokenEconomy = toRecord(reviewContext.token_economy);
     const ruleContext = toRecord(reviewContext.rule_context);
@@ -834,8 +834,8 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
     const plan = toRecord(reviewContext.plan);
     const contractBindings = resolveReviewContextReuseContractBindings(reviewContext);
 
-    const snapshot = {
-        schema_version: typeof reviewContext.schema_version === 'number' ? reviewContext.schema_version : null,
+    return {
+        schema_version: schemaVersion,
         review_type: String(reviewContext.review_type || '').trim().toLowerCase() || null,
         depth: typeof reviewContext.depth === 'number' ? reviewContext.depth : null,
         token_economy_active: reviewContext.token_economy_active === true,
@@ -861,10 +861,14 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
         coverage_contract: {
             contract_sha256: contractBindings.coverageContractSha256
         },
-        review_execution: {
-            mode: contractBindings.reviewExecutionMode,
-            full_review_scope_sha256: contractBindings.reviewExecutionFullScopeSha256
-        },
+        ...(includeReviewExecution
+            ? {
+                review_execution: {
+                    mode: contractBindings.reviewExecutionMode,
+                    full_review_scope_sha256: contractBindings.reviewExecutionFullScopeSha256
+                }
+            }
+            : {}),
         scoped_diff: {
             expected: scopedDiff.expected === true,
             metadata: buildScopedDiffReuseMetadata(scopedDiff.metadata)
@@ -894,6 +898,30 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
             plan_summary: String(plan.plan_summary || '').trim() || null
         }
     };
+}
 
-    return stringSha256(JSON.stringify(snapshot));
+export function computeSchema3ReviewContextReuseCompatibilityHash(
+    reviewContext: Record<string, unknown>
+): string | null {
+    if (!reviewContext || typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
+        return null;
+    }
+    return stringSha256(JSON.stringify(buildReviewContextReuseHashSnapshot(reviewContext, 3, false)));
+}
+
+export function computeReviewContextReuseHash(reviewContext: Record<string, unknown>): string | null {
+    if (!reviewContext || typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
+        return null;
+    }
+
+    const schemaVersion = typeof reviewContext.schema_version === 'number'
+        ? reviewContext.schema_version
+        : null;
+    if (schemaVersion === 3) {
+        return computeSchema3ReviewContextReuseCompatibilityHash(reviewContext);
+    }
+
+    return stringSha256(JSON.stringify(
+        buildReviewContextReuseHashSnapshot(reviewContext, schemaVersion, true)
+    ));
 }

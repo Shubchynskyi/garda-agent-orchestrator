@@ -34,6 +34,82 @@ import {
 } from './gates-review-reuse-fixtures';
 
 describe('cli/commands/gates - review reuse remediation', () => {
+    const buildWithHistoricalExecutionLineage = async (
+        taskSuffix: string,
+        seedOptions: Parameters<typeof seedReusableReviewEvidence>[7]
+    ) => {
+        const repoRoot = createTempRepo();
+        const taskId = `T-904a-rejects-${taskSuffix}`;
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: `Reject reused findings evidence for ${taskSuffix}`
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            priorPreflightPath,
+            reviewContextPath,
+            'agent:code-reviewer',
+            seedOptions
+        );
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+        return codeBuild;
+    };
+
     it('build-review-context rejects late review preparation after the review gate already passed', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-late-build';
@@ -315,9 +391,64 @@ describe('cli/commands/gates - review reuse remediation', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('rejects reused findings evidence without historical execution lineage', async () => {
+    it('rejects reused findings evidence with missing historical execution lineage', async () => {
+        const codeBuild = await buildWithHistoricalExecutionLineage(
+            'missing-historical-execution',
+            { omitReviewFindingsValidationExecutionBinding: true }
+        );
+        assert.equal(codeBuild.reusedReviewEvidence, false, codeBuild.outputLines.join('\n'));
+        assert.ok(codeBuild.outputLines.some((line) => (
+            line.includes('execution binding is missing valid review_execution_mode')
+        )), codeBuild.outputLines.join('\n'));
+    });
+
+    it('rejects schema-4 findings evidence when validation and receipt both omit execution lineage', async () => {
+        const codeBuild = await buildWithHistoricalExecutionLineage(
+            'schema-4-missing-all-historical-execution',
+            {
+                omitReviewFindingsValidationExecutionBinding: true,
+                omitReceiptExecutionBindings: true
+            }
+        );
+        assert.equal(codeBuild.reusedReviewEvidence, false, codeBuild.outputLines.join('\n'));
+        assert.ok(codeBuild.outputLines.some((line) => (
+            line.includes('execution binding is missing valid review_execution_mode')
+        )), codeBuild.outputLines.join('\n'));
+    });
+
+    it('rejects reused findings evidence with a forged historical execution contract', async () => {
+        const codeBuild = await buildWithHistoricalExecutionLineage(
+            'forged-historical-execution-contract',
+            {
+                reviewFindingsValidationExecutionBindingOverrides: {
+                    review_execution_contract_sha256: 'f'.repeat(64)
+                }
+            }
+        );
+        assert.equal(codeBuild.reusedReviewEvidence, false, codeBuild.outputLines.join('\n'));
+        assert.ok(codeBuild.outputLines.some((line) => (
+            line.includes('review_execution_contract_sha256 does not match')
+        )), codeBuild.outputLines.join('\n'));
+    });
+
+    it('rejects reused findings evidence with a stale historical execution full scope', async () => {
+        const codeBuild = await buildWithHistoricalExecutionLineage(
+            'stale-historical-execution-scope',
+            {
+                reviewFindingsValidationExecutionBindingOverrides: {
+                    review_execution_full_scope_sha256: 'e'.repeat(64)
+                }
+            }
+        );
+        assert.equal(codeBuild.reusedReviewEvidence, false, codeBuild.outputLines.join('\n'));
+        assert.ok(codeBuild.outputLines.some((line) => (
+            line.includes('review_execution_full_scope_sha256 does not match')
+        )), codeBuild.outputLines.join('\n'));
+    });
+
+    it('reuses compatible schema-3 findings evidence without execution bindings', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-904a-rejects-missing-historical-execution';
+        const taskId = 'T-904a-reuses-schema-3-without-execution-bindings';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -326,7 +457,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Reject reused findings evidence without historical execution lineage'
+            taskSummary: 'Reuse compatible legacy schema-3 findings evidence'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -356,8 +487,12 @@ describe('cli/commands/gates - review reuse remediation', () => {
             priorPreflightPath,
             reviewContextPath,
             'agent:code-reviewer',
-            { omitReviewFindingsValidationExecutionBinding: true }
+            { reviewContextSchemaVersion: 3 }
         );
+        const historicalReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(historicalReceipt.review_execution_contract_sha256, null);
 
         const preflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts', 'tests/app.test.ts'],
@@ -384,10 +519,14 @@ describe('cli/commands/gates - review reuse remediation', () => {
             preflightPath,
             outputPath: reviewContextPath
         });
-        assert.equal(codeBuild.reusedReviewEvidence, false, codeBuild.outputLines.join('\n'));
-        assert.ok(codeBuild.outputLines.some((line) => (
-            line.includes('review findings validation artifact execution binding is missing valid review_execution_mode')
-        )), codeBuild.outputLines.join('\n'));
+        assert.equal(codeBuild.reusedReviewEvidence, true, codeBuild.outputLines.join('\n'));
+
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.match(String(refreshedReceipt.review_execution_contract_sha256), /^[a-f0-9]{64}$/u);
+        assert.equal(refreshedReceipt.reused_from_review_execution_contract_sha256, undefined);
+        assert.equal(refreshedReceipt.reused_from_review_context_schema_version, 3);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

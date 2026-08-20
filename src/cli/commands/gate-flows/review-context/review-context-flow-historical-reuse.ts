@@ -8,6 +8,7 @@ import {
 } from '../../../../gates/review/review-dependencies';
 import {
     computeReviewContextReuseHash,
+    computeSchema3ReviewContextReuseCompatibilityHash,
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
     isNonTestReviewScope,
@@ -367,6 +368,9 @@ export async function tryReuseReviewEvidence(options: {
     const currentReviewContextSha256 = String(gateHelpers.fileSha256(options.reviewContextPath) || '').trim().toLowerCase() || null;
     const currentReviewTreeStateSha256 = getReviewTreeStateSha256FromContext(currentReviewContext);
     const currentContextReuseSha256 = String(computeReviewContextReuseHash(currentReviewContext) || '').trim().toLowerCase() || null;
+    const currentSchema3ContextReuseSha256 = String(
+        computeSchema3ReviewContextReuseCompatibilityHash(currentReviewContext) || ''
+    ).trim().toLowerCase() || null;
     const currentReviewContextContractBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
     const testOnlyDeltaReuseEligibility = evaluateTestOnlyDeltaReuseEligibility({
         repoRoot: options.repoRoot,
@@ -399,6 +403,7 @@ export async function tryReuseReviewEvidence(options: {
             currentCodeScopeSha256,
             currentReviewContextSha256,
             currentContextReuseSha256,
+            currentSchema3ContextReuseSha256,
             currentReviewContextContractBindings,
             allowTestOnlyDeltaContextMismatch: testOnlyDeltaReuseEligibility.allowed,
             remediationPreservedScopeMismatchReason: options.remediationPreservedScopeMismatchReason || null
@@ -436,6 +441,8 @@ export async function tryReuseReviewEvidence(options: {
                 historicalReviewerProvenance: evidence.historicalReviewerProvenance,
                 expectedContextSha256: evidence.expectedContextSha256,
                 expectedContextReuseSha256: evidence.expectedContextReuseSha256,
+                historicalSchema3ContextReuseHashMatches:
+                    evidence.historicalSchema3ContextReuseHashMatches,
                 expectedReviewTreeStateSha256: evidence.expectedReviewTreeStateSha256,
                 expectedReviewScopeSha256: evidence.expectedReviewScopeSha256,
                 expectedCodeScopeSha256: evidence.expectedCodeScopeSha256,

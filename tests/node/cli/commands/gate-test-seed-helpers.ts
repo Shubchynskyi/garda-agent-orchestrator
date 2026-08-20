@@ -42,7 +42,8 @@ import {
     REVIEW_FINDINGS_SCHEMA_VERSION
 } from '../../../../src/gates/review/review-findings-schema';
 import {
-    resolveReviewContextExecutionEvidenceBindings
+    resolveReviewContextExecutionEvidenceBindings,
+    type ReviewExecutionEvidenceBindings
 } from '../../../../src/gates/review/review-evidence-contract';
 import {
     type ReviewerRemediationCoverageDeclaration,
@@ -1745,6 +1746,9 @@ export function seedReusableReviewEvidence(
         reviewRuleContextSha256Override?: string | null;
         omitReviewRuleContextBinding?: boolean;
         omitReviewFindingsValidationExecutionBinding?: boolean;
+        omitReceiptExecutionBindings?: boolean;
+        reviewFindingsValidationExecutionBindingOverrides?: Partial<ReviewExecutionEvidenceBindings>;
+        reviewContextSchemaVersion?: 3 | 4;
         sourceOfTruth?: string;
         invocationTimingOverride?: {
             launchPreparedAtUtc?: string;
@@ -1784,20 +1788,25 @@ export function seedReusableReviewEvidence(
         reviewerSessionId: resolvedReviewerIdentity,
         fallbackReason: reviewerFallbackReason
     });
-    if (options.legacyReviewContextIdentity) {
+    if (options.legacyReviewContextIdentity || options.reviewContextSchemaVersion !== undefined) {
         const legacyReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
         const reviewerRouting = legacyReviewContext.reviewer_routing
         && typeof legacyReviewContext.reviewer_routing === 'object'
         && !Array.isArray(legacyReviewContext.reviewer_routing)
             ? legacyReviewContext.reviewer_routing as Record<string, unknown>
             : {};
+        if (options.reviewContextSchemaVersion !== undefined) {
+            legacyReviewContext.schema_version = options.reviewContextSchemaVersion;
+        }
         if (options.legacyReviewContextSourceOfTruth) {
             reviewerRouting.source_of_truth = options.legacyReviewContextSourceOfTruth;
         }
-        delete reviewerRouting.canonical_source_of_truth;
-        delete reviewerRouting.execution_provider;
-        delete reviewerRouting.execution_provider_source;
-        delete reviewerRouting.identity_status;
+        if (options.legacyReviewContextIdentity) {
+            delete reviewerRouting.canonical_source_of_truth;
+            delete reviewerRouting.execution_provider;
+            delete reviewerRouting.execution_provider_source;
+            delete reviewerRouting.identity_status;
+        }
         legacyReviewContext.reviewer_routing = reviewerRouting;
         fs.writeFileSync(reviewContextPath, JSON.stringify(legacyReviewContext, null, 2) + '\n', 'utf8');
     }
@@ -1913,7 +1922,9 @@ export function seedReusableReviewEvidence(
         : null;
     const reviewContextContractBindings = resolveReviewContextReuseContractBindings(reviewContext);
     const reviewExecutionEvidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
-    assert.ok(reviewExecutionEvidence.bindings, reviewExecutionEvidence.violations.join('\n'));
+    if (reviewExecutionEvidence.required) {
+        assert.ok(reviewExecutionEvidence.bindings, reviewExecutionEvidence.violations.join('\n'));
+    }
     const reviewExecutionBindings = reviewExecutionEvidence.bindings;
     const reviewCoverageContractSha256 = options.reviewCoverageContractSha256Override !== undefined
         ? options.reviewCoverageContractSha256Override
@@ -1932,13 +1943,13 @@ export function seedReusableReviewEvidence(
         codeScopeSha256,
         reviewContextSha256: receiptReviewContextSha256,
         reviewTreeStateSha256,
-        reviewExecutionMode: reviewExecutionBindings.review_execution_mode,
-        reviewExecutionContractSha256: reviewExecutionBindings.review_execution_contract_sha256,
-        reviewExecutionFullScopeSha256: reviewExecutionBindings.review_execution_full_scope_sha256,
+        reviewExecutionMode: reviewExecutionBindings?.review_execution_mode,
+        reviewExecutionContractSha256: reviewExecutionBindings?.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: reviewExecutionBindings?.review_execution_full_scope_sha256,
         reviewExecutionCompleteScopeLineageSha256:
-            reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+            reviewExecutionBindings?.review_execution_complete_scope_lineage_sha256,
         reviewExecutionFindingReconciliationSha256:
-            reviewExecutionBindings.review_execution_finding_reconciliation_sha256,
+            reviewExecutionBindings?.review_execution_finding_reconciliation_sha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
         reviewCoverageContractSha256,
         reviewRuleContextSha256,
@@ -1980,8 +1991,18 @@ export function seedReusableReviewEvidence(
             reviewTreeStateSha256,
             coverageContract
         });
+        let validationResultMutated = false;
         if (options.omitReviewFindingsValidationExecutionBinding === true) {
             delete validationArtifact.validation_result.bindings.execution;
+            validationResultMutated = true;
+        }
+        if (options.reviewFindingsValidationExecutionBindingOverrides !== undefined) {
+            const validationExecution = validationArtifact.validation_result.bindings.execution;
+            assert.ok(validationExecution, 'Fixture execution binding overrides require schema-4 execution evidence.');
+            Object.assign(validationExecution, options.reviewFindingsValidationExecutionBindingOverrides);
+            validationResultMutated = true;
+        }
+        if (validationResultMutated) {
             validationArtifact.validation_result_sha256 = sha256JsonFixture(validationArtifact.validation_result);
         }
         const validationArtifactSha256 = sha256JsonFixture(validationArtifact);
@@ -2032,11 +2053,23 @@ export function seedReusableReviewEvidence(
             review_artifact_sha256: artifactHash,
             review_context_sha256: reviewContextHash,
             review_tree_state_sha256: reviewTreeStateSha256,
-            ...reviewExecutionBindings,
+            ...(reviewExecutionBindings || {}),
             coverage_contract_sha256: coverageContract.contract_sha256,
             reviewer_identity: resolvedReviewerIdentity,
             reviewer_provenance_event_sha256: reviewerProvenance?.event_sha256 ?? null
         };
+        if (options.omitReceiptExecutionBindings === true) {
+            for (const field of [
+                'review_execution_mode',
+                'review_execution_contract_sha256',
+                'review_execution_full_scope_sha256',
+                'review_execution_complete_scope_lineage_sha256',
+                'review_execution_finding_reconciliation_sha256'
+            ]) {
+                delete receiptRecord[field];
+                delete (receiptRecord.review_output_contract as Record<string, unknown>)[field];
+            }
+        }
     }
     receiptRecord.review_result_recorded_at_utc = receipt.recorded_at_utc;
     receiptRecord.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();

@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
+    computeSchema3ReviewContextReuseCompatibilityHash,
     computeReviewRuleContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
@@ -36,6 +37,32 @@ function writePathsConfig(repoRoot: string, config: Record<string, unknown>): vo
 }
 
 describe('gates/review-reuse', () => {
+    it('reconstructs the historical schema-3 reuse hash from a current review context', () => {
+        const legacyContext = {
+            schema_version: 3,
+            review_type: 'code',
+            depth: 2,
+            review_execution: {
+                mode: 'FULL',
+                contract_sha256: '1'.repeat(64),
+                full_review_scope_sha256: '2'.repeat(64)
+            }
+        };
+        const currentContext = {
+            ...legacyContext,
+            schema_version: 4
+        };
+
+        assert.equal(
+            computeReviewContextReuseHash(legacyContext),
+            computeSchema3ReviewContextReuseCompatibilityHash(currentContext)
+        );
+        assert.notEqual(
+            computeReviewContextReuseHash(currentContext),
+            computeReviewContextReuseHash(legacyContext)
+        );
+    });
+
     it('uses the stable instruction contract instead of cycle-specific prompt artifact hashes', () => {
         const baseContext = {
             rule_context: {
@@ -409,7 +436,7 @@ describe('gates/review-reuse', () => {
     it('ignores volatile scoped-diff paths and preflight hashes in review-context reuse hash', () => {
         const stableHash = 'a'.repeat(64);
         const baseContext = {
-            schema_version: 2,
+            schema_version: 4,
             review_type: 'security',
             depth: 2,
             token_economy_active: true,

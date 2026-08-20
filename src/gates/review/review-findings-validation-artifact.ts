@@ -187,6 +187,7 @@ export interface ReviewFindingsValidationReceiptCheckOptions {
     expectedReviewContext?: Record<string, unknown> | null;
     requireAccepted?: boolean;
     preferSnapshot?: boolean;
+    allowLegacyMissingExecutionBinding?: boolean;
 }
 
 export interface ReviewFindingsValidationReceiptCheckResult extends ReviewFindingsValidationArtifactCheckResult {
@@ -638,7 +639,8 @@ export function validateReviewFindingsValidationArtifactForReceipt(
         expectedValidationResultSha256: reference.validation_result_sha256
     });
     violations.push(...result.violations);
-    const validationExecution = result.artifact?.validation_result.bindings.execution;
+    const validationBindings = result.artifact?.validation_result.bindings;
+    const validationExecution = validationBindings?.execution;
     if (result.artifact) {
         const expectedExecution = reusedExistingReview
             ? {
@@ -659,14 +661,26 @@ export function validateReviewFindingsValidationArtifactForReceipt(
                 review_execution_finding_reconciliation_sha256:
                     options.receipt.review_execution_finding_reconciliation_sha256
             };
-        violations.push(...getReviewExecutionEvidenceBindingViolations({
-            expectedEvidence: expectedExecution,
-            evidence: isRecord(validationExecution) ? validationExecution : null,
-            evidenceLabel: 'review findings validation artifact execution binding',
-            expectedEvidenceLabel: reusedExistingReview
-                ? 'the authenticated historical review receipt execution binding'
-                : 'the authenticated review receipt execution binding'
-        }));
+        const validationExecutionDeclared = validationBindings != null
+            && Object.prototype.hasOwnProperty.call(validationBindings, 'execution');
+        const receiptExecutionDeclared = Object.values(expectedExecution).some((value) => (
+            value != null && String(value).trim().length > 0
+        ));
+        const authenticatedLegacySchema3 = options.allowLegacyMissingExecutionBinding === true
+            || (
+                reusedExistingReview
+                && Number(options.receipt.reused_from_review_context_schema_version) === 3
+            );
+        if (validationExecutionDeclared || receiptExecutionDeclared || !authenticatedLegacySchema3) {
+            violations.push(...getReviewExecutionEvidenceBindingViolations({
+                expectedEvidence: expectedExecution,
+                evidence: isRecord(validationExecution) ? validationExecution : null,
+                evidenceLabel: 'review findings validation artifact execution binding',
+                expectedEvidenceLabel: reusedExistingReview
+                    ? 'the authenticated historical review receipt execution binding'
+                    : 'the authenticated review receipt execution binding'
+            }));
+        }
     }
     if (result.artifact) {
         if (reference.status !== result.artifact.validation_result.status) {
