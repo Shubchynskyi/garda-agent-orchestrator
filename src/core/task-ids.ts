@@ -1,6 +1,14 @@
 export const TASK_ID_MAX_LENGTH = 128;
 export const TASK_ID_ALLOWED_PATTERN = /^T-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/u;
 export const TASK_ID_CHARACTER_PATTERN = /^[A-Za-z0-9-]$/u;
+const REVIEW_FINDINGS_FOLLOW_UP_TASK_ID_PATTERN = /-F[1-9][0-9]*$/u;
+
+export function isReviewFindingsFollowUpTaskId(taskId: unknown): boolean {
+    return typeof taskId === 'string'
+        && TASK_ID_ALLOWED_PATTERN.test(taskId)
+        && REVIEW_FINDINGS_FOLLOW_UP_TASK_ID_PATTERN.test(taskId);
+}
+
 export const RESERVED_TASK_EVENT_TIMELINE_NAMES = new Set<string>([
     'all-tasks',
     '.timeline-summary',

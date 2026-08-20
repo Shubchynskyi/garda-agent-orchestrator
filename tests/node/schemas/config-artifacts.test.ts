@@ -900,6 +900,12 @@ test('validateProfilesConfig validates template profiles.json', () => {
         (builtIn.fast.review_follow_up_policy as Record<string, unknown>).materialization_mode,
         'grouped_by_parent'
     );
+    const fastFindingPolicy = builtIn.fast.review_finding_policy as Record<string, unknown>;
+    assert.equal(fastFindingPolicy.policy_id, 'custom');
+    assert.equal(
+        (fastFindingPolicy.findings as Record<string, unknown>).high,
+        'fix_now'
+    );
     assert.equal(
         (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
         'conservative_review_remediation_mode_v1'

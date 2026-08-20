@@ -497,6 +497,23 @@ describe('review findings follow-up task materialization', () => {
         }
     });
 
+    it('blocks nested follow-up materialization for an existing F task', () => {
+        const taskId = 'T-REVIEW-FOLLOWUP-F1';
+        const repoRoot = makeRepo(taskId, 'fast');
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId,
+            reviewType: REVIEW_TYPE
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.match(result.violations.join(' '), /nested follow-up materialization is forbidden/u);
+        assert.equal(parseCanonicalActiveTaskQueue(
+            fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8')
+        ).rows.length, 1);
+    });
+
     it('creates exactly one hash-bound F task and reruns without duplicates', () => {
         const repoRoot = makeRepo();
         const artifacts = seedReviewArtifacts(repoRoot);
@@ -666,7 +683,7 @@ describe('review findings follow-up task materialization', () => {
         assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 2);
     });
 
-    it('materializes inherited, fixed, safe fallback, and nested frozen child profiles', () => {
+    it('materializes inherited, fixed, and safe fallback child profiles', () => {
         const scenarios = [
             {
                 taskId: 'T-FOLLOWUP-INHERIT',
@@ -687,13 +704,6 @@ describe('review findings follow-up task materialization', () => {
                 parentProfile: 'custom-review',
                 expectedProfile: 'custom-review',
                 source: 'safe_inherit_parent' as const,
-                configuredMode: 'one_level_lighter' as const
-            },
-            {
-                taskId: 'T-FOLLOWUP-NESTED-F1',
-                parentProfile: 'balanced',
-                expectedProfile: 'fast',
-                source: 'one_level_lighter' as const,
                 configuredMode: 'one_level_lighter' as const
             }
         ];

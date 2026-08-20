@@ -12,7 +12,8 @@ import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { isPlainRecord } from '../../core/records';
 import {
     assertCanonicalTaskId,
-    isCanonicalTaskId
+    isCanonicalTaskId,
+    isReviewFindingsFollowUpTaskId
 } from '../../core/task-ids';
 import { allocateParentDerivedTaskIds } from '../../core/task-id-allocation';
 import {
@@ -2119,6 +2120,28 @@ export function materializeReviewFindingsFollowUpTasks(
             receiptSha256: null,
             items: [],
             violations: [message]
+        });
+    }
+
+    if (isReviewFindingsFollowUpTaskId(taskId)) {
+        return buildBlockedResult({
+            repoRoot,
+            taskId,
+            reviewType,
+            artifactPath,
+            dispositionArtifactPath,
+            dispositionArtifactSha256: null,
+            dispositionResultSha256: null,
+            validationArtifactPath: null,
+            validationArtifactSha256: null,
+            validationResultSha256: null,
+            validationArtifact: null,
+            receiptPath: null,
+            receiptSha256: null,
+            items: [],
+            violations: [
+                `Task '${taskId}' is already a review findings follow-up task; all findings and residual risks must be fixed in this task, and nested follow-up materialization is forbidden.`
+            ]
         });
     }
 

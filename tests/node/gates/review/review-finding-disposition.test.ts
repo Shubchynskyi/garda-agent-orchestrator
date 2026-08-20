@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
     evaluateReviewFindingsReportDispositions,
     evaluateReviewFindingsValidationArtifactDispositions,
+    resolveLockedReviewFindingPolicyFromPreflight,
     type LockedReviewFindingPolicyResolution
 } from '../../../../src/gates/review/review-finding-disposition';
 import { buildReviewFindingsDispositionArtifact } from '../../../../src/gates/review/review-findings-disposition-artifact';
@@ -157,4 +158,54 @@ test('an ordinary finding still blocks when mixed with evidence-only F-000', () 
     assert.equal(result.total_count, 1);
     assert.equal(result.blocking_count, 1);
     assert.deepEqual(result.blocking_ids, ['F-001']);
+});
+
+test('high findings are forced to fix_now for legacy frozen policies', () => {
+    const resolution = resolveLockedReviewFindingPolicyFromPreflight({
+        task_id: 'T-legacy-fast',
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'soft',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'create_follow_up',
+                    medium: 'ignore',
+                    low: 'ignore'
+                },
+                residual_risk: 'ignore'
+            }
+        }
+    });
+
+    assert.equal(resolution.policy.findings.high, 'fix_now');
+    assert.match(resolution.diagnostics.join(' '), /High-severity review findings are immutable fix_now obligations/u);
+});
+
+test('review findings follow-up tasks force every disposition to fix_now', () => {
+    const resolution = resolveLockedReviewFindingPolicyFromPreflight({
+        task_id: 'T-parent-F1',
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'soft',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'create_follow_up',
+                    medium: 'create_follow_up',
+                    low: 'ignore'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        }
+    });
+
+    assert.deepEqual(resolution.policy.findings, {
+        critical: 'fix_now',
+        high: 'fix_now',
+        medium: 'fix_now',
+        low: 'fix_now'
+    });
+    assert.equal(resolution.policy.residual_risk, 'fix_now');
+    assert.match(resolution.diagnostics.join(' '), /nested follow-up tasks are forbidden/u);
 });

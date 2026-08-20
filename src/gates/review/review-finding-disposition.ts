@@ -3,6 +3,7 @@ import {
     type ReviewFindingDispositionAction,
     type ReviewFindingPolicy
 } from '../../policy/profile-resolver';
+import { isReviewFindingsFollowUpTaskId } from '../../core/task-ids';
 import type {
     NormalizedReviewFindingsInventory,
     ReviewFindingsValidationArtifact
@@ -62,6 +63,29 @@ function strictPolicyResolution(diagnostic: string): LockedReviewFindingPolicyRe
         policy: clonePolicy(REVIEW_FINDING_POLICY_PRESETS.strict),
         source: 'fallback_strict',
         diagnostics: [diagnostic]
+    };
+}
+
+function applyMandatoryReviewFindingSafetyFloors(
+    resolution: LockedReviewFindingPolicyResolution,
+    taskId: unknown
+): LockedReviewFindingPolicyResolution {
+    const policy = clonePolicy(resolution.policy);
+    const diagnostics = [...resolution.diagnostics];
+    if (isReviewFindingsFollowUpTaskId(taskId)) {
+        policy.findings = { ...REVIEW_FINDING_POLICY_PRESETS.strict.findings };
+        policy.residual_risk = 'fix_now';
+        diagnostics.push(
+            `Review follow-up task '${String(taskId)}' resolves every finding and residual risk to fix_now; nested follow-up tasks are forbidden.`
+        );
+    } else if (policy.findings.high !== 'fix_now') {
+        policy.findings.high = 'fix_now';
+        diagnostics.push('High-severity review findings are immutable fix_now obligations.');
+    }
+    return {
+        ...resolution,
+        policy,
+        diagnostics
     };
 }
 
@@ -158,11 +182,11 @@ export function resolveLockedReviewFindingPolicyFromPreflight(
             'Preflight profile_policy_snapshot.review_finding_policy is missing or invalid; resolved fail-closed to strict.'
         );
     }
-    return {
+    return applyMandatoryReviewFindingSafetyFloors({
         policy: clonePolicy(policy),
         source: 'preflight_profile_policy_snapshot',
         diagnostics: []
-    };
+    }, preflight?.task_id);
 }
 
 export function resolveLockedReviewFindingPolicyFromReceiptDisposition(
@@ -179,11 +203,11 @@ export function resolveLockedReviewFindingPolicyFromReceiptDisposition(
             'Review receipt review_findings_disposition is missing or invalid; resolved fail-closed to strict.'
         );
     }
-    return {
+    return applyMandatoryReviewFindingSafetyFloors({
         policy: clonePolicy(policy),
         source: 'receipt_review_findings_disposition',
         diagnostics: []
-    };
+    }, receiptOrEventDetails?.task_id);
 }
 
 export function resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(

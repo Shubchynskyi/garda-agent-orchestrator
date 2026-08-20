@@ -493,10 +493,10 @@ test('shipped template profiles and review capabilities use profile-driven revie
     });
     assert.deepEqual(profiles.built_in_profiles.fast.review_finding_policy, {
         schema_version: 1,
-        policy_id: 'soft',
+        policy_id: 'custom',
         findings: {
             critical: 'fix_now',
-            high: 'create_follow_up',
+            high: 'fix_now',
             medium: 'ignore',
             low: 'ignore'
         },
