@@ -290,12 +290,13 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     if (!preflightSha256) {
         throw new Error('Review context cannot be built because the preflight artifact is not hashable.');
     }
+    const fullReviewScope = resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot });
     const reviewExecutionContract = options.reviewExecutionContract
         ?? buildReviewRemediationReviewContract({
             taskId: taskId || '',
             reviewType,
             preflightSha256,
-            fullReviewScope: changedFiles
+            fullReviewScope
         });
     const reviewExecutionValidationAuthority = reviewExecutionContract.source === 'initial_full'
         ? {
@@ -303,7 +304,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
                 reviewType,
                 preflightSha256,
                 mode: reviewExecutionContract.mode,
-                fullReviewScope: changedFiles,
+                fullReviewScope,
                 persistedDecisionSha256: null,
                 authoritativeDecisionSha256: null,
                 authoritativeClassificationSha256: null,
@@ -325,7 +326,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     }
     const coverageChangedFiles = reviewExecutionContract.mode === 'DELTA'
         ? [...(reviewExecutionContract.delta?.required_delta_targets ?? [])]
-        : resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot });
+        : fullReviewScope;
     const coverageContract = buildReviewCoverageContract({
         reviewType,
         changedFiles: coverageChangedFiles,

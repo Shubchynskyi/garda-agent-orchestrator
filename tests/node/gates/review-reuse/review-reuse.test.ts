@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
+    computeReviewRuleContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     getReviewContextReuseContractBindingMismatch,
@@ -35,6 +36,42 @@ function writePathsConfig(repoRoot: string, config: Record<string, unknown>): vo
 }
 
 describe('gates/review-reuse', () => {
+    it('uses the stable instruction contract instead of cycle-specific prompt artifact hashes', () => {
+        const baseContext = {
+            rule_context: {
+                source_file_count: 1,
+                source_files: [{ path: '80-task-workflow.md', sha256: '1'.repeat(64) }],
+                instruction_contract_sha256: '2'.repeat(64),
+                role_prompt_sha256: '3'.repeat(64),
+                prompt_template_sha256: '4'.repeat(64),
+                output_template_sha256: '5'.repeat(64)
+            }
+        };
+        const nextCycleContext = {
+            rule_context: {
+                ...baseContext.rule_context,
+                role_prompt_sha256: '6'.repeat(64),
+                prompt_template_sha256: '7'.repeat(64),
+                output_template_sha256: '8'.repeat(64)
+            }
+        };
+        const changedInstructionContract = {
+            rule_context: {
+                ...nextCycleContext.rule_context,
+                instruction_contract_sha256: '9'.repeat(64)
+            }
+        };
+
+        assert.equal(
+            computeReviewRuleContextReuseHash(nextCycleContext),
+            computeReviewRuleContextReuseHash(baseContext)
+        );
+        assert.notEqual(
+            computeReviewRuleContextReuseHash(changedInstructionContract),
+            computeReviewRuleContextReuseHash(baseContext)
+        );
+    });
+
     it('fingerprints staged scope from the index instead of the dirty working tree', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-staged-scope-'));
         try {

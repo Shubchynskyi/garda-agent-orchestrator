@@ -304,7 +304,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
             assert.ok(promptArtifact.includes('Return exactly one JSON object'));
             assert.ok(promptArtifact.includes('findings-only JSON contract'));
-            assert.ok(promptArtifact.includes('"schema_version": 1'));
+            assert.ok(promptArtifact.includes('"schema_version": 2'));
             assert.ok(promptArtifact.includes('"coverage_ledger"'));
             assert.ok(promptArtifact.includes('"obligation_id": "FILE-001"'));
             assert.ok(promptArtifact.includes('"findings"'));
@@ -405,6 +405,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.equal(result.schema_version, 4);
             assert.deepEqual(result.rule_context.instruction_contract_modes, ['FULL', 'DELTA']);
             assert.deepEqual(result.review_execution.mode, 'FULL');
+            assert.deepEqual(result.review_execution.full_review_scope, ['src/app.ts']);
             assert.equal(result.coverage_contract.required, true);
             assert.equal(result.coverage_contract.obligation_count, 9);
             assert.equal(result.coverage_contract.obligations[0]?.id, 'FILE-001');

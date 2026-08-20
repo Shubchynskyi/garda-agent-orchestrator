@@ -906,13 +906,20 @@ export function getReviewContextContractViolations(
             if (!reviewExecution) {
                 violations.push('Generated review context is missing the required review_execution contract.');
             } else {
+                const initialFullReviewScope = options.repoRoot && options.expectedPreflightPayload
+                    ? resolveReviewCoverageChangedFiles({
+                        reviewType: expectedReviewType,
+                        preflight: options.expectedPreflightPayload,
+                        repoRoot: options.repoRoot
+                    })
+                    : normalizePathList(options.expectedChangedFiles);
                 const validationAuthority = reviewExecution.source === 'initial_full'
                     ? {
                         taskId: expectedTaskId || '',
                         reviewType: expectedReviewType,
                         preflightSha256: expectedPreflightSha256 || '',
                         mode: reviewExecution.mode,
-                        fullReviewScope: normalizePathList(options.expectedChangedFiles),
+                        fullReviewScope: initialFullReviewScope,
                         persistedDecisionSha256: null,
                         authoritativeDecisionSha256: null,
                         authoritativeClassificationSha256: null,

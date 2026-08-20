@@ -161,6 +161,17 @@ export function computeReviewRuleContextReuseHash(
         ? toRecord(ruleContext.selected_skill)
         : toRecord(rolePrompt.selected_skill);
     const sourceFiles = toSourceFileSummary(ruleContext.source_files);
+    const instructionContractSha256 = toLowerHash(ruleContext.instruction_contract_sha256);
+    const legacyPromptBindings = instructionContractSha256
+        ? {}
+        : {
+            role_prompt_sha256: toLowerHash(ruleContext.role_prompt_sha256)
+                || toLowerHash(rolePrompt.artifact_sha256),
+            prompt_template_sha256: toLowerHash(ruleContext.prompt_template_sha256)
+                || toLowerHash(promptTemplate.artifact_sha256),
+            output_template_sha256: toLowerHash(ruleContext.output_template_sha256)
+                || toLowerHash(outputTemplate.artifact_sha256)
+        };
     const snapshot = {
         source_file_count: typeof ruleContext.source_file_count === 'number'
             ? ruleContext.source_file_count
@@ -175,19 +186,15 @@ export function computeReviewRuleContextReuseHash(
             skill_entrypoint_exists: selectedSkill.skill_entrypoint_exists === true,
             candidate_skill_ids: toStringList(selectedSkill.candidate_skill_ids)
         },
-        role_prompt_sha256: toLowerHash(ruleContext.role_prompt_sha256)
-            || toLowerHash(rolePrompt.artifact_sha256),
-        prompt_template_sha256: toLowerHash(ruleContext.prompt_template_sha256)
-            || toLowerHash(promptTemplate.artifact_sha256),
-        output_template_sha256: toLowerHash(ruleContext.output_template_sha256)
-            || toLowerHash(outputTemplate.artifact_sha256),
+        ...(instructionContractSha256
+            ? { instruction_contract_sha256: instructionContractSha256 }
+            : legacyPromptBindings),
         ...(reviewLaneBindingSha256 ? { review_lane_binding_sha256: reviewLaneBindingSha256 } : {})
     };
     const hasInstructionBinding = sourceFiles.length > 0
         || !!snapshot.selected_skill.skill_sha256
-        || !!snapshot.role_prompt_sha256
-        || !!snapshot.prompt_template_sha256
-        || !!snapshot.output_template_sha256;
+        || !!instructionContractSha256
+        || Object.values(legacyPromptBindings).some(Boolean);
     return hasInstructionBinding ? stringSha256(JSON.stringify(snapshot)) : null;
 }
 
