@@ -660,9 +660,14 @@ export async function runRestartReviewCycleCommand(
                 liveWorkspaceSnapshot.changed_files as unknown[],
                 previousTaskMode.dirty_workspace_baseline
             );
+            const expectedChangedFiles = excludeUnchangedDirtyWorkspaceBaselineFiles(
+                repoRoot,
+                previousChangedFiles,
+                previousTaskMode.dirty_workspace_baseline
+            );
             if (
-                liveChangedFiles.length !== previousChangedFiles.length
-                || liveChangedFiles.some((entry, index) => entry !== previousChangedFiles[index])
+                liveChangedFiles.length !== expectedChangedFiles.length
+                || liveChangedFiles.some((entry, index) => entry !== expectedChangedFiles[index])
             ) {
                 throw new Error(
                     'review-evidence-only restart is blocked because the live workspace file scope changed after compile.'

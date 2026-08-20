@@ -1741,6 +1741,65 @@ describe('cli/commands/gates – review-cycle remediation reuse policy', {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('review-evidence-only restart compares resumed task scope after symmetric dirty-baseline exclusion', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-review-evidence-only-resumed-dirty-scope';
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'review-evidence-only-resumed-dirty-scope'
+        );
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const resumedValue = 1;\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Resume invalid delegated review evidence with task scope already present in the dirty baseline',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Resume invalid delegated review evidence with task scope already present in the dirty baseline',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await seedBaselineCompileGatePass({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            reviewEvidenceOnly: true,
+            reviewType: 'code',
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: review_evidence_only/u);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('schedules every graph-invalidated descendant after evidence-only reviewer failure', () => {
         const dependencyGraph = compileReviewDependencyGraph({
             catalogLaneIds: ['code', 'architecture-boundary', 'test'],
