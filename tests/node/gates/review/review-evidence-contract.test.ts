@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE,
     REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL,
+    resolveReviewContextExecutionEvidenceBindings,
     validateReviewReceiptEvidenceContract
 } from '../../../../src/gates/review/review-evidence-contract';
 
@@ -15,6 +16,20 @@ const treeStateSha256 = 'c'.repeat(64);
 const routingEventSha256 = 'd'.repeat(64);
 const invocationEventSha256 = 'e'.repeat(64);
 const previousEventSha256 = 'f'.repeat(64);
+const reviewContext = {
+    schema_version: 4,
+    review_execution: {
+        mode: 'DELTA',
+        contract_sha256: '1'.repeat(64),
+        full_review_scope_sha256: '2'.repeat(64),
+        complete_scope_lineage_sha256: '3'.repeat(64),
+        finding_reconciliation: {
+            protected_open_finding_ids: ['F-001'],
+            protected_fix_now_finding_ids: []
+        }
+    }
+};
+const reviewExecutionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings!;
 
 function buildReceipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -56,6 +71,31 @@ function validate(receipt: Record<string, unknown>) {
         contextReviewTreeStateSha256: treeStateSha256,
         contextExecutionMode: REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE,
         contextReviewerIdentity: 'agent:reviewer-1'
+    });
+}
+
+function validateSchema4(receipt: Record<string, unknown>) {
+    return validateReviewReceiptEvidenceContract({
+        taskId,
+        reviewType,
+        receipt,
+        artifactSha256,
+        contextSha256,
+        contextReviewTreeStateSha256: treeStateSha256,
+        contextExecutionMode: REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE,
+        contextReviewerIdentity: 'agent:reviewer-1',
+        reviewContext
+    });
+}
+
+function buildSchema4Receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return buildReceipt({
+        ...reviewExecutionBindings,
+        review_output_contract: {
+            schema_version: 1,
+            ...reviewExecutionBindings
+        },
+        ...overrides
     });
 }
 
@@ -116,4 +156,47 @@ test('validateReviewReceiptEvidenceContract rejects stale context and tree-state
 
     assert.ok(result.violations.includes('review context hash does not match the receipt'));
     assert.ok(result.violations.includes('review receipt review_tree_state_sha256 does not match the review context tree_state'));
+});
+
+test('validateReviewReceiptEvidenceContract accepts exact schema-4 FULL/DELTA execution lineage', () => {
+    const result = validateSchema4(buildSchema4Receipt());
+
+    assert.deepEqual(result.violations, []);
+    assert.equal(result.fields.reviewExecutionMode, 'DELTA');
+    assert.equal(
+        result.fields.reviewExecutionFindingReconciliationSha256,
+        reviewExecutionBindings.review_execution_finding_reconciliation_sha256
+    );
+});
+
+test('validateReviewReceiptEvidenceContract rejects missing schema-4 execution lineage', () => {
+    const result = validateSchema4(buildSchema4Receipt({
+        review_execution_complete_scope_lineage_sha256: null
+    }));
+
+    assert.ok(result.violations.includes(
+        'review receipt is missing valid review_execution_complete_scope_lineage_sha256'
+    ));
+});
+
+test('validateReviewReceiptEvidenceContract rejects stale execution contracts and protected finding reconciliation', () => {
+    const result = validateSchema4(buildSchema4Receipt({
+        review_execution_contract_sha256: '8'.repeat(64),
+        review_execution_finding_reconciliation_sha256: '9'.repeat(64),
+        review_output_contract: {
+            schema_version: 1,
+            ...reviewExecutionBindings,
+            review_execution_finding_reconciliation_sha256: '9'.repeat(64)
+        }
+    }));
+
+    assert.ok(result.violations.includes(
+        'review receipt review_execution_contract_sha256 does not match the authenticated schema-4 review context'
+    ));
+    assert.ok(result.violations.includes(
+        'review receipt review_execution_finding_reconciliation_sha256 does not match the authenticated schema-4 review context'
+    ));
+    assert.ok(result.violations.includes(
+        'review receipt review_output_contract review_execution_finding_reconciliation_sha256 does not match the authenticated schema-4 review context'
+    ));
 });

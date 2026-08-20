@@ -38,6 +38,7 @@ import { reviewContextRequiresFindingsOnlyArtifact } from '../review/review-find
 import {
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import { getReviewReceiptExecutionEvidenceContractViolations } from '../review/review-evidence-contract';
 import {
     resolveLockedReviewFindingPolicyFromPreflight,
     resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence
@@ -212,6 +213,10 @@ export function collectRequiredReviewEvidence(input: {
                     const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
                     if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
                         receipt = parsedReceipt as ReviewReceipt;
+                        input.errors.push(...getReviewReceiptExecutionEvidenceContractViolations({
+                            reviewContext,
+                            receipt: parsedReceipt as Record<string, unknown>
+                        }));
                         if (isCustomReviewLaneInSnapshot(input.preflight, reviewKey)) {
                             try {
                                 input.errors.push(...getReviewLaneArtifactEvidenceViolations({
@@ -267,6 +272,7 @@ export function collectRequiredReviewEvidence(input: {
                         expectedCoverageContractSha256: reusedExistingReview
                             ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
                             : getCoverageContractSha256(reviewContext),
+                        expectedReviewContext: reviewContext,
                         requireAccepted: true
                     });
                     input.errors.push(...validationArtifact.violations);

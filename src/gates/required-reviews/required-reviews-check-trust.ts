@@ -37,6 +37,7 @@ import { type ReviewDependencyTimelineEvent } from '../review/review-dependencie
 import { validateStrictReusedReviewEvidence } from '../review-reuse/review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from '../review/review-trust-policy';
 import {
+    getReviewReceiptExecutionEvidenceContractViolations,
     normalizeReviewReceiptEvidenceFields,
     type ReviewEvidenceReviewerProvenance
 } from '../review/review-evidence-contract';
@@ -372,6 +373,13 @@ export function validateReviewArtifactGateEligibility(options: {
                     }
                     const currentArtifactHash = receiptSnapshot.artifactSha256 ?? fileSha256(artifactPath);
                     currentArtifactSha256 = currentArtifactHash;
+                    const executionEvidenceViolations = getReviewReceiptExecutionEvidenceContractViolations({
+                        reviewContext: reviewContext || null,
+                        receipt: receipt as unknown as Record<string, unknown>
+                    });
+                    errors.push(...executionEvidenceViolations.map((violation) =>
+                        `Review receipt for '${reviewKey}' execution evidence violation: ${violation}.`
+                    ));
                     if (receipt.task_id !== resolvedTaskId) {
                         errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
                     } else if (receipt.review_type !== reviewKey) {
@@ -396,7 +404,7 @@ export function validateReviewArtifactGateEligibility(options: {
                             'Review-context tree_state does not match the receipt binding.'
                         );
                     } else {
-                        receiptValid = true;
+                        receiptValid = executionEvidenceViolations.length === 0;
                     }
                     if (receipt.reviewer_execution_mode) {
                         reviewerExecutionMode = evidenceFields.reviewerExecutionMode;
@@ -474,6 +482,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                 ? typeof receipt.reused_from_review_tree_state_sha256 === 'string' ? receipt.reused_from_review_tree_state_sha256 : null
                                 : reviewContextTreeStateSha256,
                             expectedCoverageContractSha256: findingsCoverageContractSha256,
+                            expectedReviewContext: reviewContext,
                             requireAccepted: true
                         });
                         errors.push(...validationArtifact.violations);

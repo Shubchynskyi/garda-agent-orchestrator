@@ -860,7 +860,8 @@ export function readReviewArtifactState(
             contextSha256: contextHash || null,
             contextReviewTreeStateSha256,
             contextExecutionMode: contextExecutionMode || null,
-            contextReviewerIdentity: contextReviewerSessionId || null
+            contextReviewerIdentity: contextReviewerSessionId || null,
+            reviewContext: context
         });
         const evidenceFields = evidenceContract.fields;
         violations.push(...evidenceContract.violations);
@@ -938,6 +939,7 @@ export function readReviewArtifactState(
                 expectedCoverageContractSha256: reusedExistingReview
                     ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
                     : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null,
+                expectedReviewContext: context,
                 requireAccepted: true
             });
             reviewFindingsValidationArtifactPath = validationArtifact.reference?.artifact_path || null;
@@ -974,6 +976,7 @@ export function readReviewArtifactState(
                     expectedCoverageContractSha256: reusedExistingReview
                         ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
                         : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null,
+                    expectedReviewContext: context,
                     requireAccepted: true
                 });
                 frozenReviewFindingsValidationAccepted = frozenValidationArtifact.accepted;
@@ -1097,6 +1100,7 @@ export function readReviewArtifactState(
             expectedCoverageContractSha256: isPlainRecord(context?.coverage_contract)
                 ? String((context.coverage_contract as Record<string, unknown>).contract_sha256 || '').trim().toLowerCase() || null
                 : null,
+            expectedReviewContext: context,
             requireAccepted: false
         });
         if (!rejectedValidationArtifact.valid) {

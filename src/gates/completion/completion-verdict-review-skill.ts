@@ -507,7 +507,8 @@ export function validateReviewSkillEvidence(
                         contextSha256: fileSha256(expectedReviewContextPath),
                         contextReviewTreeStateSha256,
                         contextExecutionMode: actualExecutionMode,
-                        contextReviewerIdentity: reviewerSessionId
+                        contextReviewerIdentity: reviewerSessionId,
+                        reviewContext
                     });
                     for (const violation of receiptEvidenceContract.violations) {
                         result.violations.push(`Required review '${key}' receipt evidence contract violation: ${violation}.`);

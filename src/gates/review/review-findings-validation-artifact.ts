@@ -11,6 +11,11 @@ import type {
     ReviewFindingsReport,
     ReviewFindingsSeverity
 } from './review-findings-schema';
+import {
+    getReviewExecutionEvidenceContractViolations,
+    resolveReviewContextExecutionEvidenceBindings,
+    type ReviewExecutionEvidenceBindings
+} from './review-evidence-contract';
 
 export const REVIEW_FINDINGS_VALIDATION_ARTIFACT_TYPE = 'review_findings_validation';
 export const REVIEW_FINDINGS_VALIDATION_ARTIFACT_SCHEMA_VERSION = 1;
@@ -50,6 +55,7 @@ export interface ReviewFindingsValidationBindings {
     scope: ReviewFindingsValidationBindingScope;
     tree: ReviewFindingsValidationBindingTree;
     coverage_contract_sha256: string | null;
+    execution?: ReviewExecutionEvidenceBindings | null;
 }
 
 export interface NormalizedReviewFindingInventoryEntry {
@@ -136,6 +142,7 @@ export interface ReviewFindingsValidationArtifactCheckOptions {
     expectedCodeScopeSha256?: string | null;
     expectedReviewTreeStateSha256?: string | null;
     expectedCoverageContractSha256?: string | null;
+    expectedReviewContext?: Record<string, unknown> | null;
     requireAccepted?: boolean;
     expectedArtifactSha256?: string | null;
     expectedValidationResultSha256?: string | null;
@@ -176,6 +183,7 @@ export interface ReviewFindingsValidationReceiptCheckOptions {
     expectedCodeScopeSha256?: string | null;
     expectedReviewTreeStateSha256?: string | null;
     expectedCoverageContractSha256?: string | null;
+    expectedReviewContext?: Record<string, unknown> | null;
     requireAccepted?: boolean;
     preferSnapshot?: boolean;
 }
@@ -307,6 +315,17 @@ function buildValidationViolations(validation: JsonReviewFindingsArtifactValidat
 }
 
 function buildBindings(options: BuildReviewFindingsValidationArtifactOptions): ReviewFindingsValidationBindings {
+    let execution: ReviewExecutionEvidenceBindings | null = null;
+    if (options.reviewContextPath) {
+        try {
+            const reviewContext = JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as unknown;
+            if (isRecord(reviewContext)) {
+                execution = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings;
+            }
+        } catch {
+            execution = null;
+        }
+    }
     return {
         input: {
             review_output_sha256: normalizeHash(options.reviewOutputSha256)
@@ -329,7 +348,8 @@ function buildBindings(options: BuildReviewFindingsValidationArtifactOptions): R
         tree: {
             review_tree_state_sha256: normalizeHash(options.reviewTreeStateSha256)
         },
-        coverage_contract_sha256: normalizeHash(options.coverageContract?.contract_sha256)
+        coverage_contract_sha256: normalizeHash(options.coverageContract?.contract_sha256),
+        ...(execution ? { execution } : {})
     };
 }
 
@@ -402,7 +422,8 @@ function validationArtifactHasRequiredShape(artifact: ReviewFindingsValidationAr
         && isRecord(result.bindings.output)
         && isRecord(result.bindings.context)
         && isRecord(result.bindings.scope)
-        && isRecord(result.bindings.tree);
+        && isRecord(result.bindings.tree)
+        && (result.bindings.execution == null || isRecord(result.bindings.execution));
 }
 
 function assertExpectedValue(
@@ -520,6 +541,11 @@ export function validateReviewFindingsValidationArtifact(
     assertExpectedValue(violations, 'code_scope_sha256', bindings.scope.code_scope_sha256, options.expectedCodeScopeSha256);
     assertExpectedValue(violations, 'review_tree_state_sha256', bindings.tree.review_tree_state_sha256, options.expectedReviewTreeStateSha256);
     assertExpectedValue(violations, 'coverage_contract_sha256', bindings.coverage_contract_sha256, options.expectedCoverageContractSha256);
+    violations.push(...getReviewExecutionEvidenceContractViolations({
+        reviewContext: options.expectedReviewContext ?? null,
+        evidence: isRecord(bindings.execution) ? bindings.execution : null,
+        evidenceLabel: 'review findings validation artifact execution binding'
+    }));
     if (options.requireAccepted !== false && !artifact.validation_result.accepted) {
         violations.push(
             `Review findings validation artifact '${artifactPath}' is rejected: ` +
@@ -604,6 +630,7 @@ export function validateReviewFindingsValidationArtifactForReceipt(
         expectedCodeScopeSha256: options.expectedCodeScopeSha256,
         expectedReviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         expectedCoverageContractSha256: options.expectedCoverageContractSha256,
+        expectedReviewContext: options.expectedReviewContext,
         requireAccepted: options.requireAccepted,
         expectedArtifactSha256: artifactSha256ToRead,
         expectedValidationResultSha256: reference.validation_result_sha256

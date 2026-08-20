@@ -7,6 +7,15 @@ import {
     getReviewCoverageValidationSummaryContractViolations
 } from '../review/review-coverage-ledger';
 import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
+import { buildReviewContextPreflightDiffExpectations } from '../review-context/review-context-contract';
+import { getReviewReceiptExecutionEvidenceContractViolations } from '../review/review-evidence-contract';
+import { validateReviewFindingsValidationArtifactForReceipt } from '../review/review-findings-validation-artifact';
+import { resolvePersistedRemediationReviewExecutionAuthority } from '../review-remediation/review-remediation-execution-authority';
+import {
+    getReviewRemediationReviewContractViolations,
+    type ReviewRemediationReviewContract,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../review-remediation/review-remediation-review-contract';
 
 export interface ReviewCoverageAuditEntry {
     review_type: string;
@@ -55,6 +64,16 @@ function stringArray(value: unknown): string[] {
     return Array.isArray(value)
         ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
+}
+
+function stringValue(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function nestedStringValue(value: unknown, key: string): string | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? stringValue((value as Record<string, unknown>)[key])
+        : null;
 }
 
 export function buildReviewCoverageAuditSummary(options: {
@@ -135,6 +154,82 @@ export function buildReviewCoverageAuditSummary(options: {
         const duplicateObligationIds = stringArray(coverage?.duplicate_obligation_ids);
         const unknownObligationIds = stringArray(coverage?.unknown_obligation_ids);
         const violations: string[] = [];
+        if (context && preflight && preflightSha256 && contextSchemaVersion >= 4) {
+            const reviewExecution = context.review_execution
+                && typeof context.review_execution === 'object'
+                && !Array.isArray(context.review_execution)
+                ? context.review_execution as unknown as ReviewRemediationReviewContract
+                : null;
+            if (!reviewExecution) {
+                violations.push('review context is missing the required schema-4 review_execution contract');
+            } else {
+                const fullReviewScope = buildReviewContextPreflightDiffExpectations(preflight, reviewType)
+                    .expectedChangedFiles;
+                const initialAuthority: ReviewRemediationReviewContractValidationAuthority = {
+                    taskId: options.taskId,
+                    reviewType,
+                    preflightSha256,
+                    mode: reviewExecution.mode,
+                    fullReviewScope,
+                    persistedDecisionSha256: null,
+                    authoritativeDecisionSha256: null,
+                    authoritativeClassificationSha256: null,
+                    authoritativeDecision: null,
+                    authoritativeClassification: null
+                };
+                const authority = reviewExecution.source === 'initial_full'
+                    ? initialAuthority
+                    : resolvePersistedRemediationReviewExecutionAuthority({
+                        reviewsRoot: options.reviewsRoot,
+                        taskId: options.taskId,
+                        reviewType,
+                        preflightSha256,
+                        fullReviewScope,
+                        reviewExecution
+                    });
+                if (!authority) {
+                    violations.push('review context remediation review_execution authority is unavailable');
+                } else {
+                    violations.push(...getReviewRemediationReviewContractViolations(reviewExecution, authority)
+                        .map((violation) => `review context execution authority: ${violation}`));
+                }
+            }
+        }
+        violations.push(...getReviewReceiptExecutionEvidenceContractViolations({
+            reviewContext: context,
+            receipt
+        }));
+        if (context && receipt && contextSchemaVersion >= 4) {
+            const reviewArtifactPath = path.join(options.reviewsRoot, `${options.taskId}-${reviewType}.md`);
+            const reusedExistingReview = receipt.reused_existing_review === true;
+            const treeState = context.tree_state && typeof context.tree_state === 'object' && !Array.isArray(context.tree_state)
+                ? context.tree_state as Record<string, unknown>
+                : null;
+            const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                receipt,
+                reviewArtifactPath,
+                expectedTaskId: options.taskId,
+                expectedReviewType: reviewType,
+                expectedReviewOutputSha256: stringValue(receipt.review_output_sha256),
+                expectedReviewArtifactSha256: sha256File(reviewArtifactPath),
+                expectedReviewContextPath: reusedExistingReview ? null : contextPath,
+                expectedReviewContextSha256: reusedExistingReview
+                    ? stringValue(receipt.reused_from_review_context_sha256)
+                    : sha256File(contextPath),
+                expectedPreflightPath: reusedExistingReview ? null : preflightPath,
+                expectedPreflightSha256: reusedExistingReview ? null : preflightSha256,
+                expectedReviewTreeStateSha256: reusedExistingReview
+                    ? stringValue(receipt.reused_from_review_tree_state_sha256)
+                    : stringValue(treeState?.tree_state_sha256),
+                expectedCoverageContractSha256: reusedExistingReview
+                    ? nestedStringValue(receipt.review_output_contract, 'coverage_contract_sha256')
+                    : stringValue(contract?.contract_sha256),
+                expectedReviewContext: context,
+                requireAccepted: true,
+                preferSnapshot: true
+            });
+            violations.push(...validationArtifact.violations.map((violation) => `findings validation: ${violation}`));
+        }
         if (!preflight) {
             violations.push('current preflight is missing or unreadable for authoritative coverage reconstruction');
         } else {
