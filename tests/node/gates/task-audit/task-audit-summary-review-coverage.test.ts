@@ -5,6 +5,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 
+import {
+    bindAuthoritativeRemediationDecisionToPreflight,
+    buildAuthenticatedRemediationReviewExecution
+} from '../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
+import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { buildReviewCoverageAuditSummary } from '../../../../src/gates/task-audit/task-audit-summary-review-coverage';
 import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
 import { buildReviewReceipt } from '../../../../src/gate-runtime/review-context';
@@ -15,6 +20,7 @@ import {
 import { validateReviewFindingsContract } from '../../../../src/gates/review/review-findings-artifact-verdict';
 import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
 import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import { resolveAuthoritativeReviewRemediationDecision } from '../../../../src/gates/review-remediation/review-remediation-recovery-routing';
 import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
 
 function writeJson(filePath: string, value: unknown): void {
@@ -525,4 +531,89 @@ test('review coverage audit rejects stale schema-4 findings-validation execution
         violation.includes('review_execution_finding_reconciliation_sha256')
     ));
     fs.rmSync(reviewsRoot, { recursive: true, force: true });
+});
+
+test('review coverage audit validates remediation execution against the task-wide preflight scope', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-coverage-remediation-scope-'));
+    const bundleRoot = path.join(root, 'garda-agent-orchestrator');
+    const reviewsRoot = path.join(bundleRoot, 'runtime', 'reviews');
+    const taskId = 'T-1013-remediation-scope';
+    const reviewType = 'code';
+    const laneFile = 'src/example.ts';
+    const taskWideScope = [laneFile, 'tests/example.test.ts', 'docs/example.md'];
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    writeJson(preflightPath, { changed_files: taskWideScope });
+    const preflightSha256 = fileSha256(preflightPath);
+    const classification = {
+        source: 'runtime_fix' as const,
+        classification: {
+            category: 'production',
+            reason: 'Production remediation requires a fresh code review.',
+            blocked_before_reuse: false,
+            invalidated_review_types: [reviewType]
+        }
+    };
+    const decision = bindAuthoritativeRemediationDecisionToPreflight(
+        resolveAuthoritativeReviewRemediationDecision({
+            taskId,
+            currentReviewType: reviewType,
+            classification,
+            requiredReviews: { code: true },
+            reviewExecutionPolicyMode: 'strict_sequential'
+        }),
+        preflightSha256
+    );
+    appendTaskEvent(bundleRoot, taskId, 'REVIEW_CYCLE_RESTARTED', 'PASS', 'Review cycle restarted.', {
+        task_id: taskId,
+        event_type: 'REVIEW_CYCLE_RESTARTED',
+        status: 'PASSED',
+        preflight_sha256: preflightSha256,
+        authoritative_review_decision: decision,
+        authoritative_review_classification: classification
+    });
+    const remediationExecution = buildAuthenticatedRemediationReviewExecution({
+        taskId,
+        reviewType,
+        preflightSha256,
+        fullReviewScope: taskWideScope,
+        authoritativeDecision: decision,
+        authoritativeClassification: classification
+    }).contract;
+    const contextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
+    const coverageContract = buildReviewCoverageContract({ reviewType, changedFiles: [laneFile] });
+    writeJson(contextPath, {
+        schema_version: 4,
+        task_id: taskId,
+        review_type: reviewType,
+        coverage_contract: coverageContract,
+        review_execution: remediationExecution
+    });
+
+    const valid = buildReviewCoverageAuditSummary({ reviewsRoot, taskId, requiredReviews: { code: true } });
+    assert.ok(valid.entries[0]?.violations.every((violation) =>
+        !violation.includes('review context execution authority')
+    ), JSON.stringify(valid.entries[0]?.violations));
+
+    const forgedExecution = buildAuthenticatedRemediationReviewExecution({
+        taskId,
+        reviewType,
+        preflightSha256,
+        fullReviewScope: [laneFile],
+        authoritativeDecision: decision,
+        authoritativeClassification: classification
+    }).contract;
+    writeJson(contextPath, {
+        schema_version: 4,
+        task_id: taskId,
+        review_type: reviewType,
+        coverage_contract: coverageContract,
+        review_execution: forgedExecution
+    });
+    const forged = buildReviewCoverageAuditSummary({ reviewsRoot, taskId, requiredReviews: { code: true } });
+    assert.ok(forged.entries[0]?.violations.some((violation) =>
+        violation.includes('review context execution authority')
+        && violation.includes('full review scope')
+    ), JSON.stringify(forged.entries[0]?.violations));
+    fs.rmSync(root, { recursive: true, force: true });
 });
