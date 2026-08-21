@@ -1439,6 +1439,33 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(!readiness.reason.includes('no longer current'), readiness.reason);
     });
 
+    it('keeps explicitly planned dirty-baseline files current before failed-review remediation', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        const changedFile = 'src/app.ts';
+        fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 2;\n', 'utf8');
+        const changedFiles = [changedFile];
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: 'code',
+            failedReviewVerdict: 'REVIEW FAILED',
+            plannedChangedFiles: changedFiles,
+            dirtyWorkspaceBaselineChangedFiles: baselineSnapshot.changed_files,
+            dirtyWorkspaceBaselineFileHashes: {
+                [changedFile]: fileSha256(path.join(repoRoot, changedFile))
+            },
+            allowDocsOnlyDelta: false
+        });
+
+        assert.equal(readiness.ready, true, readiness.reason);
+        assert.deepEqual(readiness.currentChangedFiles, changedFiles);
+    });
+
     it('keeps dirty-baseline files in stale preflight refresh commands when they changed after task start', () => {
         const repoRoot = makeTempRepo();
         const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');

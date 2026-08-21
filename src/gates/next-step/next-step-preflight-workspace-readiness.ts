@@ -397,7 +397,9 @@ export function readPreflightWorkspaceReadiness(
                 && (currentPlannedScopeGitFiles.length > 0 || currentRelatedPlannedScopeGitFiles.length > 0);
             const currentGitChangedFiles = currentGitSnapshotFilesWithMetadata.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
-                    && (!includeFullFailedReviewRemediationScope || !unchangedDirtyBaselineSet.has(entry))
+                    && (!includeFullFailedReviewRemediationScope
+                        || !unchangedDirtyBaselineSet.has(entry)
+                        || plannedSet.has(entry))
                     && (!compareOnlyPlannedScope
                         || plannedSet.has(entry)
                         || !unchangedDirtyBaselineSet.has(entry))
