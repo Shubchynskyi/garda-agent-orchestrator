@@ -25,6 +25,7 @@ import {
     handleCompleteReviewerLaunch,
     handleRecordReviewInvocation,
     handleRecordReviewReceipt,
+    handleRecordReviewOutputCorrectionInvocation,
     handleMaterializeReviewFollowUpTasks
 } from './gate-review-handlers';
 import {
@@ -166,6 +167,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRestoreFullSuiteRepairWip(gateArgv);
         case 'record-review-result':
             return handleRecordReviewResult(gateArgv);
+        case 'record-review-output-correction-invocation':
+            return handleRecordReviewOutputCorrectionInvocation(gateArgv);
         case 'completion-gate':
             return handleCompletionGate(gateArgv);
         case 'record-review-routing':

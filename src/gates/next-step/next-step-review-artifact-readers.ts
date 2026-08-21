@@ -76,6 +76,12 @@ import {
 } from './next-step-review-artifact-failure-detection';
 import { isPlainRecord } from '../../core/records';
 import type { ReviewFollowUpMaterializationMode } from '../../policy/profile-resolver';
+import {
+    getReviewOutputCorrectionArtifactPath,
+    getReviewOutputCorrectionLaunchArtifactPath,
+    readReviewOutputCorrectionArtifact
+} from '../review/review-output-correction';
+import { readTaskTimelineEventLikes } from './next-step-review-timeline-evidence';
 
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
 const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(
@@ -106,12 +112,19 @@ export interface ReviewArtifactState {
         | 'missing-validation-evidence'
         | 'stale-validation-evidence'
         | 'review-validation-rejected'
+        | 'review-correction-full-review-required'
         | null;
     failureReason: string | null;
     reviewFindingsValidationAccepted: boolean | null;
     frozenReviewFindingsValidationAccepted?: boolean | null;
     reviewFindingsValidationRejected: boolean;
     reviewFindingsValidationArtifactPath: string | null;
+    reviewOutputCorrectionArtifactPath?: string | null;
+    reviewOutputCorrectionState?: string | null;
+    reviewOutputCorrectionLaunchState?: string | null;
+    reviewOutputCorrectionProducerIdentity?: string | null;
+    reviewOutputCorrectionProviderInvocationId?: string | null;
+    reviewOutputCorrectionAttestationSource?: string | null;
     reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null;
     frozenReviewFindingsDisposition?: ReviewFindingsDispositionEvaluation | null;
     reviewFindingsDispositionArtifactPath: string | null;
@@ -617,6 +630,7 @@ export function readReviewArtifactState(
     const receiptExists = fileExists(receiptPath);
     let context: Record<string, unknown> | null = null;
     let receipt: Record<string, unknown> | null = null;
+    let receiptCurrent = false;
     let reviewerIdentity: string | null = null;
     let contextReviewerIdentity: string | null = null;
     let contextReviewTreeStateSha256: string | null = null;
@@ -642,6 +656,12 @@ export function readReviewArtifactState(
     let frozenReviewFindingsValidationAccepted: boolean | null = null;
     let reviewFindingsValidationRejected = false;
     let reviewFindingsValidationArtifactPath: string | null = null;
+    let reviewOutputCorrectionArtifactPath: string | null = null;
+    let reviewOutputCorrectionState: string | null = null;
+    let reviewOutputCorrectionLaunchState: string | null = null;
+    let reviewOutputCorrectionProducerIdentity: string | null = null;
+    let reviewOutputCorrectionProviderInvocationId: string | null = null;
+    let reviewOutputCorrectionAttestationSource: string | null = null;
     let reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     let frozenReviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     let reviewFindingsDispositionArtifactPath: string | null = null;
@@ -865,6 +885,7 @@ export function readReviewArtifactState(
         });
         const evidenceFields = evidenceContract.fields;
         violations.push(...evidenceContract.violations);
+        const receiptContractCurrent = contextCurrent && evidenceContract.violations.length === 0;
         reviewerIdentity = evidenceFields.reviewerIdentity;
         reusedExistingReview = evidenceFields.reusedExistingReview;
         reusedFromReceiptPath = evidenceFields.reusedFromReceiptPath;
@@ -945,6 +966,9 @@ export function readReviewArtifactState(
             reviewFindingsValidationArtifactPath = validationArtifact.reference?.artifact_path || null;
             reviewFindingsValidationAccepted = validationArtifact.accepted;
             violations.push(...validationArtifact.violations);
+            receiptCurrent = receiptContractCurrent
+                && validationArtifact.valid
+                && validationArtifact.accepted;
             if (!validationArtifact.valid) {
                 const frozenValidationArtifact = validateReviewFindingsValidationArtifactForReceipt({
                     receipt,
@@ -1060,6 +1084,8 @@ export function readReviewArtifactState(
                     verdictToken = passToken || null;
                 }
             }
+        } else {
+            receiptCurrent = receiptContractCurrent;
         }
         reviewerProvenance = evidenceFields.reviewerProvenance
             ? {
@@ -1084,7 +1110,7 @@ export function readReviewArtifactState(
             }
             : null;
     }
-    if (requiresFindingsOnlyArtifact && !receipt && fileExists(getReviewFindingsValidationArtifactPath(artifactPath))) {
+    if (requiresFindingsOnlyArtifact && !receiptCurrent && fileExists(getReviewFindingsValidationArtifactPath(artifactPath))) {
         const contextHash = contextExists ? fileSha256(contextPath) : null;
         const rejectedValidationArtifact = validateReviewFindingsValidationArtifact({
             artifactPath: getReviewFindingsValidationArtifactPath(artifactPath),
@@ -1113,6 +1139,121 @@ export function readReviewArtifactState(
             failed = true;
             failureKind = 'review-validation-rejected';
             failureReason = rejectedValidationArtifact.artifact?.validation_result.violations.join(' ') || 'review findings validation rejected';
+            const correctionPath = getReviewOutputCorrectionArtifactPath(artifactPath);
+            if (fileExists(correctionPath)) {
+                reviewOutputCorrectionArtifactPath = correctionPath;
+                const correction = readReviewOutputCorrectionArtifact(correctionPath);
+                reviewOutputCorrectionState = correction.artifact?.state || null;
+                if (correction.violations.length > 0 || !correction.artifact) {
+                    failureKind = 'review-correction-full-review-required';
+                    failureReason = correction.violations.join(' ')
+                        || 'review output correction evidence is unavailable';
+                } else if (correction.artifact.state === 'FULL_REVIEW_REQUIRED') {
+                    failureKind = 'review-correction-full-review-required';
+                    failureReason = correction.artifact.recovery.reason;
+                } else if (correction.artifact.state === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
+                    const handoff = correction.artifact.recovery.handoff;
+                    const correctionInputSha256 = fileSha256(correctionPath);
+                    const correctionLaunchPath = getReviewOutputCorrectionLaunchArtifactPath(artifactPath);
+                    const correctionLaunch = fileExists(correctionLaunchPath)
+                        ? safeReadJson(correctionLaunchPath)
+                        : null;
+                    if (isPlainRecord(correctionLaunch)) {
+                        reviewOutputCorrectionLaunchState = String(correctionLaunch.state || '').trim() || null;
+                        reviewOutputCorrectionProducerIdentity = String(
+                            correctionLaunch.correction_producer_identity || ''
+                        ).trim() || null;
+                        reviewOutputCorrectionProviderInvocationId = String(
+                            correctionLaunch.provider_invocation_id || ''
+                        ).trim() || null;
+                        reviewOutputCorrectionAttestationSource = String(
+                            correctionLaunch.attestation_source || ''
+                        ).trim() || null;
+                    }
+                    const reviewerInvocationEventSha256 = String(
+                        correction.artifact.binding.reviewer_invocation_event_sha256 || ''
+                    ).trim().toLowerCase();
+                    const timelineEvents = readTaskTimelineEventLikes(
+                        path.join(path.dirname(reviewsRoot), 'task-events'),
+                        taskId
+                    );
+                    const originalInvocation = timelineEvents.find((event) => {
+                        const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+                        return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                            && String(integrity?.event_sha256 || '').trim().toLowerCase()
+                                === reviewerInvocationEventSha256;
+                    });
+                    const correctionProducerInvocation = correction.artifact.recovery.selected_transport
+                        === 'correction_only_invocation'
+                        ? [...timelineEvents].reverse().find((event) => {
+                            const details = isPlainRecord(event.details) ? event.details : null;
+                            return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                                && String(details?.invocation_role || '').trim() === 'review_output_correction'
+                                && String(details?.correction_artifact_sha256 || '').trim().toLowerCase()
+                                    === correctionInputSha256;
+                        })
+                        : originalInvocation;
+                    const correctionProducerDetails = correctionProducerInvocation
+                        && isPlainRecord(correctionProducerInvocation.details)
+                        ? correctionProducerInvocation.details
+                        : null;
+                    const correctionProducerIntegrity = correctionProducerInvocation
+                        && isPlainRecord(correctionProducerInvocation.integrity)
+                        ? correctionProducerInvocation.integrity
+                        : null;
+                    const correctionProducerInvocationEventSha256 = String(
+                        correctionProducerIntegrity?.event_sha256 || ''
+                    ).trim().toLowerCase();
+                    const correctionProducerIdentity = String(
+                        correctionProducerDetails?.reviewer_identity
+                        || correctionProducerDetails?.reviewer_session_id
+                        || ''
+                    ).trim();
+                    const correctionProviderInvocationId = String(
+                        correctionProducerDetails?.provider_invocation_id || ''
+                    ).trim();
+                    const correctionAttestationSource = String(
+                        correctionProducerDetails?.reviewer_launch_attestation_source
+                        || correctionProducerDetails?.attestation_source
+                        || ''
+                    ).trim();
+                    if (
+                        !handoff
+                        || !correctionInputSha256
+                        || !/^[0-9a-f]{64}$/u.test(reviewerInvocationEventSha256)
+                        || !originalInvocation
+                    ) {
+                        failureKind = 'review-correction-full-review-required';
+                    }
+                    failureReason = [
+                        failureReason,
+                        `Correction package: ${normalizePath(correctionPath)}.`,
+                        `Selected transport: ${correction.artifact.recovery.selected_transport}.`,
+                        handoff
+                            ? [
+                                `ReviewerCorrectionHandoff: provider_action=${handoff.provider_action};`,
+                                `ReviewerCorrectionInputArtifactPath=${handoff.launch_input_artifact_path || normalizePath(correctionPath)};`,
+                                `ReviewerCorrectionInputArtifactSha256=${correctionInputSha256 || 'unavailable'};`,
+                                `ReviewerInvocationEventSha256=${reviewerInvocationEventSha256 || 'unavailable'};`,
+                                `CorrectionProducerInvocationEventSha256=${correctionProducerInvocationEventSha256 || 'unavailable'};`,
+                                `CorrectionLaunchState=${reviewOutputCorrectionLaunchState || 'prepared'};`,
+                                `CorrectionProducerIdentity=${correctionProducerIdentity || 'unavailable'};`,
+                                `CorrectionProviderInvocationId=${correctionProviderInvocationId || 'unavailable'};`,
+                                `CorrectionAttestationSource=${correctionAttestationSource || 'unavailable'};`,
+                                `target_reviewer_identity=${handoff.target_reviewer_identity || 'new_correction_only_reviewer'};`,
+                                `fork_context=${handoff.fork_context === false ? 'false' : 'preserve_current_conversation'}.`,
+                                handoff.instruction
+                            ].join(' ')
+                            : 'ReviewerCorrectionHandoff is missing; correction recovery cannot be executed safely.'
+                    ].filter(Boolean).join(' ');
+                }
+            } else {
+                failureKind = 'review-correction-full-review-required';
+                failureReason = [
+                    failureReason,
+                    `Review output correction package is missing: ${normalizePath(correctionPath)}.`
+                ].filter(Boolean).join(' ');
+            }
             violations.push(
                 `review findings validation artifact is rejected: ` +
                 failureReason
@@ -1143,6 +1284,12 @@ export function readReviewArtifactState(
         frozenReviewFindingsValidationAccepted,
         reviewFindingsValidationRejected,
         reviewFindingsValidationArtifactPath,
+        reviewOutputCorrectionArtifactPath,
+        reviewOutputCorrectionState,
+        reviewOutputCorrectionLaunchState,
+        reviewOutputCorrectionProducerIdentity,
+        reviewOutputCorrectionProviderInvocationId,
+        reviewOutputCorrectionAttestationSource,
         reviewFindingsDisposition,
         frozenReviewFindingsDisposition,
         reviewFindingsDispositionArtifactPath,

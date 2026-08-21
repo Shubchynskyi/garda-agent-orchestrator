@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../../../../core/filesystem';
+import { isPlainRecord } from '../../../../core/records';
 import { sha256RedactedJsonPayload } from '../../../../core/redaction';
+import { getReviewOutputCorrectionProviderCapabilities } from '../../../../core/provider/provider-registry';
 import {
     buildReviewReceipt,
     buildReviewReceiptReviewerInvocationProvenance,
@@ -13,6 +16,13 @@ import {
 import { fileSha256 } from '../../../../gate-runtime/hash';
 import {
     emitReviewRecordedEventAsync,
+    emitReviewOutputCorrectionAcceptedEventAsync,
+    emitReviewOutputCorrectionFullReviewRequiredEventAsync,
+    emitReviewOutputCorrectionInvocationAttestedEventAsync,
+    emitReviewOutputCorrectionNormalizedEventAsync,
+    emitReviewOutputCorrectionRequiredEventAsync,
+    emitReviewerDelegationStartedEventAsync,
+    emitReviewerInvocationAttestedEventAsync,
     emitReviewerLaunchFailedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
 import {
@@ -70,6 +80,7 @@ import {
     type ReviewResultHandlers,
     type ReviewResultHandlersDependencies,
     type ReviewerExecutionMode,
+    recordReviewOutputCorrectionInvocationOptionDefinitions,
     recordReviewReceiptOptionDefinitions,
     recordReviewResultOptionDefinitions
 } from './review-result-handler-contract';
@@ -122,6 +133,24 @@ import {
 import {
     type ReviewFindingsReport
 } from '../../../../gates/review/review-findings-schema';
+import {
+    buildReviewOutputCorrectionStateTransition,
+    buildReviewOutputCorrectionArtifact,
+    classifyReviewOutputCorrectionDiagnostics,
+    computeRawReviewOutputSha256,
+    getRejectedReviewOutputArtifactPath,
+    getReviewOutputCorrectionArtifactPath,
+    getReviewOutputCorrectionLaunchArtifactPath,
+    normalizeReviewOutputMechanically,
+    persistReviewOutputCorrection,
+    readReviewOutputCorrectionArtifact,
+    updateReviewOutputCorrectionState,
+    verifyCorrectedReviewOutput,
+    type ReviewOutputCorrectionArtifact,
+    REVIEW_OUTPUT_CORRECTION_LAUNCH_ARTIFACT_TYPE,
+    type ReviewOutputCorrectionProducerAttestation,
+    type ReviewOutputCorrectionProducerInvocationEvidence
+} from '../../../../gates/review/review-output-correction';
 import {
     type ReviewRemediationReviewContract
 } from '../../../../gates/review-remediation/review-remediation-review-contract';
@@ -886,6 +915,301 @@ const FINDINGS_VALIDATION_FAILURE_FIELDS = [
     'review_result_rejected_at_utc'
 ] as const;
 
+function resolveAuthenticatedReviewOutputCorrectionCapabilities(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    invocationDetails: Record<string, unknown>;
+}): {
+    liveReviewerContinuation: boolean;
+    apiConversationContinuation: boolean;
+} {
+    const unavailable = {
+        liveReviewerContinuation: false,
+        apiConversationContinuation: false
+    };
+    const launchArtifactPathValue = getArtifactStringField(
+        options.invocationDetails,
+        'reviewer_launch_artifact_path',
+        'reviewerLaunchArtifactPath'
+    );
+    const expectedLaunchArtifactSha256 = getArtifactStringField(
+        options.invocationDetails,
+        'reviewer_launch_artifact_sha256',
+        'reviewerLaunchArtifactSha256'
+    ).toLowerCase();
+    const launchArtifactPath = gateHelpers.resolvePathInsideRepo(
+        launchArtifactPathValue,
+        options.repoRoot,
+        { allowMissing: true }
+    );
+    if (
+        !launchArtifactPath
+        || !fs.existsSync(launchArtifactPath)
+        || !fs.statSync(launchArtifactPath).isFile()
+        || !expectedLaunchArtifactSha256
+        || fileSha256(launchArtifactPath)?.toLowerCase() !== expectedLaunchArtifactSha256
+    ) {
+        return unavailable;
+    }
+    let launchArtifact: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as unknown;
+        if (!isPlainRecord(parsed)) {
+            return unavailable;
+        }
+        launchArtifact = parsed;
+    } catch {
+        return unavailable;
+    }
+    if (
+        getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState') !== 'launched'
+        || getArtifactStringField(launchArtifact, 'task_id', 'taskId') !== options.taskId
+        || getArtifactStringField(launchArtifact, 'review_type', 'reviewType').toLowerCase()
+            !== options.reviewType
+        || getArtifactStringField(launchArtifact, 'reviewer_identity', 'reviewerIdentity')
+            !== options.reviewerIdentity
+        || getArtifactStringField(launchArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase()
+            !== options.reviewContextSha256.toLowerCase()
+    ) {
+        return unavailable;
+    }
+    const provider = getArtifactStringField(launchArtifact, 'provider');
+    const capabilities = getReviewOutputCorrectionProviderCapabilities(provider);
+    const providerInvocationId = getArtifactStringField(
+        launchArtifact,
+        'provider_invocation_id',
+        'providerInvocationId'
+    );
+    const invocationProviderInvocationId = getArtifactStringField(
+        options.invocationDetails,
+        'provider_invocation_id',
+        'providerInvocationId'
+    );
+    const attestationSource = getArtifactStringField(
+        launchArtifact,
+        'attestation_source',
+        'attestationSource'
+    ) || getArtifactStringField(
+        options.invocationDetails,
+        'reviewer_launch_attestation_source',
+        'reviewerLaunchAttestationSource',
+        'attestation_source',
+        'attestationSource'
+    );
+    const launchCompletedAtUtc = getArtifactStringField(
+        launchArtifact,
+        'launch_completed_at_utc',
+        'launchCompletedAtUtc'
+    );
+    const hasProviderOwnedLiveSessionBinding = (
+        getArtifactStringField(
+            launchArtifact,
+            'reviewer_execution_mode',
+            'reviewerExecutionMode'
+        ) === 'delegated_subagent'
+        && !!providerInvocationId
+        && providerInvocationId === invocationProviderInvocationId
+        && !/^(?:unknown|n\/a|na|null|none|manual|mock|test|placeholder|<.*>)$/iu.test(providerInvocationId)
+        && !!attestationSource
+        && !/^(?:garda_prepare_reviewer_launch|orchestrator_mock|manual|mock|test|placeholder)$/iu.test(
+            attestationSource
+        )
+        && Number.isFinite(Date.parse(launchCompletedAtUtc))
+    );
+    return {
+        // A provider capability alone is not liveness evidence. The continuation
+        // branch is enabled only while the still-unconsumed attempt is bound to an
+        // actual provider invocation and its completed delegated launch.
+        liveReviewerContinuation:
+            capabilities.liveReviewerContinuation && hasProviderOwnedLiveSessionBinding,
+        apiConversationContinuation: capabilities.apiConversationContinuation
+    };
+}
+
+async function persistReviewOutputCorrectionRequired(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    rawReviewOutputContent: string;
+    reviewOutputSourcePath?: string | null;
+    validationEvidence: ReviewFindingsValidationEvidence;
+    persistValidationEvidence: () => Promise<void>;
+}): Promise<void> {
+    const reviewContext = JSON.parse(
+        fs.readFileSync(options.reviewContextPath, 'utf8')
+    ) as Record<string, unknown>;
+    const reviewContextSha256 = fileSha256(options.reviewContextPath) || '';
+    const reviewTreeStateSha256 = getArtifactStringField(
+        isPlainRecord(reviewContext.tree_state) ? reviewContext.tree_state : {},
+        'tree_state_sha256',
+        'treeStateSha256'
+    ).toLowerCase();
+    const timelinePath = gateHelpers.joinOrchestratorPath(
+        options.repoRoot,
+        path.join('runtime', 'task-events', `${options.taskId}.jsonl`)
+    );
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const invocation = [...timelineEvents].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+            && getArtifactStringField(details, 'task_id', 'taskId') === options.taskId
+            && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === options.reviewType
+            && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity') === options.reviewerIdentity
+            && getArtifactStringField(details, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === reviewContextSha256;
+    });
+    const invocationDetails = invocation?.details || {};
+    const reviewerAttemptId = getArtifactStringField(
+        invocationDetails,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId',
+        'provider_invocation_id',
+        'providerInvocationId'
+    ) || String(invocation?.integrity?.event_sha256 || '').trim().toLowerCase();
+    const reviewerInvocationEventSha256 = String(invocation?.integrity?.event_sha256 || '').trim().toLowerCase();
+    if (!reviewerAttemptId) {
+        throw new Error(
+            `Review output correction cannot authenticate the reviewer attempt for '${options.reviewType}'. ` +
+            'A fresh full reviewer is required.'
+        );
+    }
+    const invocationIndex = invocation ? timelineEvents.lastIndexOf(invocation) : -1;
+    const attemptAlreadyConsumed = invocationIndex >= 0 && timelineEvents.slice(invocationIndex + 1).some((event) => {
+        const details = event.details || {};
+        return event.event_type === 'REVIEW_RECORDED'
+            && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === options.reviewType
+            && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity') === options.reviewerIdentity;
+    });
+    if (attemptAlreadyConsumed) {
+        return;
+    }
+    await options.persistValidationEvidence();
+    const correctionArtifactPath = getReviewOutputCorrectionArtifactPath(
+        options.validationEvidence.payload.validation_result.bindings.output.review_artifact_path || ''
+    );
+    const previousCorrection = correctionArtifactPath
+        ? readReviewOutputCorrectionArtifact(correctionArtifactPath)
+        : { artifact: null, violations: [] as string[] };
+    const correctionAttempt = previousCorrection.artifact
+        && previousCorrection.violations.length === 0
+        && previousCorrection.artifact.binding.review_context_sha256 === reviewContextSha256.toLowerCase()
+        && previousCorrection.artifact.binding.review_tree_state_sha256 === reviewTreeStateSha256
+        && previousCorrection.artifact.binding.reviewer_identity === options.reviewerIdentity
+        && previousCorrection.artifact.binding.reviewer_attempt_id === reviewerAttemptId
+        ? previousCorrection.artifact.recovery.correction_attempt + 1
+        : 1;
+    const reviewArtifactPath = options.validationEvidence.payload.validation_result.bindings.output.review_artifact_path;
+    if (!reviewArtifactPath) {
+        throw new Error(`Review output correction requires a canonical review artifact path for '${options.reviewType}'.`);
+    }
+    const provisionalRejectedPath = options.reviewOutputSourcePath || reviewArtifactPath;
+    const correctionCapabilities = resolveAuthenticatedReviewOutputCorrectionCapabilities({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256,
+        invocationDetails
+    });
+    const correctionArtifact = buildReviewOutputCorrectionArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        rejectedOutputPath: provisionalRejectedPath,
+        rejectedOutputSha256: computeRawReviewOutputSha256(options.rawReviewOutputContent),
+        rejectedOutputContent: options.rawReviewOutputContent,
+        reviewContextPath: options.reviewContextPath,
+        reviewContextSha256,
+        reviewTreeStateSha256,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewerAttemptId,
+        reviewerInvocationEventSha256,
+        validationArtifactPath: options.validationEvidence.snapshotPath,
+        validationArtifactSha256: options.validationEvidence.artifactSha256,
+        violations: options.validationEvidence.payload.validation_result.violations,
+        correctionAttempt,
+        capabilities: {
+            gate_normalization: false,
+            live_reviewer_continuation: correctionCapabilities.liveReviewerContinuation,
+            api_conversation_continuation: correctionCapabilities.apiConversationContinuation,
+            correction_only_invocation: true
+        }
+    });
+    const rejectedOutputPath = getRejectedReviewOutputArtifactPath(
+        reviewArtifactPath,
+        createHash('sha256').update(options.rawReviewOutputContent).digest('hex')
+    );
+    const correctionArtifactSnapshot = captureReviewArtifactFile(options.repoRoot, correctionArtifactPath);
+    const correctionLaunchArtifactSnapshot = captureReviewArtifactFile(
+        options.repoRoot,
+        getReviewOutputCorrectionLaunchArtifactPath(reviewArtifactPath)
+    );
+    const rejectedOutputSnapshot = captureReviewArtifactFile(options.repoRoot, rejectedOutputPath);
+    let persisted: ReturnType<typeof persistReviewOutputCorrection>;
+    try {
+        persisted = persistReviewOutputCorrection({
+            repoRoot: options.repoRoot,
+            reviewArtifactPath,
+            rawOutput: options.rawReviewOutputContent,
+            artifact: correctionArtifact
+        });
+    } catch (error) {
+        restoreReviewArtifactFile(options.repoRoot, rejectedOutputSnapshot);
+        restoreReviewArtifactFile(options.repoRoot, correctionLaunchArtifactSnapshot);
+        restoreReviewArtifactFile(options.repoRoot, correctionArtifactSnapshot);
+        throw error;
+    }
+    const details = {
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        state: persisted.artifact.state,
+        reviewer_identity: options.reviewerIdentity,
+        reviewer_attempt_id: reviewerAttemptId,
+        review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
+        rejected_output_path: normalizePath(persisted.rejectedOutputPath),
+        rejected_output_sha256: persisted.artifact.binding.original_output_sha256,
+        findings_semantic_fingerprint: persisted.artifact.binding.findings_semantic_fingerprint,
+        validation_artifact_path: normalizePath(options.validationEvidence.artifactPath),
+        validation_artifact_sha256: options.validationEvidence.artifactSha256,
+        correction_artifact_path: normalizePath(persisted.artifactPath),
+        correction_artifact_sha256: persisted.artifact.artifact_sha256,
+        correction_attempt: persisted.artifact.recovery.correction_attempt,
+        max_correction_attempts: persisted.artifact.recovery.max_correction_attempts,
+        selected_transport: persisted.artifact.recovery.selected_transport,
+        diagnostic_codes: persisted.artifact.diagnostics.map((diagnostic) => diagnostic.code)
+    };
+    try {
+        const event = persisted.artifact.state === 'FULL_REVIEW_REQUIRED'
+            ? await emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+                gateHelpers.joinOrchestratorPath(options.repoRoot, ''),
+                options.taskId,
+                options.reviewType,
+                details
+            )
+            : await emitReviewOutputCorrectionRequiredEventAsync(
+                gateHelpers.joinOrchestratorPath(options.repoRoot, ''),
+                options.taskId,
+                options.reviewType,
+                details
+            );
+        if (!event || taskEventAppendHasBlockingFailure(event, false)) {
+            throw new Error(
+                `Review output correction state could not be recorded for '${options.reviewType}'. ` +
+                `Correction package: ${normalizePath(persisted.artifactPath)}.`
+            );
+        }
+    } catch (error) {
+        restoreReviewArtifactFile(options.repoRoot, rejectedOutputSnapshot);
+        restoreReviewArtifactFile(options.repoRoot, correctionLaunchArtifactSnapshot);
+        restoreReviewArtifactFile(options.repoRoot, correctionArtifactSnapshot);
+        throw error;
+    }
+}
+
 async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
     repoRoot: string;
     taskId: string;
@@ -893,9 +1217,9 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
     reviewerIdentity: string;
     preflightPath: string;
     reviewContextPath: string;
+    rawReviewOutputContent: string;
     reviewOutputSourcePath?: string | null;
     reviewOutputSourceMtimeUtc?: string | null;
-    failureRecordedBy: 'record-review-result' | 'record-review-receipt';
     validationEvidence: ReviewFindingsValidationEvidence;
     persistValidationEvidence: () => Promise<void>;
 }): Promise<void> {
@@ -1113,6 +1437,25 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
         const resolved = path.resolve(value);
         return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
     };
+    if (!String(options.reviewOutputSourcePath || '').trim()) {
+        try {
+            await persistReviewOutputCorrectionRequired({
+                repoRoot: options.repoRoot,
+                taskId: options.taskId,
+                reviewType: options.reviewType,
+                reviewerIdentity: options.reviewerIdentity,
+                reviewContextPath: options.reviewContextPath,
+                rawReviewOutputContent: options.rawReviewOutputContent,
+                reviewOutputSourcePath: null,
+                validationEvidence: options.validationEvidence,
+                persistValidationEvidence: options.persistValidationEvidence
+            });
+        } catch (error: unknown) {
+            restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
+            throw error;
+        }
+        return;
+    }
     if (
         !resolvedBoundReviewOutputPath
         || !resolvedReviewOutputSourcePath
@@ -1152,78 +1495,21 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
             'delegationStartedAtUtc'
         )
     });
-    await options.persistValidationEvidence();
-
-    const rejectedAtUtc = new Date().toISOString();
-    const validationReason = options.validationEvidence.payload.validation_result.violations.join(' ')
-        || 'Review findings validation rejected the delegated reviewer output.';
-    const failedArtifact = {
-        ...launchArtifact,
-        attestation_state: 'launch_failed',
-        launch_failure_stage: 'review_findings_validation',
-        launch_failure_reason: validationReason,
-        launch_failed_at_utc: rejectedAtUtc,
-        launch_failure_recorded_by: options.failureRecordedBy,
-        rejected_reviewer_launch_artifact_sha256: launchArtifactSha256,
-        review_findings_validation_artifact_path: normalizePath(options.validationEvidence.artifactPath),
-        review_findings_validation_artifact_sha256: options.validationEvidence.artifactSha256,
-        review_result_rejected_at_utc: rejectedAtUtc
-    };
-    let failedEvent: Awaited<ReturnType<typeof emitReviewerLaunchFailedEventAsync>> = null;
     try {
-        writeReviewArtifactJson(launchArtifactPath, failedArtifact);
-        const failedArtifactSha256 = fileSha256(launchArtifactPath) || '';
-        failedEvent = await emitFindingsValidationLaunchFailure({
+        await persistReviewOutputCorrectionRequired({
             repoRoot: options.repoRoot,
             taskId: options.taskId,
             reviewType: options.reviewType,
             reviewerIdentity: options.reviewerIdentity,
-            reviewContextSha256,
-            launchArtifact,
-            launchArtifactPath,
-            launchArtifactSha256: failedArtifactSha256,
-            rejectedLaunchArtifactSha256: launchArtifactSha256,
-            rejectedAtUtc,
-            validationReason,
-            validationArtifactPath: options.validationEvidence.artifactPath,
-            validationArtifactSha256: options.validationEvidence.artifactSha256
+            reviewContextPath: options.reviewContextPath,
+            rawReviewOutputContent: options.rawReviewOutputContent,
+            reviewOutputSourcePath: options.reviewOutputSourcePath,
+            validationEvidence: options.validationEvidence,
+            persistValidationEvidence: options.persistValidationEvidence
         });
     } catch (error: unknown) {
-        let rollbackError: unknown = null;
-        try {
-            restoreReviewerLaunchArtifactTextForResultRollback(launchArtifactPath, originalArtifactText);
-        } catch (caughtRollbackError) {
-            rollbackError = caughtRollbackError;
-        }
         restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
-        if (rollbackError) {
-            throw new Error(
-                `Rejected findings recovery failed and the completed launch artifact rollback also failed: ` +
-                `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}. ` +
-                `Original failure: ${error instanceof Error ? error.message : String(error)}`
-            );
-        }
         throw error;
-    }
-    if (!failedEvent || taskEventAppendHasBlockingFailure(failedEvent, false)) {
-        let rollbackError: unknown = null;
-        try {
-            restoreReviewerLaunchArtifactTextForResultRollback(launchArtifactPath, originalArtifactText);
-        } catch (caughtRollbackError) {
-            rollbackError = caughtRollbackError;
-        }
-        restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
-        if (rollbackError) {
-            throw new Error(
-                `Rejected findings recovery requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
-                `Telemetry persistence failed and the completed launch artifact rollback also failed: ` +
-                `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}.`
-            );
-        }
-        throw new Error(
-            `Rejected findings recovery requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
-            'The immutable launch artifact was restored because telemetry could not be persisted.'
-        );
     }
 }
 
@@ -1373,6 +1659,43 @@ function summarizeReviewFindingsDispositionEvidence(evidence: ReviewFindingsDisp
     };
 }
 
+interface ReviewOutputCorrectionAcceptanceTransaction {
+    artifactPath: string;
+    artifact: ReviewOutputCorrectionArtifact;
+    invocationEventDetails: Record<string, unknown>;
+    acceptedEventDetails: Record<string, unknown>;
+}
+
+function hasReviewOutputCorrectionInvocationAttestation(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    details: Record<string, unknown>;
+}): boolean {
+    const timelinePath = gateHelpers.joinOrchestratorPath(
+        options.repoRoot,
+        path.join('runtime', 'task-events', `${options.taskId}.jsonl`)
+    );
+    return readDependencyTimelineEvents(timelinePath).some((event) => {
+        if (event.event_type !== 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED') {
+            return false;
+        }
+        const details = event.details || {};
+        return getArtifactStringField(details, 'task_id', 'taskId') === options.taskId
+            && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === options.reviewType
+            && getArtifactStringField(details, 'correction_producer_identity', 'correctionProducerIdentity')
+                === getArtifactStringField(
+                    options.details,
+                    'correction_producer_identity',
+                    'correctionProducerIdentity'
+                )
+            && getArtifactStringField(details, 'provider_invocation_id', 'providerInvocationId')
+                === getArtifactStringField(options.details, 'provider_invocation_id', 'providerInvocationId')
+            && getArtifactStringField(details, 'launch_input_sha256', 'launchInputSha256').toLowerCase()
+                === getArtifactStringField(options.details, 'launch_input_sha256', 'launchInputSha256').toLowerCase();
+    });
+}
+
 async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     repoRoot: string;
     taskId: string;
@@ -1390,6 +1713,7 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     findingsValidationEvidence?: ReviewFindingsValidationEvidence | null;
     findingsDispositionEvidence?: ReviewFindingsDispositionEvidence | null;
     remediationBaselineEvidence?: ReviewRemediationBaselineEvidence | null;
+    correctionAcceptance?: ReviewOutputCorrectionAcceptanceTransaction | null;
 }): Promise<string> {
     const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
     const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${options.receiptPayloadSha256}.json`);
@@ -1464,6 +1788,13 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
                 }
             ]
             : []),
+        ...(options.correctionAcceptance
+            ? [{
+                artifactPath: options.correctionAcceptance.artifactPath,
+                contentType: 'json' as const,
+                payload: options.correctionAcceptance.artifact
+            }]
+            : []),
         {
             artifactPath: artifactSnapshotPath,
             contentType: 'text' as const,
@@ -1518,6 +1849,40 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
                 'Review remediation baseline snapshot'
             );
         }
+        if (options.correctionAcceptance) {
+            assertReviewArtifactFileSha256(
+                options.correctionAcceptance.artifactPath,
+                sha256RedactedJsonPayload(options.correctionAcceptance.artifact),
+                'Review output correction artifact'
+            );
+            if (!hasReviewOutputCorrectionInvocationAttestation({
+                repoRoot: options.repoRoot,
+                taskId: options.taskId,
+                reviewType: options.reviewType,
+                details: options.correctionAcceptance.invocationEventDetails
+            })) {
+                const invocationEvent = await emitReviewOutputCorrectionInvocationAttestedEventAsync(
+                    orchestratorRoot,
+                    options.taskId,
+                    options.reviewType,
+                    options.correctionAcceptance.invocationEventDetails
+                );
+                if (!invocationEvent || taskEventAppendHasBlockingFailure(invocationEvent, false)) {
+                    throw new Error(
+                        `Review output correction invocation attestation failed for '${options.reviewType}'.`
+                    );
+                }
+            }
+            const acceptedEvent = await emitReviewOutputCorrectionAcceptedEventAsync(
+                orchestratorRoot,
+                options.taskId,
+                options.reviewType,
+                options.correctionAcceptance.acceptedEventDetails
+            );
+            if (!acceptedEvent || taskEventAppendHasBlockingFailure(acceptedEvent, false)) {
+                throw new Error(`Review output correction acceptance telemetry failed for '${options.reviewType}'.`);
+            }
+        }
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
             ...buildBoundedReviewRecordedTelemetryDetails(options.receipt),
             receipt_path: normalizePath(receiptPath),
@@ -1569,6 +1934,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     requireStrictBindingMetadata?: boolean;
     invocationReviewContextSha256?: string | null;
     routingReviewerIdentity?: string | null;
+    correctionAcceptance?: ReviewOutputCorrectionAcceptanceTransaction | null;
 }, dependencies: ReviewResultHandlersDependencies): Promise<string> {
     if (
         options.reviewArtifactContent == null
@@ -1875,9 +2241,9 @@ async function recordReviewReceiptFromArtifacts(options: {
                 reviewerIdentity: options.reviewerIdentity,
                 preflightPath: options.preflightPath,
                 reviewContextPath: options.contextPath,
+                rawReviewOutputContent: reviewArtifactContent,
                 reviewOutputSourcePath: options.rawReviewOutputSourcePath ?? options.rawReviewOutputPath ?? null,
                 reviewOutputSourceMtimeUtc: options.rawReviewOutputSourceMtimeUtc,
-                failureRecordedBy: 'record-review-receipt',
                 validationEvidence: findingsValidationEvidence,
                 persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence)
             });
@@ -2045,7 +2411,8 @@ async function recordReviewReceiptFromArtifacts(options: {
             artifactSha256,
             findingsValidationEvidence,
             findingsDispositionEvidence,
-            remediationBaselineEvidence
+            remediationBaselineEvidence,
+            correctionAcceptance: options.correctionAcceptance
         });
     } catch (error: unknown) {
         try {
@@ -2150,12 +2517,177 @@ async function handleRecordReviewResultUnlocked(
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const reviewContextSha256 = fileSha256(contextPath) || '';
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
+    const correctionArtifactPath = getReviewOutputCorrectionArtifactPath(artifactPath);
+    let pendingCorrectionArtifact = null as ReturnType<typeof readReviewOutputCorrectionArtifact>['artifact'];
+    let pendingCorrectionProducerAttestation: ReviewOutputCorrectionProducerAttestation | null = null;
+    let pendingCorrectionLaunchInputSha256: string | null = null;
+    let pendingCorrectionOriginalReviewerAttemptId: string | null = null;
+    let pendingCorrectionProducerInvocationEvidence: ReviewOutputCorrectionProducerInvocationEvidence | null = null;
+    if (fs.existsSync(correctionArtifactPath)) {
+        const correctionRead = readReviewOutputCorrectionArtifact(correctionArtifactPath);
+        if (!correctionRead.artifact) {
+            await emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+                gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                taskId,
+                reviewType,
+                {
+                    task_id: taskId,
+                    review_type: reviewType,
+                    reviewer_identity: reviewerIdentity,
+                    correction_artifact_path: normalizePath(correctionArtifactPath),
+                    reasons: correctionRead.violations
+                }
+            );
+            throw new Error(
+                `Review output correction evidence is unavailable or tampered for '${reviewType}'. ` +
+                'Restart the review cycle and launch a fresh full reviewer.'
+            );
+        }
+        const correctionArtifact = correctionRead.artifact;
+        const timelineEvents = readDependencyTimelineEvents(timelinePath);
+        const invocation = [...timelineEvents].reverse().find((event) => {
+            const details = event.details || {};
+            return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === reviewType
+                && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity') === reviewerIdentity
+                && getArtifactStringField(details, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === reviewContextSha256;
+        });
+        const invocationDetails = invocation?.details || {};
+        const reviewerAttemptId = getArtifactStringField(
+            invocationDetails,
+            'reviewer_launch_attempt_id',
+            'reviewerLaunchAttemptId',
+            'provider_invocation_id',
+            'providerInvocationId'
+        ) || String(invocation?.integrity?.event_sha256 || '').trim().toLowerCase();
+        const correctionArtifactSha256 = fileSha256(correctionArtifactPath) || '';
+        const producerAttestation: ReviewOutputCorrectionProducerAttestation = {
+            producer_identity: String(options.correctionProducerIdentity || '').trim(),
+            provider_invocation_id: String(options.correctionProviderInvocationId || '').trim(),
+            provider_invocation_event_sha256: String(
+                options.correctionProviderInvocationEventSha256 || ''
+            ).trim().toLowerCase(),
+            attestation_source: String(options.correctionAttestationSource || '').trim().toLowerCase(),
+            launch_input_sha256: String(options.correctionLaunchInputSha256 || '').trim().toLowerCase(),
+            fork_context: typeof options.correctionForkContext === 'boolean'
+                ? options.correctionForkContext
+                : null
+        };
+        const producerInvocation = producerAttestation.provider_invocation_event_sha256
+            ? timelineEvents.find((event) => (
+                String(event.integrity?.event_sha256 || '').trim().toLowerCase()
+                    === producerAttestation.provider_invocation_event_sha256
+            ))
+            : null;
+        const producerInvocationDetails = producerInvocation?.details || {};
+        const delegationStartedEventSha256 = getArtifactStringField(
+            producerInvocationDetails,
+            'correction_delegation_started_event_sha256'
+        ).toLowerCase();
+        const delegationStartedEvent = delegationStartedEventSha256
+            ? timelineEvents.find((event) => (
+                String(event.integrity?.event_sha256 || '').trim().toLowerCase()
+                    === delegationStartedEventSha256
+            ))
+            : null;
+        const delegationStartedDetails = delegationStartedEvent?.details || {};
+        const producerInvocationEvidence: ReviewOutputCorrectionProducerInvocationEvidence | null = producerInvocation
+            ? {
+                event_type: String(producerInvocation.event_type || '').trim(),
+                event_sha256: String(producerInvocation.integrity?.event_sha256 || '').trim().toLowerCase(),
+                reviewer_identity: getArtifactStringField(
+                    producerInvocationDetails,
+                    'reviewer_identity',
+                    'reviewerIdentity',
+                    'reviewer_session_id',
+                    'reviewerSessionId'
+                ),
+                reviewer_attempt_id: getArtifactStringField(
+                    producerInvocationDetails,
+                    'reviewer_launch_attempt_id',
+                    'reviewerLaunchAttemptId',
+                    'provider_invocation_id',
+                    'providerInvocationId'
+                ) || String(producerInvocation.integrity?.event_sha256 || '').trim().toLowerCase(),
+                provider_invocation_id: getArtifactStringField(
+                    producerInvocationDetails,
+                    'provider_invocation_id',
+                    'providerInvocationId',
+                    'controller_invocation_id',
+                    'controllerInvocationId'
+                ),
+                review_context_sha256: getArtifactStringField(
+                    producerInvocationDetails,
+                    'review_context_sha256',
+                    'reviewContextSha256'
+                ).toLowerCase(),
+                launch_input_sha256: getArtifactStringField(
+                    producerInvocationDetails,
+                    'launch_input_sha256',
+                    'launchInputSha256'
+                ).toLowerCase(),
+                delegation_started_event_type: String(delegationStartedEvent?.event_type || '').trim(),
+                delegation_started_event_sha256: String(
+                    delegationStartedEvent?.integrity?.event_sha256 || ''
+                ).trim().toLowerCase(),
+                delegation_started_reviewer_identity: getArtifactStringField(
+                    delegationStartedDetails,
+                    'reviewer_identity',
+                    'reviewerIdentity',
+                    'reviewer_session_id',
+                    'reviewerSessionId'
+                ),
+                delegation_started_provider_invocation_id: getArtifactStringField(
+                    delegationStartedDetails,
+                    'provider_invocation_id',
+                    'providerInvocationId'
+                ),
+                correction_launch_artifact_sha256: getArtifactStringField(
+                    delegationStartedDetails,
+                    'reviewer_launch_artifact_sha256'
+                ).toLowerCase()
+            }
+            : null;
+        // --reviewer-identity continues to name the original review/receipt
+        // owner. A correction-only producer is independently bound through
+        // --correction-producer-identity and provider-owned invocation evidence.
+        const correctionMatchesOriginalReviewerAttempt =
+            correctionArtifact.binding.review_context_sha256 === reviewContextSha256.toLowerCase()
+            && correctionArtifact.binding.reviewer_identity === reviewerIdentity
+            && correctionArtifact.binding.reviewer_attempt_id === reviewerAttemptId;
+        if (correctionMatchesOriginalReviewerAttempt && correctionRead.violations.length > 0) {
+            await emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+                gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                taskId,
+                reviewType,
+                {
+                    task_id: taskId,
+                    review_type: reviewType,
+                    reviewer_identity: reviewerIdentity,
+                    correction_artifact_path: normalizePath(correctionArtifactPath),
+                    reasons: correctionRead.violations
+                }
+            );
+            throw new Error(
+                `Review output correction evidence is unavailable or tampered for '${reviewType}'. ` +
+                'Restart the review cycle and launch a fresh full reviewer.'
+            );
+        }
+        if (correctionMatchesOriginalReviewerAttempt) {
+            pendingCorrectionArtifact = correctionArtifact;
+            pendingCorrectionProducerAttestation = producerAttestation;
+            pendingCorrectionLaunchInputSha256 = correctionArtifactSha256;
+            pendingCorrectionOriginalReviewerAttemptId = reviewerAttemptId;
+            pendingCorrectionProducerInvocationEvidence = producerInvocationEvidence;
+        }
+    }
     let findingsReport: ReviewFindingsReport | null = null;
     let findingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     const rawReviewOutputSha256 = sha256ReviewArtifactContent(reviewOutput.reviewContent);
+    const correctionComparisonOutputSha256 = computeRawReviewOutputSha256(reviewOutput.reviewContent);
     const reviewContentLooksLikeFindingsJson = String(reviewContent || '').trim().startsWith('{');
     if (strictFindingsOnlyOutput || (reviewContentLooksLikeFindingsJson && !verdictToken)) {
-        const findingsValidation = validateFindingsOnlyReviewOutput({
+        let findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent,
             taskId,
             reviewType,
@@ -2166,7 +2698,129 @@ async function handleRecordReviewResultUnlocked(
             repoRoot,
             evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
         });
+        if (!findingsValidation.valid && findingsValidation.detected) {
+            const correctionDiagnostics = classifyReviewOutputCorrectionDiagnostics(findingsValidation.violations);
+            const reviewExecutionContract = isPlainRecord(parsedReviewContext.review_execution)
+                ? parsedReviewContext.review_execution
+                : null;
+            const delta = reviewExecutionContract && isPlainRecord(reviewExecutionContract.delta)
+                ? reviewExecutionContract.delta
+                : null;
+            const findingReconciliation = reviewExecutionContract
+                && isPlainRecord(reviewExecutionContract.finding_reconciliation)
+                ? reviewExecutionContract.finding_reconciliation
+                : null;
+            const normalized = normalizeReviewOutputMechanically({
+                content: reviewContent,
+                diagnostics: correctionDiagnostics,
+                bindings: {
+                    taskId,
+                    reviewType,
+                    reviewContextSha256,
+                    reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || '',
+                    coverageContractSha256: isPlainRecord(parsedReviewContext.coverage_contract)
+                        ? String(parsedReviewContext.coverage_contract.contract_sha256 || '').trim().toLowerCase()
+                        : null,
+                    reviewExecution: reviewExecutionContract
+                        ? {
+                            mode: reviewExecutionContract.mode,
+                            contract_sha256: reviewExecutionContract.contract_sha256,
+                            covered_delta_targets: Array.isArray(delta?.required_delta_targets)
+                                ? delta.required_delta_targets
+                                : [],
+                            inspected_prior_finding_ids: Array.isArray(findingReconciliation?.resolvable_finding_ids)
+                                ? findingReconciliation.resolvable_finding_ids
+                                : []
+                        }
+                        : null
+                }
+            });
+            if (normalized.normalized) {
+                const normalizedValidation = validateFindingsOnlyReviewOutput({
+                    reviewContent: normalized.content,
+                    taskId,
+                    reviewType,
+                    reviewContextSha256,
+                    reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+                    coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined,
+                    expectedReviewExecutionContract: parsedReviewContext.review_execution as ReviewRemediationReviewContract,
+                    repoRoot,
+                    evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
+                });
+                if (normalizedValidation.valid && normalizedValidation.report) {
+                    reviewContent = normalized.content;
+                    reviewMaterializationFidelity = 'gate_mechanical_correction';
+                    findingsValidation = normalizedValidation;
+                    const normalizedEvent = await emitReviewOutputCorrectionNormalizedEventAsync(
+                        gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                        taskId,
+                        reviewType,
+                        {
+                            task_id: taskId,
+                            review_type: reviewType,
+                            reviewer_identity: reviewerIdentity,
+                            review_context_sha256: reviewContextSha256,
+                            review_tree_state_sha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+                            original_output_sha256: rawReviewOutputSha256,
+                            findings_semantic_fingerprint: normalized.fingerprint,
+                            corrected_fields: correctionDiagnostics.map((diagnostic) => diagnostic.code)
+                        }
+                    );
+                    if (!normalizedEvent || taskEventAppendHasBlockingFailure(normalizedEvent, false)) {
+                        throw new Error(`Gate-owned review output normalization telemetry failed for '${reviewType}'.`);
+                    }
+                }
+            }
+        }
         if (!findingsValidation.detected || !findingsValidation.valid || !findingsValidation.report) {
+            if (
+                pendingCorrectionArtifact
+                && pendingCorrectionProducerAttestation
+                && pendingCorrectionLaunchInputSha256
+                && pendingCorrectionOriginalReviewerAttemptId
+                && correctionComparisonOutputSha256 !== pendingCorrectionArtifact.binding.original_output_sha256
+            ) {
+                const verification = verifyCorrectedReviewOutput({
+                    artifact: pendingCorrectionArtifact,
+                    correctedOutput: reviewContent,
+                    reviewContextSha256,
+                    reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || '',
+                    originalReviewerIdentity: reviewerIdentity,
+                    originalReviewerAttemptId: pendingCorrectionOriginalReviewerAttemptId,
+                    correctionArtifactSha256: pendingCorrectionLaunchInputSha256,
+                    producerAttestation: pendingCorrectionProducerAttestation,
+                    producerInvocationEvidence: pendingCorrectionProducerInvocationEvidence
+                });
+                if (pendingCorrectionArtifact.state === 'FULL_REVIEW_REQUIRED' || verification.requires_full_review) {
+                    const reasons = pendingCorrectionArtifact.state === 'FULL_REVIEW_REQUIRED'
+                        ? [pendingCorrectionArtifact.recovery.reason]
+                        : verification.violations;
+                    const updated = updateReviewOutputCorrectionState({
+                        artifactPath: correctionArtifactPath,
+                        artifact: pendingCorrectionArtifact,
+                        state: 'FULL_REVIEW_REQUIRED',
+                        reason: reasons.join(' ')
+                    });
+                    await emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+                        gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                        taskId,
+                        reviewType,
+                        {
+                            task_id: taskId,
+                            review_type: reviewType,
+                            reviewer_identity: reviewerIdentity,
+                            reviewer_attempt_id: pendingCorrectionOriginalReviewerAttemptId,
+                            correction_artifact_path: normalizePath(correctionArtifactPath),
+                            correction_artifact_sha256: updated.artifact_sha256,
+                            reasons
+                        }
+                    );
+                    throw new Error(
+                        `Corrected review output cannot reuse the '${reviewType}' reviewer attempt: ${reasons.join(' ')} ` +
+                        'Restart the review cycle and launch a fresh full reviewer.'
+                    );
+                }
+            }
             const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflightPayload, repoRoot);
             const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(reviewType, preflightPayload, repoRoot);
             const findingsValidationEvidence = buildReviewFindingsValidationEvidence({
@@ -2195,9 +2849,9 @@ async function handleRecordReviewResultUnlocked(
                 reviewerIdentity,
                 preflightPath,
                 reviewContextPath: contextPath,
+                rawReviewOutputContent: reviewOutput.reviewContent,
                 reviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
                 reviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
-                failureRecordedBy: 'record-review-result',
                 validationEvidence: findingsValidationEvidence,
                 persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence)
             });
@@ -2216,6 +2870,53 @@ async function handleRecordReviewResultUnlocked(
                 findingsDisposition = evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflightPayload);
                 verdictToken = findingsDisposition.blocking_count > 0 ? expectedFailVerdict : expectedPassVerdict;
             }
+        }
+    }
+    if (
+        pendingCorrectionArtifact
+        && pendingCorrectionProducerAttestation
+        && pendingCorrectionLaunchInputSha256
+        && pendingCorrectionOriginalReviewerAttemptId
+    ) {
+        const verification = verifyCorrectedReviewOutput({
+            artifact: pendingCorrectionArtifact,
+            correctedOutput: reviewContent,
+            reviewContextSha256,
+            reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || '',
+            originalReviewerIdentity: reviewerIdentity,
+            originalReviewerAttemptId: pendingCorrectionOriginalReviewerAttemptId,
+            correctionArtifactSha256: pendingCorrectionLaunchInputSha256,
+            producerAttestation: pendingCorrectionProducerAttestation,
+            producerInvocationEvidence: pendingCorrectionProducerInvocationEvidence
+        });
+        if (pendingCorrectionArtifact.state === 'FULL_REVIEW_REQUIRED' || verification.requires_full_review) {
+            const reasons = pendingCorrectionArtifact.state === 'FULL_REVIEW_REQUIRED'
+                ? [pendingCorrectionArtifact.recovery.reason]
+                : verification.violations;
+            const updated = updateReviewOutputCorrectionState({
+                artifactPath: correctionArtifactPath,
+                artifact: pendingCorrectionArtifact,
+                state: 'FULL_REVIEW_REQUIRED',
+                reason: reasons.join(' ')
+            });
+            await emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+                gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                taskId,
+                reviewType,
+                {
+                    task_id: taskId,
+                    review_type: reviewType,
+                    reviewer_identity: reviewerIdentity,
+                    reviewer_attempt_id: pendingCorrectionOriginalReviewerAttemptId,
+                    correction_artifact_path: normalizePath(correctionArtifactPath),
+                    correction_artifact_sha256: updated.artifact_sha256,
+                    reasons
+                }
+            );
+            throw new Error(
+                `Corrected review output cannot reuse the '${reviewType}' reviewer attempt: ${reasons.join(' ')} ` +
+                'Restart the review cycle and launch a fresh full reviewer.'
+            );
         }
     }
     if (!verdictToken) {
@@ -2343,6 +3044,50 @@ async function handleRecordReviewResultUnlocked(
         ? preApplyReviewerSessionId
         : reviewerIdentity;
     const contextSha256 = invocationReviewContextSha256 || fileSha256(contextPath) || '';
+    const correctionAcceptance = pendingCorrectionArtifact
+        && pendingCorrectionProducerAttestation
+        && pendingCorrectionLaunchInputSha256
+        ? (() => {
+            const acceptedCorrection = buildReviewOutputCorrectionStateTransition({
+                artifactPath: correctionArtifactPath,
+                artifact: pendingCorrectionArtifact,
+                state: 'CORRECTION_ACCEPTED',
+                reason: 'Attested corrected output preserved the bound reviewer attempt and findings semantic fingerprint.'
+            });
+            return {
+                artifactPath: correctionArtifactPath,
+                artifact: acceptedCorrection,
+                invocationEventDetails: {
+                    task_id: taskId,
+                    review_type: reviewType,
+                    original_reviewer_identity: reviewerIdentity,
+                    correction_producer_identity: pendingCorrectionProducerAttestation.producer_identity,
+                    provider_invocation_id: pendingCorrectionProducerAttestation.provider_invocation_id,
+                    attestation_source: pendingCorrectionProducerAttestation.attestation_source,
+                    launch_input_mode: 'review_output_correction_artifact_path',
+                    launch_input_sha256: pendingCorrectionLaunchInputSha256,
+                    fork_context: pendingCorrectionProducerAttestation.fork_context,
+                    corrected_output_sha256: rawReviewOutputSha256,
+                    selected_transport: pendingCorrectionArtifact.recovery.selected_transport
+                },
+                acceptedEventDetails: {
+                    task_id: taskId,
+                    review_type: reviewType,
+                    reviewer_identity: reviewerIdentity,
+                    reviewer_attempt_id: acceptedCorrection.binding.reviewer_attempt_id,
+                    correction_producer_identity: pendingCorrectionProducerAttestation.producer_identity,
+                    provider_invocation_id: pendingCorrectionProducerAttestation.provider_invocation_id,
+                    attestation_source: pendingCorrectionProducerAttestation.attestation_source,
+                    correction_artifact_path: normalizePath(correctionArtifactPath),
+                    correction_artifact_sha256: acceptedCorrection.artifact_sha256,
+                    original_output_sha256: acceptedCorrection.binding.original_output_sha256,
+                    corrected_output_sha256: rawReviewOutputSha256,
+                    findings_semantic_fingerprint: acceptedCorrection.binding.findings_semantic_fingerprint,
+                    selected_transport: acceptedCorrection.recovery.selected_transport
+                }
+            } satisfies ReviewOutputCorrectionAcceptanceTransaction;
+        })()
+        : null;
 
     const receiptPath = await recordReviewReceiptFromArtifacts({
         repoRoot,
@@ -2365,7 +3110,8 @@ async function handleRecordReviewResultUnlocked(
         reviewerFallbackReason,
         requireStrictBindingMetadata: !!options.reviewContextPath,
         invocationReviewContextSha256,
-        routingReviewerIdentity: routingReviewerIdentityForLookup
+        routingReviewerIdentity: routingReviewerIdentityForLookup,
+        correctionAcceptance
     }, dependencies);
     cleanupReviewTempSourceArtifact(repoRoot, taskId, reviewOutput.reviewOutputSourcePath);
 
@@ -2516,9 +3262,418 @@ async function handleRecordReviewResultWithDependencies(
     });
 }
 
+async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: string[]): Promise<void> {
+    const { options: rawOptions } = parseOptions(
+        gateArgv,
+        recordReviewOutputCorrectionInvocationOptionDefinitions(),
+        { allowPositionals: false }
+    );
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-output-correction-invocation', 'review_phase');
+    const canonicalReviewArtifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-${reviewType}.md`)
+    );
+    const canonicalCorrectionArtifactPath = getReviewOutputCorrectionArtifactPath(canonicalReviewArtifactPath);
+    const suppliedCorrectionArtifactPath = path.resolve(
+        repoRoot,
+        String(options.correctionArtifactPath || '').trim()
+    );
+    if (
+        normalizePath(suppliedCorrectionArtifactPath).toLowerCase()
+        !== normalizePath(canonicalCorrectionArtifactPath).toLowerCase()
+    ) {
+        throw new Error(
+            `Correction invocation requires canonical artifact '${normalizePath(canonicalCorrectionArtifactPath)}'.`
+        );
+    }
+    const correctionRead = readReviewOutputCorrectionArtifact(canonicalCorrectionArtifactPath);
+    if (correctionRead.violations.length > 0 || !correctionRead.artifact) {
+        throw new Error(
+            `Correction invocation requires intact correction evidence: ${correctionRead.violations.join(' ')}`
+        );
+    }
+    const correctionArtifact = correctionRead.artifact;
+    if (
+        correctionArtifact.task_id !== taskId
+        || correctionArtifact.review_type !== reviewType
+        || correctionArtifact.state !== 'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        || correctionArtifact.recovery.selected_transport !== 'correction_only_invocation'
+    ) {
+        throw new Error('Correction invocation is available only for the bound pending correction-only transport.');
+    }
+    const correctionArtifactSha256 = fileSha256(canonicalCorrectionArtifactPath) || '';
+    const correctionLaunchArtifactPath = getReviewOutputCorrectionLaunchArtifactPath(
+        canonicalReviewArtifactPath
+    );
+    if (!fs.existsSync(correctionLaunchArtifactPath) || !fs.statSync(correctionLaunchArtifactPath).isFile()) {
+        throw new Error('Correction-only invocation requires a gate-owned prepared launch artifact.');
+    }
+    const correctionLaunchArtifactText = fs.readFileSync(correctionLaunchArtifactPath, 'utf8');
+    let correctionLaunchArtifact: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(correctionLaunchArtifactText) as unknown;
+        if (!isPlainRecord(parsed)) {
+            throw new Error('not an object');
+        }
+        correctionLaunchArtifact = parsed;
+    } catch {
+        throw new Error('Correction-only invocation launch artifact is not valid JSON.');
+    }
+    if (
+        correctionLaunchArtifact.artifact_type !== REVIEW_OUTPUT_CORRECTION_LAUNCH_ARTIFACT_TYPE
+        || !['prepared', 'delegation_started'].includes(String(correctionLaunchArtifact.state || ''))
+        || correctionLaunchArtifact.task_id !== taskId
+        || correctionLaunchArtifact.review_type !== reviewType
+        || String(correctionLaunchArtifact.correction_artifact_sha256 || '').toLowerCase()
+            !== correctionArtifactSha256
+        || String(correctionLaunchArtifact.launch_input_sha256 || '').toLowerCase()
+            !== correctionArtifactSha256
+        || String(correctionLaunchArtifact.review_context_sha256 || '').toLowerCase()
+            !== correctionArtifact.binding.review_context_sha256
+        || String(correctionLaunchArtifact.review_tree_state_sha256 || '').toLowerCase()
+            !== correctionArtifact.binding.review_tree_state_sha256
+    ) {
+        throw new Error('Correction-only invocation launch artifact is stale or does not match the correction package.');
+    }
+    const launchInputSha256 = String(options.launchInputSha256 || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/u.test(launchInputSha256) || launchInputSha256 !== correctionArtifactSha256) {
+        throw new Error('Correction invocation launch input does not match the persisted correction package.');
+    }
+    const correctionProducerIdentity = String(options.correctionProducerIdentity || '').trim();
+    if (
+        !isResolvedReviewerIdentity(correctionProducerIdentity)
+        || correctionProducerIdentity === correctionArtifact.binding.reviewer_identity
+    ) {
+        throw new Error('Correction-only invocation requires a fresh resolved provider reviewer identity.');
+    }
+    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    if (
+        !providerInvocationId
+        || /^(?:unknown|n\/a|na|null|none|manual|mock|test|placeholder|<.*>)$/iu.test(providerInvocationId)
+    ) {
+        throw new Error('Correction-only invocation requires the actual provider invocation id.');
+    }
+    const attestationSource = String(options.attestationSource || '').trim().toLowerCase();
+    if (
+        !attestationSource
+        || /^(?:garda_prepare_reviewer_launch|orchestrator_mock|manual|mock|test|placeholder)$/iu.test(attestationSource)
+        || !/(?:spawn|subagent|task|tool|launch|run|invocation)/iu.test(attestationSource)
+    ) {
+        throw new Error('Correction-only invocation requires provider/controller-owned attestation source.');
+    }
+    if (options.forkContext !== false) {
+        throw new Error('Correction-only invocation requires --fork-context false.');
+    }
+    const timelinePath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'task-events', `${taskId}.jsonl`)
+    );
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const originalInvocation = timelineEvents.find((event) => (
+        event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+        && String(event.integrity?.event_sha256 || '').trim().toLowerCase()
+            === correctionArtifact.binding.reviewer_invocation_event_sha256
+    ));
+    if (!originalInvocation) {
+        throw new Error('Correction-only invocation cannot authenticate the original reviewer invocation event.');
+    }
+    const originalDetails = originalInvocation.details || {};
+    const routingEventSha256 = getArtifactStringField(
+        originalDetails,
+        'routing_event_sha256',
+        'routingEventSha256'
+    );
+    const launchArtifactState = String(correctionLaunchArtifact.state || '');
+    const restorePreparedCorrectionLaunch = (): void => {
+        if (launchArtifactState !== 'delegation_started') {
+            writeFileAtomically(
+                correctionLaunchArtifactPath,
+                correctionLaunchArtifactText,
+                { encoding: 'utf8' }
+            );
+        }
+    };
+    const emitWithPreparedLaunchRollback = async <T>(operation: () => Promise<T>): Promise<T> => {
+        try {
+            return await operation();
+        } catch (error) {
+            restorePreparedCorrectionLaunch();
+            throw error;
+        }
+    };
+    const delegationStartedAtUtc = launchArtifactState === 'delegation_started'
+        ? String(correctionLaunchArtifact.delegation_started_at_utc || '')
+        : new Date().toISOString();
+    if (launchArtifactState === 'delegation_started' && (
+        correctionLaunchArtifact.correction_producer_identity !== correctionProducerIdentity
+        || correctionLaunchArtifact.provider_invocation_id !== providerInvocationId
+        || correctionLaunchArtifact.attestation_source !== attestationSource
+        || correctionLaunchArtifact.fork_context !== false
+    )) {
+        throw new Error('Correction-only invocation cannot redefine the persisted provider delegation.');
+    }
+    const startedCorrectionLaunchArtifact = launchArtifactState === 'delegation_started'
+        ? correctionLaunchArtifact
+        : {
+            ...correctionLaunchArtifact,
+            state: 'delegation_started',
+            correction_producer_identity: correctionProducerIdentity,
+            provider_invocation_id: providerInvocationId,
+            attestation_source: attestationSource,
+            fork_context: false,
+            delegation_started_at_utc: delegationStartedAtUtc
+        };
+    if (launchArtifactState !== 'delegation_started') {
+        writeFileAtomically(
+            correctionLaunchArtifactPath,
+            `${JSON.stringify(startedCorrectionLaunchArtifact, null, 2)}\n`,
+            { encoding: 'utf8' }
+        );
+    }
+    const correctionLaunchArtifactSha256 = fileSha256(correctionLaunchArtifactPath) || '';
+    if (!/^[0-9a-f]{64}$/u.test(correctionLaunchArtifactSha256)) {
+        restorePreparedCorrectionLaunch();
+        throw new Error('Correction-only invocation launch artifact hash is unavailable.');
+    }
+    const existingDelegationStartedEvent = [...timelineEvents].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'REVIEWER_DELEGATION_STARTED'
+            && getArtifactStringField(details, 'invocation_role') === 'review_output_correction'
+            && getArtifactStringField(details, 'reviewer_launch_artifact_sha256')
+                === correctionLaunchArtifactSha256
+            && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity')
+                === correctionProducerIdentity
+            && getArtifactStringField(details, 'provider_invocation_id', 'providerInvocationId')
+                === providerInvocationId;
+    });
+    let delegationStartedEventSha256 = String(
+        existingDelegationStartedEvent?.integrity?.event_sha256 || ''
+    ).trim().toLowerCase();
+    if (!existingDelegationStartedEvent) {
+        const emittedDelegationStartedEvent = await emitWithPreparedLaunchRollback(() => (
+            emitReviewerDelegationStartedEventAsync(
+            gateHelpers.joinOrchestratorPath(repoRoot, ''),
+            taskId,
+            reviewType,
+            'delegated_subagent',
+            correctionProducerIdentity,
+            correctionArtifact.binding.review_context_sha256,
+            routingEventSha256,
+            {
+                launchDetails: {
+                    invocation_role: 'review_output_correction',
+                    reviewer_launch_attempt_id: providerInvocationId,
+                    reviewer_launch_artifact_path: normalizePath(correctionLaunchArtifactPath),
+                    reviewer_launch_artifact_sha256: correctionLaunchArtifactSha256,
+                    provider_invocation_id: providerInvocationId,
+                    reviewer_launch_attestation_source: attestationSource,
+                    attestation_source: attestationSource,
+                    launch_input_mode: 'review_output_correction_artifact',
+                    launch_input_sha256: launchInputSha256,
+                    correction_artifact_path: normalizePath(canonicalCorrectionArtifactPath),
+                    correction_artifact_sha256: correctionArtifactSha256,
+                    original_reviewer_invocation_event_sha256:
+                        correctionArtifact.binding.reviewer_invocation_event_sha256,
+                    review_tree_state_sha256: correctionArtifact.binding.review_tree_state_sha256,
+                    delegation_started_at_utc: delegationStartedAtUtc,
+                    launched_at_utc: delegationStartedAtUtc,
+                    fork_context: false,
+                    fresh_context: true,
+                    isolated_context: true
+                }
+            }
+            )
+        ));
+        if (
+            !emittedDelegationStartedEvent
+            || taskEventAppendHasBlockingFailure(emittedDelegationStartedEvent, false)
+        ) {
+            restorePreparedCorrectionLaunch();
+            throw new Error(`Correction-only reviewer delegation start failed for '${reviewType}'.`);
+        }
+        delegationStartedEventSha256 = String(
+            emittedDelegationStartedEvent.integrity?.event_sha256 || ''
+        ).trim().toLowerCase();
+    }
+    if (!/^[0-9a-f]{64}$/u.test(delegationStartedEventSha256)) {
+        restorePreparedCorrectionLaunch();
+        throw new Error('Correction-only reviewer delegation-start event hash is unavailable.');
+    }
+    if (launchArtifactState !== 'delegation_started') {
+        console.log(`REVIEW_OUTPUT_CORRECTION_DELEGATION_STARTED: ${reviewType}`);
+        console.log(`CorrectionProducerIdentity: ${correctionProducerIdentity}`);
+        console.log(`ProviderInvocationId: ${providerInvocationId}`);
+        console.log(`DelegationStartedEventSha256: ${delegationStartedEventSha256}`);
+        console.log(
+            'NextStep: wait for the delegated correction reviewer to return, then rerun ' +
+            `node bin/garda.js next-step "${taskId}" --repo-root "."`
+        );
+        return;
+    }
+    const existingInvocation = [...timelineEvents].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+            && getArtifactStringField(details, 'invocation_role') === 'review_output_correction'
+            && getArtifactStringField(details, 'correction_artifact_sha256') === correctionArtifactSha256
+            && getArtifactStringField(details, 'correction_delegation_started_event_sha256')
+                === delegationStartedEventSha256
+            && getArtifactStringField(details, 'correction_launch_artifact_sha256')
+                === correctionLaunchArtifactSha256
+            && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity') === correctionProducerIdentity
+            && getArtifactStringField(details, 'provider_invocation_id', 'providerInvocationId') === providerInvocationId;
+    });
+    let invocationEventSha256 = String(existingInvocation?.integrity?.event_sha256 || '').trim().toLowerCase();
+    if (!existingInvocation) {
+        const invocationAttestedAtUtc = new Date().toISOString();
+        const emittedInvocationEvent = await emitWithPreparedLaunchRollback(() => (
+            emitReviewerInvocationAttestedEventAsync(
+            gateHelpers.joinOrchestratorPath(repoRoot, ''),
+            taskId,
+            reviewType,
+            'delegated_subagent',
+            correctionProducerIdentity,
+            correctionArtifact.binding.review_context_sha256,
+            routingEventSha256,
+            {
+                launchDetails: {
+                    invocation_role: 'review_output_correction',
+                    reviewer_launch_attempt_id: providerInvocationId,
+                    provider_invocation_id: providerInvocationId,
+                    reviewer_launch_attestation_source: attestationSource,
+                    attestation_source: attestationSource,
+                    launch_input_mode: 'review_output_correction_artifact',
+                    launch_input_sha256: launchInputSha256,
+                    reviewer_launch_artifact_path: normalizePath(correctionLaunchArtifactPath),
+                    reviewer_launch_artifact_sha256: correctionLaunchArtifactSha256,
+                    correction_launch_artifact_sha256: correctionLaunchArtifactSha256,
+                    correction_delegation_started_event_sha256: delegationStartedEventSha256,
+                    correction_artifact_path: normalizePath(canonicalCorrectionArtifactPath),
+                    correction_artifact_sha256: correctionArtifactSha256,
+                    original_reviewer_invocation_event_sha256:
+                        correctionArtifact.binding.reviewer_invocation_event_sha256,
+                    review_tree_state_sha256: correctionArtifact.binding.review_tree_state_sha256,
+                    delegation_started_at_utc: invocationAttestedAtUtc,
+                    launched_at_utc: invocationAttestedAtUtc,
+                    invocation_attested_at_utc: invocationAttestedAtUtc,
+                    fork_context: false,
+                    fresh_context: true,
+                    isolated_context: true
+                }
+            }
+            )
+        ));
+        if (!emittedInvocationEvent || taskEventAppendHasBlockingFailure(emittedInvocationEvent, false)) {
+            restorePreparedCorrectionLaunch();
+            throw new Error(`Correction-only reviewer invocation attestation failed for '${reviewType}'.`);
+        }
+        invocationEventSha256 = String(
+            emittedInvocationEvent.integrity?.event_sha256 || ''
+        ).trim().toLowerCase();
+    }
+    if (!/^[0-9a-f]{64}$/u.test(invocationEventSha256)) {
+        restorePreparedCorrectionLaunch();
+        throw new Error('Correction-only reviewer invocation event hash is unavailable.');
+    }
+    const existingCorrectionInvocation = [...timelineEvents].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED'
+            && getArtifactStringField(details, 'task_id', 'taskId') === taskId
+            && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === reviewType
+            && getArtifactStringField(details, 'correction_artifact_sha256') === correctionArtifactSha256
+            && getArtifactStringField(details, 'correction_producer_identity') === correctionProducerIdentity
+            && getArtifactStringField(details, 'provider_invocation_id') === providerInvocationId;
+    });
+    if (!existingCorrectionInvocation) {
+        const correctionInvocationEvent = await emitWithPreparedLaunchRollback(() => (
+            emitReviewOutputCorrectionInvocationAttestedEventAsync(
+            gateHelpers.joinOrchestratorPath(repoRoot, ''),
+            taskId,
+            reviewType,
+            {
+                task_id: taskId,
+                review_type: reviewType,
+                reviewer_identity: correctionProducerIdentity,
+                original_reviewer_identity: correctionArtifact.binding.reviewer_identity,
+                correction_producer_identity: correctionProducerIdentity,
+                reviewer_attempt_id: correctionArtifact.binding.reviewer_attempt_id,
+                provider_invocation_id: providerInvocationId,
+                provider_invocation_event_sha256: invocationEventSha256,
+                attestation_source: attestationSource,
+                launch_input_mode: 'review_output_correction_artifact_path',
+                launch_input_sha256: launchInputSha256,
+                correction_artifact_path: normalizePath(canonicalCorrectionArtifactPath),
+                correction_artifact_sha256: correctionArtifactSha256,
+                correction_attempt: correctionArtifact.recovery.correction_attempt,
+                validation_artifact_sha256: correctionArtifact.binding.validation_artifact_sha256,
+                selected_transport: correctionArtifact.recovery.selected_transport,
+                state: 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
+                fork_context: false
+            }
+            )
+        ));
+        if (
+            !correctionInvocationEvent
+            || taskEventAppendHasBlockingFailure(correctionInvocationEvent, false)
+        ) {
+            restorePreparedCorrectionLaunch();
+            throw new Error(`Correction-only invocation telemetry failed for '${reviewType}'.`);
+        }
+    }
+    console.log(`REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED: ${reviewType}`);
+    console.log(`CorrectionProducerIdentity: ${correctionProducerIdentity}`);
+    console.log(`ProviderInvocationId: ${providerInvocationId}`);
+    console.log(`CorrectionInvocationEventSha256: ${invocationEventSha256}`);
+    console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
+}
+
+async function handleRecordReviewOutputCorrectionInvocation(gateArgv: string[]): Promise<void> {
+    const { options: rawOptions } = parseOptions(
+        gateArgv,
+        recordReviewOutputCorrectionInvocationOptionDefinitions(),
+        { allowPositionals: false }
+    );
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const canonicalReviewArtifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-${reviewType}.md`)
+    );
+    const correctionLaunchArtifactPath = getReviewOutputCorrectionLaunchArtifactPath(
+        canonicalReviewArtifactPath
+    );
+    const invocationLockPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join(
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            reviewType,
+            '.record-review-output-correction-invocation.lock'
+        )
+    );
+    await withReviewerLaunchLaneTransaction(correctionLaunchArtifactPath, async () => {
+        const { handle } = await acquireFilesystemLockAsync(invocationLockPath, {
+            ownerLabel: `record-review-output-correction-invocation:${taskId}:${reviewType}`
+        });
+        try {
+            await handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv);
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+    });
+}
+
 export function createReviewResultHandlers(dependencies: ReviewResultHandlersDependencies): ReviewResultHandlers {
     return {
         handleRecordReviewResult: (gateArgv) => handleRecordReviewResultWithDependencies(gateArgv, dependencies),
-        handleRecordReviewReceipt: (gateArgv) => handleRecordReviewReceiptWithDependencies(gateArgv, dependencies)
+        handleRecordReviewReceipt: (gateArgv) => handleRecordReviewReceiptWithDependencies(gateArgv, dependencies),
+        handleRecordReviewOutputCorrectionInvocation
     };
 }

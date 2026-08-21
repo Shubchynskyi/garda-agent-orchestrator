@@ -66,6 +66,10 @@ import {
 import { resolveReviewCoverageChangedFiles } from '../../../../src/gates/review-context/review-coverage-scope';
 import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
 import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import {
+    buildReviewOutputCorrectionArtifact,
+    persistReviewOutputCorrection
+} from '../../../../src/gates/review/review-output-correction';
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
@@ -1015,7 +1019,8 @@ function writeJsonFocusedValidationReviewEvidence(
 function writeRejectedFindingsValidationReviewEvidence(
     repoRoot: string,
     taskId: string,
-    reviewType: string
+    reviewType: string,
+    options: { preserveStaleReceipt?: boolean } = {}
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
@@ -1087,7 +1092,54 @@ function writeRejectedFindingsValidationReviewEvidence(
         coverageContract
     });
     writeJson(validationArtifactPath, validationArtifact);
-    fs.rmSync(receiptPath, { force: true });
+    const launchArtifactPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'tmp',
+        'reviews',
+        taskId,
+        reviewType,
+        'reviewer-launch.json'
+    );
+    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const reviewerInvocationEventSha256 = String(
+        (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 || ''
+    ).trim().toLowerCase();
+    assert.match(reviewerInvocationEventSha256, /^[0-9a-f]{64}$/u);
+    const correctionArtifact = buildReviewOutputCorrectionArtifact({
+        taskId,
+        reviewType,
+        rejectedOutputPath: artifactPath,
+        rejectedOutputSha256: fileSha256(artifactPath),
+        reviewContextPath,
+        reviewContextSha256,
+        reviewTreeStateSha256,
+        reviewerIdentity: String(launchArtifact.reviewer_identity || 'agent:code-reviewer'),
+        reviewerAttemptId: String(
+            launchArtifact.reviewer_launch_attempt_id
+            || launchArtifact.provider_invocation_id
+            || 'fixture-correction-attempt'
+        ),
+        reviewerInvocationEventSha256,
+        validationArtifactPath,
+        validationArtifactSha256: fileSha256(validationArtifactPath),
+        violations: validation.violations,
+        capabilities: {
+            live_reviewer_continuation: true,
+            correction_only_invocation: true
+        }
+    });
+    persistReviewOutputCorrection({
+        repoRoot,
+        reviewArtifactPath: artifactPath,
+        rawOutput: artifactText,
+        artifact: correctionArtifact
+    });
+    if (!options.preserveStaleReceipt) {
+        fs.rmSync(receiptPath, { force: true });
+    }
 }
 
 function writeAcceptedFindingsDispositionReviewEvidence(
@@ -1472,14 +1524,64 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
-        assert.match(result.title, /Correct rejected 'code' review findings report/);
+        assert.match(result.title, /Execute the bound 'code' correction handoff/);
         assert.match(result.reason, /System validation rejected/);
         assert.match(result.reason, /not an implementation defect/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
         assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.ok(result.commands[0].command.includes('--correction-producer-identity "agent:code-reviewer"'));
+        assert.ok(result.commands[0].command.includes('--correction-provider-invocation-id'));
+        assert.match(result.commands[0].command, /--correction-launch-input-sha256 "[0-9a-f]{64}"/u);
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.ok(!result.commands[0].command.includes('compile-gate'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('routes current rejected validation to correction when an older receipt still exists', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code', {
+            preserveStaleReceipt: true
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.match(result.title, /Execute the bound 'code' correction handoff/);
+        assert.ok(result.commands[0].command.includes('--correction-producer-identity "agent:code-reviewer"'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
+    });
+
+    it('preserves passed upstream reviews while correcting a rejected downstream report', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code', {
+            followUpFindingCount: 0
+        });
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'security', {
+            followUpFindingCount: 0
+        });
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'refactor');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.review.next_review_type, 'refactor');
+        assert.match(result.title, /Execute the bound 'refactor' correction handoff/);
+        assert.ok(result.commands[0].command.includes('--review-type "refactor"'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
+        assert.equal(result.commands[0].command.includes('build-review-context'), false);
     });
 
     it('routes terminalized findings validation failure back to correction when the completed attempt is authenticated', () => {
@@ -1579,9 +1681,11 @@ describe('gates/next-step', { concurrency: 2 }, () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-review-result');
-        assert.match(result.title, /Correct rejected 'code' review findings report/);
+        assert.match(result.title, /Execute the bound 'code' correction handoff/);
         assert.match(result.reason, /not an implementation defect/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
+        assert.ok(result.commands[0].command.includes('--correction-attestation-source'));
+        assert.match(result.commands[0].command, /--correction-launch-input-sha256 "[0-9a-f]{64}"/u);
         assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.match(failureIntegrity.event_sha256, /^[0-9a-f]{64}$/);
@@ -1596,7 +1700,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
 
         fs.writeFileSync(validationArtifactPath, validationArtifactContent);
         const restoredValidationResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.match(restoredValidationResult.title, /Correct rejected 'code' review findings report/);
+        assert.match(restoredValidationResult.title, /Execute the bound 'code' correction handoff/);
 
         const timelineLines = fs.readFileSync(timelinePath, 'utf8').trim().split(/\r?\n/);
         const lastEvent = JSON.parse(timelineLines[timelineLines.length - 1]) as Record<string, unknown>;

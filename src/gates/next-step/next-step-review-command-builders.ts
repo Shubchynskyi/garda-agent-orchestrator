@@ -275,6 +275,48 @@ export function buildRecordReviewResultCommand(
         : `'<paste exact delegated reviewer output here>' | ${command}`;
 }
 
+export function buildRecordReviewOutputCorrectionInvocationCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    reviewType: string,
+    correctionArtifactPath: string,
+    launchInputSha256: string,
+    taskModePath: string | null,
+    persistedLaunch?: {
+        producerIdentity?: string | null;
+        providerInvocationId?: string | null;
+        attestationSource?: string | null;
+    }
+): string {
+    const producerIdentity = String(persistedLaunch?.producerIdentity || '').trim()
+        || '<agent:resolved-provider-correction-reviewer-id>';
+    const providerInvocationId = String(persistedLaunch?.providerInvocationId || '').trim()
+        || '<provider-owned correction invocation id>';
+    const attestationSource = String(persistedLaunch?.attestationSource || '').trim()
+        || '<provider-owned correction attestation source>';
+    return buildReviewPhaseCommand(
+        repoRoot,
+        cliPrefix,
+        taskId,
+        'record-review-output-correction-invocation',
+        [
+            `--review-type ${quoteCommandValue(reviewType)}`,
+            `--correction-artifact-path ${quoteCommandValue(
+                toRepoDisplayPath(repoRoot, correctionArtifactPath)
+            )}`,
+            `--correction-producer-identity ${quoteCommandValue(
+                producerIdentity
+            )}`,
+            `--provider-invocation-id ${quoteCommandValue(providerInvocationId)}`,
+            `--attestation-source ${quoteCommandValue(attestationSource)}`,
+            `--launch-input-sha256 ${quoteCommandValue(launchInputSha256)}`,
+            '--fork-context false'
+        ],
+        taskModePath
+    );
+}
+
 export function buildRestartReviewCycleCommand(
     repoRoot: string,
     cliPrefix: string,

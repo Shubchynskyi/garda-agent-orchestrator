@@ -345,6 +345,7 @@ export { formatNextStepText } from './next-step-command-formatters';
 import {
     buildCompleteReviewerLaunchCommand,
     buildPrepareReviewerLaunchCommand,
+    buildRecordReviewOutputCorrectionInvocationCommand,
     buildRecordReviewerDelegationStartedCommand,
     buildRecordReviewResultCommand,
     buildRecordReviewerInvocationCommand,
@@ -4255,6 +4256,27 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             preflightCommandPath,
                             taskModePath,
                             requiredFocusedTestPath
+                        )
+                    ),
+                    recordCorrectionInvocation: buildCommand(
+                        'After launching the correction-only reviewer, attest its provider invocation',
+                        buildRecordReviewOutputCorrectionInvocationCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            state.reviewOutputCorrectionArtifactPath || state.artifactPath,
+                            state.reviewOutputCorrectionArtifactPath
+                                ? fileSha256(state.reviewOutputCorrectionArtifactPath) || '<persisted correction input sha256>'
+                                : '<persisted correction input sha256>',
+                            taskModePath,
+                            state.reviewOutputCorrectionLaunchState === 'delegation_started'
+                                ? {
+                                    producerIdentity: state.reviewOutputCorrectionProducerIdentity,
+                                    providerInvocationId: state.reviewOutputCorrectionProviderInvocationId,
+                                    attestationSource: state.reviewOutputCorrectionAttestationSource
+                                }
+                                : undefined
                         )
                     ),
                     recordResult: buildCommand(

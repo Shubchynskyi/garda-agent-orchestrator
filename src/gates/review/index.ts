@@ -13,3 +13,4 @@ export * from './review-tree-state';
 export * from './review-trust-policy';
 export * from './review-trust-summary';
 export * from './reviewer-routing';
+export * from './review-output-correction';

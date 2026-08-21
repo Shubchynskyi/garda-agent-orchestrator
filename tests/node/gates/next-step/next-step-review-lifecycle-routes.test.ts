@@ -231,6 +231,232 @@ test('failed current review evidence blocks downstream launch until implementati
     assert.match(resolved?.reason || '', /Dependent reviews currently blocked/);
 });
 
+test('validation rejection exposes the executable provider correction handoff before record-result', () => {
+    const command = { label: 'Record corrected result', command: 'record-review-result' };
+    const resolved = resolveFailedReviewRemediationRoute({
+        taskId: 'T-review',
+        reviewType: 'code',
+        verdictToken: 'CODE_REVIEW_FAILED',
+        failureKind: 'review-validation-rejected',
+        failureReason:
+            'ReviewerCorrectionHandoff: provider_action=continue_delegated_reviewer; ' +
+            'ReviewerCorrectionInputArtifactPath=runtime/reviews/T-review-code-output-correction.json; ' +
+            `ReviewerCorrectionInputArtifactSha256=${'a'.repeat(64)}; ` +
+            `ReviewerInvocationEventSha256=${'b'.repeat(64)}; ` +
+            'target_reviewer_identity=agent:/root/code-review; fork_context=preserve_current_conversation.',
+        currentReviewRecordedEvidenceCurrent: false,
+        focusedIntermediateEvidence: { available: false, reason: null },
+        currentReviewContextPrepared: true,
+        scopedDiffReadiness: { ready: true, reason: '' },
+        reviewerReadinessChain: 'Reviewer chain.',
+        reviewContextChain: 'Context chain.',
+        downstreamReviewTypes: ['security'],
+        reviewerResultRecoveryIdentity: {
+            ready: true,
+            reviewerIdentity: 'agent:/root/code-review',
+            identitySource: 'explicit_resolved_attempt'
+        },
+        launchArtifactState: 'launched',
+        commands: {
+            restartReviewCycle: command,
+            rerunNavigator: command,
+            compileGate: command,
+            buildScopedDiff: command,
+            buildReviewContext: command,
+            recordResult: command
+        }
+    });
+
+    assert.equal(resolved?.nextGate, 'record-review-result');
+    assert.match(resolved?.title || '', /correction handoff/iu);
+    assert.match(resolved?.reason || '', /provider_action=continue_delegated_reviewer/iu);
+    assert.match(resolved?.reason || '', /through provider tools before running the command below/iu);
+    assert.equal(
+        resolved?.commands[0]?.label,
+        'After the bound reviewer correction returns, record its attested corrected review result'
+    );
+    assert.match(resolved?.commands[0]?.command || '', /--correction-producer-identity "agent:\/root\/code-review"/u);
+    assert.match(resolved?.commands[0]?.command || '', /--correction-provider-invocation-id/u);
+    assert.match(
+        resolved?.commands[0]?.command || '',
+        new RegExp(`--correction-provider-invocation-event-sha256 "${'b'.repeat(64)}"`, 'u')
+    );
+    assert.match(resolved?.commands[0]?.command || '', new RegExp(`--correction-launch-input-sha256 "${'a'.repeat(64)}"`, 'u'));
+});
+
+test('validation rejection shell-quotes an untrusted correction reviewer identity', () => {
+    const command = { label: 'Record corrected result', command: 'record-review-result' };
+    const maliciousIdentity = 'agent:/root/reviewer" $(Write-Output injected)';
+    const resolved = resolveFailedReviewRemediationRoute({
+        taskId: 'T-review',
+        reviewType: 'code',
+        verdictToken: 'CODE_REVIEW_FAILED',
+        failureKind: 'review-validation-rejected',
+        failureReason:
+            'ReviewerCorrectionHandoff: provider_action=continue_delegated_reviewer; ' +
+            `ReviewerCorrectionInputArtifactSha256=${'a'.repeat(64)}; ` +
+            `ReviewerInvocationEventSha256=${'b'.repeat(64)}; ` +
+            `target_reviewer_identity=${maliciousIdentity}; fork_context=preserve_current_conversation.`,
+        currentReviewRecordedEvidenceCurrent: false,
+        focusedIntermediateEvidence: { available: false, reason: null },
+        currentReviewContextPrepared: true,
+        scopedDiffReadiness: { ready: true, reason: '' },
+        reviewerReadinessChain: 'Reviewer chain.',
+        reviewContextChain: 'Context chain.',
+        downstreamReviewTypes: [],
+        reviewerResultRecoveryIdentity: {
+            ready: true,
+            reviewerIdentity: maliciousIdentity,
+            identitySource: 'explicit_resolved_attempt'
+        },
+        launchArtifactState: 'launched',
+        commands: {
+            restartReviewCycle: command,
+            rerunNavigator: command,
+            compileGate: command,
+            buildScopedDiff: command,
+            buildReviewContext: command,
+            recordResult: command
+        }
+    });
+
+    const correctionCommand = resolved?.commands[0]?.command || '';
+    assert.match(
+        correctionCommand,
+        /--correction-producer-identity 'agent:\/root\/reviewer" \$\(Write-Output injected\)'/u
+    );
+    assert.doesNotMatch(correctionCommand, /--correction-producer-identity "agent:\/root\/reviewer"/u);
+});
+
+test('correction-only recovery attests the provider invocation before recording its result', () => {
+    const command = { label: 'Record corrected result', command: 'record-review-result' };
+    const attestationCommand = {
+        label: 'Attest correction invocation',
+        command: 'record-review-output-correction-invocation'
+    };
+    const resolved = resolveFailedReviewRemediationRoute({
+        taskId: 'T-review',
+        reviewType: 'code',
+        verdictToken: 'CODE_REVIEW_FAILED',
+        failureKind: 'review-validation-rejected',
+        failureReason:
+            'ReviewerCorrectionHandoff: provider_action=launch_correction_only_reviewer; ' +
+            `ReviewerCorrectionInputArtifactSha256=${'a'.repeat(64)}; ` +
+            `ReviewerInvocationEventSha256=${'b'.repeat(64)}; ` +
+            'CorrectionProducerInvocationEventSha256=unavailable; ' +
+            'target_reviewer_identity=new_correction_only_reviewer; fork_context=false.',
+        currentReviewRecordedEvidenceCurrent: false,
+        focusedIntermediateEvidence: { available: false, reason: null },
+        currentReviewContextPrepared: true,
+        scopedDiffReadiness: { ready: true, reason: '' },
+        reviewerReadinessChain: 'Reviewer chain.',
+        reviewContextChain: 'Context chain.',
+        downstreamReviewTypes: [],
+        reviewerResultRecoveryIdentity: {
+            ready: true,
+            reviewerIdentity: 'agent:/root/original-reviewer',
+            identitySource: 'explicit_resolved_attempt'
+        },
+        launchArtifactState: 'launched',
+        commands: {
+            restartReviewCycle: command,
+            rerunNavigator: command,
+            compileGate: command,
+            buildScopedDiff: command,
+            buildReviewContext: command,
+            recordCorrectionInvocation: attestationCommand,
+            recordResult: command
+        }
+    });
+
+    assert.equal(resolved?.nextGate, 'record-review-output-correction-invocation');
+    assert.equal(resolved?.commands[0]?.command, attestationCommand.command);
+});
+
+test('correction-only recovery records the result with its attested producer event', () => {
+    const command = { label: 'Record corrected result', command: 'record-review-result' };
+    const producerEventSha256 = 'c'.repeat(64);
+    const resolved = resolveFailedReviewRemediationRoute({
+        taskId: 'T-review',
+        reviewType: 'code',
+        verdictToken: 'CODE_REVIEW_FAILED',
+        failureKind: 'review-validation-rejected',
+        failureReason:
+            'ReviewerCorrectionHandoff: provider_action=launch_correction_only_reviewer; ' +
+            `ReviewerCorrectionInputArtifactSha256=${'a'.repeat(64)}; ` +
+            `ReviewerInvocationEventSha256=${'b'.repeat(64)}; ` +
+            `CorrectionProducerInvocationEventSha256=${producerEventSha256}; ` +
+            'CorrectionProducerIdentity=agent:/root/correction-reviewer; ' +
+            'CorrectionProviderInvocationId=/root/correction-reviewer; ' +
+            'CorrectionAttestationSource=codex_collaboration_spawn_agent; ' +
+            'target_reviewer_identity=new_correction_only_reviewer; fork_context=false.',
+        currentReviewRecordedEvidenceCurrent: false,
+        focusedIntermediateEvidence: { available: false, reason: null },
+        currentReviewContextPrepared: true,
+        scopedDiffReadiness: { ready: true, reason: '' },
+        reviewerReadinessChain: 'Reviewer chain.',
+        reviewContextChain: 'Context chain.',
+        downstreamReviewTypes: [],
+        reviewerResultRecoveryIdentity: {
+            ready: true,
+            reviewerIdentity: 'agent:/root/original-reviewer',
+            identitySource: 'explicit_resolved_attempt'
+        },
+        launchArtifactState: 'launched',
+        commands: {
+            restartReviewCycle: command,
+            rerunNavigator: command,
+            compileGate: command,
+            buildScopedDiff: command,
+            buildReviewContext: command,
+            recordResult: command
+        }
+    });
+
+    const resultCommand = resolved?.commands[0]?.command || '';
+    assert.equal(resolved?.nextGate, 'record-review-result');
+    assert.match(resultCommand, /--correction-producer-identity "agent:\/root\/correction-reviewer"/u);
+    assert.match(resultCommand, /--correction-provider-invocation-id "\/root\/correction-reviewer"/u);
+    assert.match(
+        resultCommand,
+        new RegExp(`--correction-provider-invocation-event-sha256 "${producerEventSha256}"`, 'u')
+    );
+    assert.match(resultCommand, /--correction-attestation-source "codex_collaboration_spawn_agent"/u);
+});
+
+test('exhausted output correction restarts only the affected lane with a fresh full reviewer', () => {
+    const command = { label: 'Restart review cycle', command: 'restart-review-cycle' };
+    const resolved = resolveFailedReviewRemediationRoute({
+        taskId: 'T-review',
+        reviewType: 'security',
+        verdictToken: '',
+        failureKind: 'review-correction-full-review-required',
+        failureReason: 'correction provenance changed',
+        currentReviewRecordedEvidenceCurrent: false,
+        focusedIntermediateEvidence: { available: false, reason: null },
+        currentReviewContextPrepared: true,
+        scopedDiffReadiness: { ready: true, reason: '' },
+        reviewerReadinessChain: 'Reviewer chain.',
+        reviewContextChain: 'Context chain.',
+        downstreamReviewTypes: ['api', 'test'],
+        reviewerResultRecoveryIdentity: null,
+        launchArtifactState: 'launched',
+        commands: {
+            restartReviewCycle: command,
+            rerunNavigator: { label: 'Rerun navigator', command: 'next-step' },
+            compileGate: command,
+            buildScopedDiff: command,
+            buildReviewContext: command,
+            recordResult: command
+        }
+    });
+
+    assert.equal(resolved?.nextGate, 'restart-review-cycle');
+    assert.equal(resolved?.commands[0]?.command, 'restart-review-cycle');
+    assert.match(resolved?.reason || '', /fresh context and launch a full reviewer/u);
+    assert.doesNotMatch(resolved?.reason || '', /implementation defect.*fix/u);
+});
+
 test('prepared delegated lifecycle wrapper binds identity and one-shot provider start recording', () => {
     const command = { label: 'command', command: 'command' };
     const resolved = resolveDelegatedReadinessLifecycleRoute({
