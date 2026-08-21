@@ -68,6 +68,9 @@ import {
     type NextStepPreGuardRoutingOptions
 } from './next-step-pre-review-routing';
 import {
+    suspendStrictDecompositionWipIfRequired
+} from './next-step-strict-decomposition-wip';
+import {
     resolveCompletedCloseoutRouteFromState
 } from './next-step-closeout-routing';
 import type {
@@ -719,6 +722,27 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
     }
 
     if (!options.completionGatePassed && isDecomposedParentTask(options.taskEntry)) {
+        const strictDecompositionWip = suspendStrictDecompositionWipIfRequired({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId
+        });
+        if (strictDecompositionWip.status === 'BLOCKED') {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'strict-decomposition-wip-capture',
+                title: 'Suspend legacy strict-decomposition parent WIP before child execution.',
+                reason:
+                    'TASK.md already marks this strict split parent as decomposed, but its implemented parent scope is still present in the worktree and could not be captured safely. ' +
+                    `Capture violations: ${strictDecompositionWip.violations.map(formatNextStepInlineValue).join(', ') || 'unknown'}. ` +
+                    'Do not enter a child task until the parent WIP is suspended; repair the reported scope or repository condition and rerun next-step.',
+                commands: [],
+                missingArtifacts: strictDecompositionWip.manifest_path
+                    ? []
+                    : [{ key: 'strict-decomposition-wip', path: '<not-created>', exists: false }],
+                presentArtifacts: options.corePresentArtifacts,
+                finalReport: null
+            };
+        }
         const completionState = isTaskQueueDecomposedStatus(taskQueueStatus)
             ? resolveDecomposedParentCompletionState(
                 options.taskEntries,

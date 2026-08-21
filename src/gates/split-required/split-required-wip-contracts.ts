@@ -14,7 +14,7 @@ import { safeReadJson } from '../task-audit/task-audit-summary-collectors';
 
 export const SPLIT_REQUIRED_WIP_SCHEMA_VERSION = 1;
 
-export type SplitRequiredWipGuardKind = 'scope_budget' | 'review_cycle';
+export type SplitRequiredWipGuardKind = 'scope_budget' | 'review_cycle' | 'strict_decomposition';
 
 export interface SplitRequiredWipPatchEvidence {
     path: string;

@@ -18,6 +18,13 @@ import {
     buildTaskProfilePolicySnapshot,
     type TaskProfilePolicySnapshot
 } from '../../../../src/policy/task-profile-policy-snapshot';
+import {
+    listSplitRequiredWip
+} from '../../../../src/gates/split-required/split-required-wip-operations';
+import {
+    initGitRepo,
+    runGitFixtureCommand
+} from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -130,6 +137,13 @@ function eventsRoot(repoRoot: string): string {
 function writeJson(filePath: string, payload: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function writePreflightScope(repoRoot: string, taskId: string, changedFiles: string[]): void {
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`), {
+        task_id: taskId,
+        changed_files: changedFiles
+    });
 }
 
 
@@ -751,11 +765,15 @@ describe('gates/next-step strict decomposition', () => {
             taskSummary: 'Seeded next-step task',
             proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
         });
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflightScope(repoRoot, TASK_ID, ['src/app.ts']);
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
         const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+        const wip = listSplitRequiredWip({ repoRoot, taskId: TASK_ID });
 
         assert.equal(result.status, 'DECOMPOSED');
         assert.equal(result.next_gate, 'child-task');
@@ -765,7 +783,47 @@ describe('gates/next-step strict decomposition', () => {
         assert.ok(result.reason.includes('exclude suspended siblings'));
         assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
         assert.ok(events.includes('"event_type":"STRICT_DECOMPOSITION_SPLIT_ROUTED"'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_WIP_CAPTURED"'));
+        assert.equal(wip.status, 'FOUND');
+        assert.equal(wip.manifests.length, 1);
+        assert.equal(wip.manifests[0].guard_kind, 'strict_decomposition');
+        assert.deepEqual(wip.manifests[0].tracked_files, ['src/app.ts']);
+        assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
         assert.ok(text.includes('Status: DECOMPOSED'));
+    });
+
+    it('suspends legacy parent WIP before routing an already decomposed strict parent to a child', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | DECOMPOSED | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-2\`. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | Validate split evidence | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Route child execution | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
+        });
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflightScope(repoRoot, TASK_ID, ['src/app.ts']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const wip = listSplitRequiredWip({ repoRoot, taskId: TASK_ID });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes(`next-step "${TASK_ID}-1"`));
+        assert.equal(wip.status, 'FOUND');
+        assert.equal(wip.manifests[0].guard_kind, 'strict_decomposition');
+        assert.deepEqual(wip.manifests[0].tracked_files, ['src/app.ts']);
+        assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
     });
 
     it('blocks strict split-required routing when a proposed child is not strict', () => {

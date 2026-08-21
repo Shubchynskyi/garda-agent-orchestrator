@@ -26,6 +26,9 @@ import {
 import {
     getStringField
 } from './next-step-lifecycle-command-builders';
+import {
+    suspendStrictDecompositionWipIfRequired
+} from './next-step-strict-decomposition-wip';
 import type {
     NextStepArtifactState,
     NextStepCommand,
@@ -447,6 +450,41 @@ export function resolveStrictDecompositionContinuationRoute(params: {
         return null;
     }
 
+    const wipSuspension = suspendStrictDecompositionWipIfRequired({
+        repoRoot: params.repoRoot,
+        taskId: params.taskId,
+        evidence
+    });
+    const wipArtifactState = wipSuspension.manifest_path
+        ? {
+            key: 'strict-decomposition-wip',
+            path: toRepoDisplayPath(params.repoRoot, wipSuspension.manifest_path),
+            exists: true
+        }
+        : null;
+    if (wipSuspension.status === 'BLOCKED') {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'strict-decomposition-wip-capture',
+            title: 'Suspend parent WIP before strict child execution.',
+            reason:
+                'A current strict decomposition decision says split-required after parent implementation began, but the parent WIP could not be captured and suspended safely. ' +
+                `Capture violations: ${formatNextStepInlineList(wipSuspension.violations)}. ` +
+                'Do not enter a child task while parent implementation remains in the worktree; repair the reported scope or repository condition and rerun next-step.',
+            commands: [],
+            missingArtifacts: wipArtifactState
+                ? params.baseMissingArtifacts
+                : [
+                    ...params.baseMissingArtifacts,
+                    { key: 'strict-decomposition-wip', path: '<not-created>', exists: false }
+                ],
+            presentArtifacts: wipArtifactState
+                ? [...params.basePresentArtifacts, artifactState, wipArtifactState]
+                : [...params.basePresentArtifacts, artifactState],
+            finalReport: null
+        };
+    }
+
     const splitRoutingState = resolveStrictDecompositionSplitRoutingState(
         params.taskEntries,
         params.taskId,
@@ -468,7 +506,11 @@ export function resolveStrictDecompositionContinuationRoute(params: {
                 'Create and link parent-derived strict child task rows that match the decision artifact before continuing; later scope-budget or review-cycle split latches remain authoritative.',
             commands: [],
             missingArtifacts: [],
-            presentArtifacts: [...params.basePresentArtifacts, artifactState],
+            presentArtifacts: [
+                ...params.basePresentArtifacts,
+                artifactState,
+                ...(wipArtifactState ? [wipArtifactState] : [])
+            ],
             finalReport: null
         };
     }
@@ -500,7 +542,11 @@ export function resolveStrictDecompositionContinuationRoute(params: {
         reason: strictSplitRoute.reason,
         commands: strictSplitRoute.commands,
         missingArtifacts: [],
-        presentArtifacts: [...params.basePresentArtifacts, artifactState],
+        presentArtifacts: [
+            ...params.basePresentArtifacts,
+            artifactState,
+            ...(wipArtifactState ? [wipArtifactState] : [])
+        ],
         finalReport: null
     };
 }
