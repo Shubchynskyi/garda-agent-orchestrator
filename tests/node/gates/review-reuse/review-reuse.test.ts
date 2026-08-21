@@ -594,6 +594,14 @@ describe('gates/review-reuse', () => {
             ) || '',
             /review execution mode does not match/u
         );
+        assert.equal(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewContextReuseContractBindings(baseContext),
+                resolveReviewContextReuseContractBindings(changedExecutionScope)
+            ),
+            null,
+            'FULL reuse relies on lane coverage and content fingerprints across source-dependent scope contracts'
+        );
 
         const currentDeltaBindings = resolveReviewContextReuseContractBindings({
             ...baseContext,

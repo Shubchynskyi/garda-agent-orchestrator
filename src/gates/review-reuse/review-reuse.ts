@@ -292,7 +292,8 @@ export function getReviewContextReuseContractBindingMismatch(
     if (!currentBindings.reviewExecutionFullScopeSha256) {
         mismatches.push('current review context is missing its review execution full-scope binding');
     } else if (
-        historicalBindings.reviewExecutionFullScopeSha256
+        currentBindings.reviewExecutionMode === 'DELTA'
+        && historicalBindings.reviewExecutionFullScopeSha256
         && historicalBindings.reviewExecutionFullScopeSha256
             !== currentBindings.reviewExecutionFullScopeSha256
     ) {
