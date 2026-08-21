@@ -866,7 +866,9 @@ function buildReviewContextReuseHashSnapshot(
             ? {
                 review_execution: {
                     mode: contractBindings.reviewExecutionMode,
-                    full_review_scope_sha256: contractBindings.reviewExecutionFullScopeSha256
+                    ...(contractBindings.reviewExecutionMode === 'DELTA'
+                        ? { full_review_scope_sha256: contractBindings.reviewExecutionFullScopeSha256 }
+                        : {})
                 }
             }
             : {}),

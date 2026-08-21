@@ -580,7 +580,22 @@ describe('gates/review-reuse', () => {
         assert.notEqual(computeReviewContextReuseHash(changedRuleContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedCoverageContract), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedExecutionMode), computeReviewContextReuseHash(baseContext));
-        assert.notEqual(computeReviewContextReuseHash(changedExecutionScope), computeReviewContextReuseHash(baseContext));
+        assert.equal(
+            computeReviewContextReuseHash(changedExecutionScope),
+            computeReviewContextReuseHash(baseContext),
+            'FULL reuse scope is represented by the lane coverage and content fingerprints'
+        );
+        assert.notEqual(
+            computeReviewContextReuseHash({
+                ...changedExecutionMode,
+                review_execution: {
+                    ...changedExecutionMode.review_execution,
+                    full_review_scope_sha256: '5'.repeat(64)
+                }
+            }),
+            computeReviewContextReuseHash(changedExecutionMode),
+            'DELTA reuse keeps the authenticated full-scope lineage binding'
+        );
         assert.equal(
             computeReviewContextReuseHash(changedExecutionDecisionOnly),
             computeReviewContextReuseHash(baseContext),
