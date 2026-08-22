@@ -140,7 +140,7 @@ export function evaluateReviewCycleGuard(
     if (active && !input.timelineValid) {
         violations.push({ metric: 'timeline_integrity', actual: 1, limit: 0 });
     }
-    if (active && failedNonTestReviewCount > config.max_failed_non_test_reviews) {
+    if (active && failedNonTestReviewCount >= config.max_failed_non_test_reviews) {
         violations.push({
             metric: 'failed_non_test_review_count',
             actual: failedNonTestReviewCount,
@@ -160,7 +160,10 @@ export function evaluateReviewCycleGuard(
     }
 
     const violationText = violations
-        .map((violation) => `${violation.metric}=${violation.actual}>${violation.limit}`)
+        .map((violation) => {
+            const operator = violation.metric === 'failed_non_test_review_count' ? '>=' : '>';
+            return `${violation.metric}=${violation.actual}${operator}${violation.limit}`;
+        })
         .join(', ');
 
     return {

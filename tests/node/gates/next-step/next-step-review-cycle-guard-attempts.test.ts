@@ -433,7 +433,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
         assert.equal(result.review_cycle_block?.latest_failed_review?.review_type, 'security');
         assert.equal(result.review_cycle_block?.latest_failed_review?.summary, 'security finding 1');
         assert.ok(text.includes('LatestFailedReview: review_type="security"'));
@@ -722,7 +722,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
     });
 
     it('validates repeated immutable review evidence with one indexed snapshot read per file', () => {
@@ -986,7 +986,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
         assert.deepEqual(result.review_cycle_block?.counts_by_review_type.code, {
             total: 2,
             passed: 0,
@@ -1471,7 +1471,7 @@ describe('gates/next-step review cycle guard attempts', () => {
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
         assert.ok(result.reason.includes('timeline_integrity=1>0'));
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
         assert.equal(
             result.review_cycle_block?.latest_failed_review?.summary,
             'explicit security failure with forged PASS snapshot 1'
@@ -1557,7 +1557,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
     });
 
     it('surfaces WARN_ONLY review cycle violations without blocking the next gate', () => {
@@ -1717,7 +1717,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=45>15'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=45>=15'));
         assert.ok(result.reason.includes('total_non_test_review_count=45>30'));
         assert.ok(result.reason.includes('cumulative_total_attempts=54'));
         assert.ok(result.reason.includes('cumulative_non_test_reviews=45'));

@@ -493,7 +493,7 @@ describe('gates/next-step review cycle guard split', () => {
         const promptText = fs.readFileSync(promptPath, 'utf8');
         assert.ok(promptText.includes(`# Review Cycle Auto-Split Prompt for ${TASK_ID}`));
         assert.ok(promptText.includes('GuardReason: "Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
-        assert.equal(promptText.includes('failed_non_test_review_count=2>1'), false);
+        assert.equal(promptText.includes('failed_non_test_review_count=2>=1'), false);
         assert.ok(promptText.includes('summary="second code failure"'));
         assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-1\`, \`${TASK_ID}-2\`, \`${TASK_ID}-3\``));
         assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F1\``));
