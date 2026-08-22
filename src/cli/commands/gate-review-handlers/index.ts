@@ -221,6 +221,8 @@ const reviewResultHandlers = createReviewResultHandlers({
 export const {
     handleRecordReviewResult,
     handleRecordReviewReceipt,
+    handleRecordReviewOutputCorrectionTransport,
+    handleRecordReviewOutputCorrectionResponse,
     handleRecordReviewOutputCorrectionInvocation
 } = reviewResultHandlers;
 

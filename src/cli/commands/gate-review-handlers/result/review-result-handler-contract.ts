@@ -125,11 +125,47 @@ export interface ReviewResultHandlersDependencies {
 export type RecordReviewResultHandler = (gateArgv: string[]) => Promise<void>;
 export type RecordReviewReceiptHandler = (gateArgv: string[]) => Promise<void>;
 export type RecordReviewOutputCorrectionInvocationHandler = (gateArgv: string[]) => Promise<void>;
+export type RecordReviewOutputCorrectionResponseHandler = (gateArgv: string[]) => Promise<void>;
+export type RecordReviewOutputCorrectionTransportHandler = (gateArgv: string[]) => Promise<void>;
 
 export interface ReviewResultHandlers {
     handleRecordReviewResult: RecordReviewResultHandler;
     handleRecordReviewReceipt: RecordReviewReceiptHandler;
     handleRecordReviewOutputCorrectionInvocation: RecordReviewOutputCorrectionInvocationHandler;
+    handleRecordReviewOutputCorrectionResponse: RecordReviewOutputCorrectionResponseHandler;
+    handleRecordReviewOutputCorrectionTransport: RecordReviewOutputCorrectionTransportHandler;
+}
+
+export function recordReviewOutputCorrectionResponseOptionDefinitions(): Record<
+string,
+{ key: string; type: 'string' }
+> {
+    return {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--correction-artifact-path': { key: 'correctionArtifactPath', type: 'string' },
+        '--review-output-path': { key: 'reviewOutputPath', type: 'string' },
+        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+}
+
+export function recordReviewOutputCorrectionTransportOptionDefinitions(): Record<
+string,
+{ key: string; type: 'string' }
+> {
+    return {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--correction-artifact-path': { key: 'correctionArtifactPath', type: 'string' },
+        '--session-availability': { key: 'sessionAvailability', type: 'string' },
+        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
 }
 
 export function recordReviewOutputCorrectionInvocationOptionDefinitions(): Record<

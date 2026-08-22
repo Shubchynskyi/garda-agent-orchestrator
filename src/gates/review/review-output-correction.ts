@@ -12,9 +12,18 @@ export const REVIEW_OUTPUT_CORRECTION_LAUNCH_ARTIFACT_TYPE = 'review_output_corr
 export const REVIEW_OUTPUT_CORRECTION_SCHEMA_VERSION = 1;
 export const REVIEW_OUTPUT_CORRECTION_REQUIRED = 'REVIEW_OUTPUT_CORRECTION_REQUIRED';
 export const DEFAULT_REVIEW_OUTPUT_CORRECTION_LIMIT = 2;
+export const REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE =
+    'garda_fail_closed_no_provider_session_receipt';
 
 const MISSING_FINDINGS_FINGERPRINT_REASON =
     'Rejected review output has no semantic findings fingerprint; correction-only recovery cannot prove findings preservation.';
+
+const REVIEW_OUTPUT_CORRECTION_TRANSPORT_EVENT_TYPES = new Set([
+    'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION',
+    'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION',
+    'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION',
+    'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED'
+]);
 
 export type ReviewOutputCorrectionState =
     | typeof REVIEW_OUTPUT_CORRECTION_REQUIRED
@@ -56,6 +65,37 @@ export interface ReviewOutputCorrectionCapabilities {
     correction_only_invocation: boolean;
 }
 
+export type ReviewOutputCorrectionSessionAvailability =
+    | 'pending'
+    | 'available'
+    | 'closed'
+    | 'stateless'
+    | 'not_applicable';
+
+export interface ReviewOutputCorrectionTransportAttestation {
+    reviewer_identity: string;
+    provider_invocation_id: string;
+    attestation_source: string;
+    evidence_type: 'provider_native_session_receipt' | 'fail_closed_no_provider_session_receipt';
+    provider_invocation_event_sha256?: string | null;
+    provider_response_event_sha256?: string | null;
+    provider_response_sha256?: string | null;
+    recorded_at_utc: string;
+}
+
+export interface ReviewOutputCorrectionTransportBinding {
+    provider_id: string | null;
+    provider_invocation_id: string | null;
+    provider_capabilities: {
+        live_reviewer_continuation: boolean;
+        api_conversation_continuation: boolean;
+        correction_only_invocation: boolean;
+    };
+    provider_capabilities_sha256: string;
+    session_availability: ReviewOutputCorrectionSessionAvailability;
+    availability_attestation: ReviewOutputCorrectionTransportAttestation | null;
+}
+
 export interface ReviewOutputCorrectionBinding {
     original_output_path: string;
     original_output_sha256: string;
@@ -81,6 +121,7 @@ export interface ReviewOutputCorrectionHandoff {
     provider_action: ReviewOutputCorrectionProviderAction;
     launch_input_mode: 'review_output_correction_artifact_path';
     launch_input_artifact_path: string | null;
+    provider_response_output_path: string | null;
     target_reviewer_identity: string | null;
     fork_context: false | null;
     result_delivery: 'record_review_result_stdin';
@@ -96,6 +137,8 @@ export interface ReviewOutputCorrectionArtifact {
     created_at_utc: string;
     updated_at_utc: string;
     binding: ReviewOutputCorrectionBinding;
+    transport_binding?: ReviewOutputCorrectionTransportBinding;
+    producer_response_attestation?: ReviewOutputCorrectionTransportAttestation;
     diagnostics: ReviewOutputCorrectionDiagnostic[];
     recovery: {
         correction_attempt: number;
@@ -120,9 +163,28 @@ export interface ReviewOutputMechanicalBindings {
 export interface ReviewOutputCorrectionTransportAdapter {
     id: string;
     capabilities: ReviewOutputCorrectionCapabilities;
+    probeLiveReviewerAvailability?: (
+        correction: ReviewOutputCorrectionArtifact
+    ) => Promise<'available' | 'closed' | 'stateless'>;
     continueReview?: (correction: ReviewOutputCorrectionArtifact) => Promise<string>;
     continueApiConversation?: (correction: ReviewOutputCorrectionArtifact) => Promise<string>;
     invokeCorrectionOnly?: (correction: ReviewOutputCorrectionArtifact) => Promise<string>;
+    recordTelemetry?: (event: ReviewOutputCorrectionTransportTelemetry) => Promise<void> | void;
+}
+
+export interface ReviewOutputCorrectionTransportTelemetry {
+    event:
+        | 'live_continuation'
+        | 'api_continuation'
+        | 'correction_only_invocation'
+        | 'full_reviewer_relaunch';
+    task_id: string;
+    review_type: string;
+    adapter_id: string;
+    correction_attempt: number;
+    selected_transport: ReviewOutputCorrectionTransport;
+    session_availability: ReviewOutputCorrectionSessionAvailability;
+    reason: string;
 }
 
 export interface ReviewOutputCorrectionVerification {
@@ -146,6 +208,7 @@ export interface ReviewOutputCorrectionProducerInvocationEvidence {
     reviewer_identity: string;
     reviewer_attempt_id: string;
     provider_invocation_id: string;
+    attestation_source: string;
     review_context_sha256: string;
     launch_input_sha256: string;
     delegation_started_event_type: string;
@@ -153,6 +216,9 @@ export interface ReviewOutputCorrectionProducerInvocationEvidence {
     delegation_started_reviewer_identity: string;
     delegation_started_provider_invocation_id: string;
     correction_launch_artifact_sha256: string;
+    provider_response_event_type?: string;
+    provider_response_event_sha256?: string;
+    provider_response_sha256?: string;
 }
 
 const MECHANICAL_PATTERNS: ReadonlyArray<readonly [RegExp, ReviewOutputCorrectionDiagnosticCode]> = [
@@ -175,6 +241,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeSha256(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+export function hasCommittedReviewOutputCorrectionTransportEvent(options: {
+    timelineEvents: readonly unknown[];
+    reviewType: string;
+    correctionArtifactSha256: string;
+    correctionPackageSha256: string;
+}): boolean {
+    const reviewType = String(options.reviewType || '').trim().toLowerCase();
+    const correctionArtifactSha256 = normalizeSha256(options.correctionArtifactSha256);
+    const correctionPackageSha256 = normalizeSha256(options.correctionPackageSha256);
+    if (!reviewType || !correctionArtifactSha256 || !correctionPackageSha256) {
+        return false;
+    }
+    return options.timelineEvents.some((value) => {
+        if (!isRecord(value) || !REVIEW_OUTPUT_CORRECTION_TRANSPORT_EVENT_TYPES.has(
+            String(value.event_type || '')
+        )) {
+            return false;
+        }
+        const details = isRecord(value.details) ? value.details : {};
+        const integrity = isRecord(value.integrity) ? value.integrity : {};
+        return normalizeSha256(integrity.event_sha256) !== null
+            && String(details.review_type || details.reviewType || '').trim().toLowerCase() === reviewType
+            && normalizeSha256(details.correction_artifact_sha256) === correctionArtifactSha256
+            && normalizeSha256(details.correction_package_sha256) === correctionPackageSha256;
+    });
 }
 
 function canonicalize(value: unknown): unknown {
@@ -224,6 +317,7 @@ export function buildReviewOutputCorrectionHandoff(options: {
     const common = {
         launch_input_mode: 'review_output_correction_artifact_path' as const,
         launch_input_artifact_path: launchInputArtifactPath,
+        provider_response_output_path: null,
         result_delivery: 'record_review_result_stdin' as const
     };
     if (options.transport === 'live_reviewer_continuation') {
@@ -250,14 +344,19 @@ export function buildReviewOutputCorrectionHandoff(options: {
         };
     }
     if (options.transport === 'correction_only_invocation') {
+        const providerResponseOutputPath = options.correctionArtifactPath
+            ? normalizePath(`${options.correctionArtifactPath}.provider-response.json`)
+            : null;
         return {
             ...common,
+            provider_response_output_path: providerResponseOutputPath,
             provider_action: 'launch_correction_only_reviewer',
             target_reviewer_identity: null,
             fork_context: false,
             instruction:
                 'Launch one clean-context correction-only reviewer with only ReviewerCorrectionInputArtifactPath. ' +
-                'It may repair the bound validation defects but must not change findings; it must return exactly one corrected JSON object and stop. ' +
+                'It may repair the bound validation defects but must not change findings; it must write exactly one corrected JSON object to ' +
+                'ProviderResponseOutputPath, return those same bytes, and stop. ' +
                 'Then pipe that object to the navigator-provided record-review-result command with the resolved correction producer attestation.'
         };
     }
@@ -357,6 +456,7 @@ export function resolveReviewOutputCorrectionTransport(options: {
     correctionAttempt: number;
     maxCorrectionAttempts?: number;
     forceFullReviewReasons?: readonly string[];
+    sessionAvailability?: ReviewOutputCorrectionSessionAvailability;
 }): { transport: ReviewOutputCorrectionTransport; reason: string; available: ReviewOutputCorrectionTransport[] } {
     const limit = options.maxCorrectionAttempts ?? DEFAULT_REVIEW_OUTPUT_CORRECTION_LIMIT;
     const available: ReviewOutputCorrectionTransport[] = [];
@@ -381,8 +481,17 @@ export function resolveReviewOutputCorrectionTransport(options: {
     if (mechanicalOnly && options.capabilities.gate_normalization) {
         return { transport: 'gate_normalization', reason: 'All violations are mechanically derivable bindings.', available };
     }
-    if (options.capabilities.live_reviewer_continuation) {
-        return { transport: 'live_reviewer_continuation', reason: 'The original delegated reviewer session is available.', available };
+    if (
+        options.capabilities.live_reviewer_continuation
+        && !['closed', 'stateless', 'not_applicable'].includes(options.sessionAvailability || 'available')
+    ) {
+        return {
+            transport: 'live_reviewer_continuation',
+            reason: options.sessionAvailability === 'pending'
+                ? 'The provider declares live continuation; controller availability must be attested.'
+                : 'The original delegated reviewer session is available.',
+            available
+        };
     }
     if (options.capabilities.api_conversation_continuation) {
         return { transport: 'api_conversation_continuation', reason: 'The provider supports bound conversation continuation.', available };
@@ -397,12 +506,35 @@ export function resolveReviewOutputCorrectionTransport(options: {
     };
 }
 
+export function computeReviewOutputCorrectionProviderCapabilitiesSha256(options: {
+    providerId: string | null;
+    capabilities: Pick<
+    ReviewOutputCorrectionCapabilities,
+    'live_reviewer_continuation' | 'api_conversation_continuation' | 'correction_only_invocation'
+    >;
+}): string {
+    return sha256RedactedJsonPayload({
+        provider_id: String(options.providerId || '').trim() || null,
+        live_reviewer_continuation: options.capabilities.live_reviewer_continuation === true,
+        api_conversation_continuation: options.capabilities.api_conversation_continuation === true,
+        correction_only_invocation: options.capabilities.correction_only_invocation === true
+    });
+}
+
 export function getReviewOutputCorrectionArtifactPath(reviewArtifactPath: string): string {
     return String(reviewArtifactPath || '').replace(/\.md$/u, '-output-correction.json');
 }
 
 export function getReviewOutputCorrectionLaunchArtifactPath(reviewArtifactPath: string): string {
     return String(reviewArtifactPath || '').replace(/\.md$/u, '-output-correction-launch.json');
+}
+
+function getCorrectionLaunchPathFromCorrectionArtifactPath(correctionArtifactPath: string): string {
+    const normalized = String(correctionArtifactPath || '');
+    if (!/-output-correction\.json$/u.test(normalized)) {
+        throw new Error('Review output correction artifact path has an invalid canonical suffix.');
+    }
+    return normalized.replace(/-output-correction\.json$/u, '-output-correction-launch.json');
 }
 
 export function getRejectedReviewOutputArtifactPath(reviewArtifactPath: string, outputSha256: string): string {
@@ -412,9 +544,11 @@ export function getRejectedReviewOutputArtifactPath(reviewArtifactPath: string, 
 function withArtifactSha256(
     artifact: Omit<ReviewOutputCorrectionArtifact, 'artifact_sha256'>
 ): ReviewOutputCorrectionArtifact {
+    const unhashed = { ...artifact } as ReviewOutputCorrectionArtifact;
+    delete unhashed.artifact_sha256;
     return {
-        ...artifact,
-        artifact_sha256: sha256RedactedJsonPayload(artifact)
+        ...unhashed,
+        artifact_sha256: sha256RedactedJsonPayload(unhashed)
     };
 }
 
@@ -436,6 +570,9 @@ export function buildReviewOutputCorrectionArtifact(options: {
     correctionAttempt?: number;
     maxCorrectionAttempts?: number;
     capabilities?: Partial<ReviewOutputCorrectionCapabilities>;
+    providerId?: string | null;
+    providerInvocationId?: string | null;
+    sessionAvailability?: ReviewOutputCorrectionSessionAvailability;
     now?: string;
 }): ReviewOutputCorrectionArtifact {
     const diagnostics = classifyReviewOutputCorrectionDiagnostics(options.violations);
@@ -455,11 +592,22 @@ export function buildReviewOutputCorrectionArtifact(options: {
         api_conversation_continuation: options.capabilities?.api_conversation_continuation === true,
         correction_only_invocation: options.capabilities?.correction_only_invocation !== false
     };
+    const providerCapabilities = {
+        live_reviewer_continuation: capabilities.live_reviewer_continuation,
+        api_conversation_continuation: capabilities.api_conversation_continuation,
+        correction_only_invocation: capabilities.correction_only_invocation
+    };
+    const sessionAvailability = options.sessionAvailability || (
+        capabilities.live_reviewer_continuation
+            ? 'pending'
+            : capabilities.api_conversation_continuation ? 'stateless' : 'not_applicable'
+    );
     const recovery = resolveReviewOutputCorrectionTransport({
         diagnostics,
         capabilities,
         correctionAttempt,
         maxCorrectionAttempts,
+        sessionAvailability,
         forceFullReviewReasons: findingsSemanticFingerprint
             ? []
             : [MISSING_FINDINGS_FINGERPRINT_REASON]
@@ -488,6 +636,17 @@ export function buildReviewOutputCorrectionArtifact(options: {
             validation_artifact_path: normalizePath(options.validationArtifactPath),
             validation_artifact_sha256: options.validationArtifactSha256.toLowerCase()
         },
+        transport_binding: {
+            provider_id: String(options.providerId || '').trim() || null,
+            provider_invocation_id: String(options.providerInvocationId || '').trim() || null,
+            provider_capabilities: providerCapabilities,
+            provider_capabilities_sha256: computeReviewOutputCorrectionProviderCapabilitiesSha256({
+                providerId: options.providerId || null,
+                capabilities: providerCapabilities
+            }),
+            session_availability: sessionAvailability,
+            availability_attestation: null
+        },
         diagnostics,
         recovery: {
             correction_attempt: correctionAttempt,
@@ -502,6 +661,346 @@ export function buildReviewOutputCorrectionArtifact(options: {
         }
     };
     return withArtifactSha256(artifact);
+}
+
+function assertFailClosedCorrectionAttestationSource(value: string): string {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized !== REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE) {
+        throw new Error(
+            'Closed or stateless correction transport must use the canonical fail-closed attestation source.'
+        );
+    }
+    return normalized;
+}
+
+export function isProviderOwnedReviewOutputCorrectionSessionAttestationSource(value: string): boolean {
+    const normalized = String(value || '').trim().toLowerCase();
+    return Boolean(normalized)
+        && normalized !== REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
+        && !/^(?:unknown|n\/a|na|null|none|manual|mock|test|placeholder|<.*>)$/iu.test(normalized)
+        && /(?:followup|session|conversation|continuation|resume|spawn|subagent|task|tool|launch|run|invocation)/iu.test(
+            normalized
+        );
+}
+
+function assertProviderOwnedCorrectionSessionAttestationSource(value: string): string {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!isProviderOwnedReviewOutputCorrectionSessionAttestationSource(normalized)) {
+        throw new Error(
+            'Live correction transport requires a provider/controller-owned live-session attestation source.'
+        );
+    }
+    return normalized;
+}
+
+export function requiresReviewOutputCorrectionFailClosedAvailabilityEvidence(options: {
+    sessionAvailability: ReviewOutputCorrectionSessionAvailability;
+    selectedTransport: ReviewOutputCorrectionTransport;
+    providerCapabilities: Pick<
+        ReviewOutputCorrectionTransportBinding['provider_capabilities'],
+        'live_reviewer_continuation'
+    >;
+}
+): boolean {
+    if (options.sessionAvailability === 'closed') return true;
+    if (options.sessionAvailability !== 'stateless') return false;
+    return !(
+        options.selectedTransport === 'api_conversation_continuation'
+        && !options.providerCapabilities.live_reviewer_continuation
+    );
+}
+
+function artifactRequiresFailClosedAvailabilityEvidence(
+    artifact: ReviewOutputCorrectionArtifact
+): boolean {
+    const binding = artifact.transport_binding;
+    if (!binding) return false;
+    if (
+        artifact.state === 'CORRECTION_ACCEPTED'
+        && artifact.recovery.selected_transport === 'api_conversation_continuation'
+        && binding.availability_attestation?.evidence_type === 'provider_native_session_receipt'
+    ) {
+        return false;
+    }
+    return requiresReviewOutputCorrectionFailClosedAvailabilityEvidence({
+        sessionAvailability: binding.session_availability,
+        selectedTransport: artifact.recovery.selected_transport,
+        providerCapabilities: binding.provider_capabilities
+    });
+}
+
+export function buildReviewOutputCorrectionTransportSelection(options: {
+    artifactPath: string;
+    artifact: ReviewOutputCorrectionArtifact;
+    sessionAvailability: Extract<ReviewOutputCorrectionSessionAvailability, 'closed' | 'stateless'>;
+    reviewerIdentity: string;
+    providerInvocationId: string;
+    attestationSource: string;
+    now?: string;
+}): ReviewOutputCorrectionArtifact {
+    if (options.artifact.state !== REVIEW_OUTPUT_CORRECTION_REQUIRED) {
+        throw new Error('Correction transport selection requires a pending correction package.');
+    }
+    const binding = options.artifact.transport_binding;
+    if (!binding) {
+        throw new Error('Correction transport selection requires provider capability evidence.');
+    }
+    if (binding.session_availability !== 'pending') {
+        throw new Error('Correction transport availability is already frozen for this correction attempt.');
+    }
+    const expectedCapabilitiesSha256 = computeReviewOutputCorrectionProviderCapabilitiesSha256({
+        providerId: binding.provider_id,
+        capabilities: binding.provider_capabilities
+    });
+    if (binding.provider_capabilities_sha256 !== expectedCapabilitiesSha256) {
+        throw new Error('Correction transport provider capability evidence is invalid.');
+    }
+    if (options.reviewerIdentity !== options.artifact.binding.reviewer_identity) {
+        throw new Error('Correction transport availability must attest the original reviewer identity.');
+    }
+    if (
+        !binding.provider_invocation_id
+        || options.providerInvocationId !== binding.provider_invocation_id
+    ) {
+        throw new Error('Correction transport availability does not match the original provider invocation.');
+    }
+    const attestationSource = assertFailClosedCorrectionAttestationSource(options.attestationSource);
+    const capabilities: ReviewOutputCorrectionCapabilities = {
+        gate_normalization: false,
+        ...binding.provider_capabilities
+    };
+    const recovery = resolveReviewOutputCorrectionTransport({
+        diagnostics: options.artifact.diagnostics,
+        capabilities,
+        correctionAttempt: options.artifact.recovery.correction_attempt,
+        maxCorrectionAttempts: options.artifact.recovery.max_correction_attempts,
+        sessionAvailability: options.sessionAvailability
+    });
+    const timestamp = options.now || new Date().toISOString();
+    const updatedWithoutHash: Omit<ReviewOutputCorrectionArtifact, 'artifact_sha256'> = {
+        ...options.artifact,
+        updated_at_utc: timestamp,
+        transport_binding: {
+            ...binding,
+            session_availability: options.sessionAvailability,
+            availability_attestation: {
+                reviewer_identity: options.reviewerIdentity,
+                provider_invocation_id: options.providerInvocationId,
+                attestation_source: attestationSource,
+                evidence_type: 'fail_closed_no_provider_session_receipt',
+                recorded_at_utc: timestamp
+            }
+        },
+        state: recovery.transport === 'full_reviewer_relaunch'
+            ? 'FULL_REVIEW_REQUIRED' as const
+            : REVIEW_OUTPUT_CORRECTION_REQUIRED,
+        recovery: {
+            ...options.artifact.recovery,
+            selected_transport: recovery.transport,
+            available_transports: recovery.available,
+            reason: recovery.reason,
+            handoff: buildReviewOutputCorrectionHandoff({
+                transport: recovery.transport,
+                reviewerIdentity: options.artifact.binding.reviewer_identity,
+                correctionArtifactPath: options.artifactPath
+            })
+        }
+    };
+    return withArtifactSha256(updatedWithoutHash);
+}
+
+interface ReviewOutputCorrectionProviderContinuationAcceptanceOptions {
+    artifactPath: string;
+    artifact: ReviewOutputCorrectionArtifact;
+    reviewerIdentity: string;
+    providerInvocationId: string;
+    providerInvocationEventSha256: string;
+    providerResponseEventSha256: string;
+    providerResponseSha256: string;
+    attestationSource: string;
+    reason: string;
+    now?: string;
+}
+
+function buildReviewOutputCorrectionProviderContinuationAcceptance(
+    options: ReviewOutputCorrectionProviderContinuationAcceptanceOptions,
+    selectedTransport: 'live_reviewer_continuation' | 'api_conversation_continuation'
+): ReviewOutputCorrectionArtifact {
+    const binding = options.artifact.transport_binding;
+    const invocationEventSha256 = normalizeSha256(options.providerInvocationEventSha256);
+    const providerResponseEventSha256 = normalizeSha256(options.providerResponseEventSha256);
+    const providerResponseSha256 = normalizeSha256(options.providerResponseSha256);
+    const isLiveContinuation = selectedTransport === 'live_reviewer_continuation';
+    const providerCapability = isLiveContinuation
+        ? binding?.provider_capabilities.live_reviewer_continuation
+        : binding?.provider_capabilities.api_conversation_continuation;
+    const expectedSessionAvailability: ReviewOutputCorrectionSessionAvailability = isLiveContinuation
+        ? 'pending'
+        : 'stateless';
+    if (
+        options.artifact.state !== REVIEW_OUTPUT_CORRECTION_REQUIRED
+        || options.artifact.recovery.selected_transport !== selectedTransport
+        || !binding
+        || binding.session_availability !== expectedSessionAvailability
+        || providerCapability !== true
+    ) {
+        throw new Error(
+            `Provider correction acceptance requires a pending '${selectedTransport}' correction package.`
+        );
+    }
+    if (
+        options.reviewerIdentity !== options.artifact.binding.reviewer_identity
+        || options.providerInvocationId !== binding.provider_invocation_id
+        || invocationEventSha256 !== options.artifact.binding.reviewer_invocation_event_sha256
+    ) {
+        throw new Error('Provider correction acceptance does not match the original provider-owned reviewer invocation.');
+    }
+    if (!providerResponseEventSha256 || !providerResponseSha256) {
+        throw new Error('Provider correction acceptance requires a provider-attested hashed correction response.');
+    }
+    const attestationSource = assertProviderOwnedCorrectionSessionAttestationSource(options.attestationSource);
+    const timestamp = options.now || new Date().toISOString();
+    return withArtifactSha256({
+        ...options.artifact,
+        state: 'CORRECTION_ACCEPTED',
+        updated_at_utc: timestamp,
+        transport_binding: {
+            ...binding,
+            session_availability: isLiveContinuation ? 'available' : 'stateless',
+            availability_attestation: {
+                reviewer_identity: options.reviewerIdentity,
+                provider_invocation_id: options.providerInvocationId,
+                provider_invocation_event_sha256: invocationEventSha256,
+                provider_response_event_sha256: providerResponseEventSha256,
+                provider_response_sha256: providerResponseSha256,
+                attestation_source: attestationSource,
+                evidence_type: 'provider_native_session_receipt',
+                recorded_at_utc: timestamp
+            }
+        },
+        recovery: {
+            ...options.artifact.recovery,
+            selected_transport: selectedTransport,
+            reason: options.reason,
+            handoff: buildReviewOutputCorrectionHandoff({
+                transport: selectedTransport,
+                reviewerIdentity: options.reviewerIdentity,
+                correctionArtifactPath: options.artifactPath
+            })
+        }
+    });
+}
+
+export function buildReviewOutputCorrectionLiveContinuationAcceptance(
+    options: ReviewOutputCorrectionProviderContinuationAcceptanceOptions
+): ReviewOutputCorrectionArtifact {
+    return buildReviewOutputCorrectionProviderContinuationAcceptance(
+        options,
+        'live_reviewer_continuation'
+    );
+}
+
+export function buildReviewOutputCorrectionApiContinuationAcceptance(
+    options: ReviewOutputCorrectionProviderContinuationAcceptanceOptions
+): ReviewOutputCorrectionArtifact {
+    return buildReviewOutputCorrectionProviderContinuationAcceptance(
+        options,
+        'api_conversation_continuation'
+    );
+}
+
+export function buildReviewOutputCorrectionCorrectionOnlyAcceptance(
+    options: ReviewOutputCorrectionProviderContinuationAcceptanceOptions
+): ReviewOutputCorrectionArtifact {
+    const binding = options.artifact.transport_binding;
+    const invocationEventSha256 = normalizeSha256(options.providerInvocationEventSha256);
+    const providerResponseEventSha256 = normalizeSha256(options.providerResponseEventSha256);
+    const providerResponseSha256 = normalizeSha256(options.providerResponseSha256);
+    if (
+        options.artifact.state !== REVIEW_OUTPUT_CORRECTION_REQUIRED
+        || options.artifact.recovery.selected_transport !== 'correction_only_invocation'
+        || !binding
+        || !['closed', 'stateless', 'not_applicable'].includes(binding.session_availability)
+        || binding.provider_capabilities.correction_only_invocation !== true
+    ) {
+        throw new Error('Correction-only acceptance requires a pending correction-only package.');
+    }
+    if (
+        !/^agent:[^\s<>]+$/u.test(options.reviewerIdentity)
+        || /^agent:pending:/iu.test(options.reviewerIdentity)
+        || options.reviewerIdentity === options.artifact.binding.reviewer_identity
+        || !options.providerInvocationId
+        || !invocationEventSha256
+    ) {
+        throw new Error('Correction-only acceptance does not match a fresh provider-owned reviewer invocation.');
+    }
+    if (!providerResponseEventSha256 || !providerResponseSha256) {
+        throw new Error('Correction-only acceptance requires a provider-attested hashed correction response.');
+    }
+    const attestationSource = assertProviderOwnedCorrectionSessionAttestationSource(options.attestationSource);
+    const timestamp = options.now || new Date().toISOString();
+    return withArtifactSha256({
+        ...options.artifact,
+        state: 'CORRECTION_ACCEPTED',
+        updated_at_utc: timestamp,
+        producer_response_attestation: {
+            reviewer_identity: options.reviewerIdentity,
+            provider_invocation_id: options.providerInvocationId,
+            provider_invocation_event_sha256: invocationEventSha256,
+            provider_response_event_sha256: providerResponseEventSha256,
+            provider_response_sha256: providerResponseSha256,
+            attestation_source: attestationSource,
+            evidence_type: 'provider_native_session_receipt',
+            recorded_at_utc: timestamp
+        },
+        recovery: {
+            ...options.artifact.recovery,
+            reason: options.reason,
+            handoff: buildReviewOutputCorrectionHandoff({
+                transport: 'correction_only_invocation',
+                reviewerIdentity: options.artifact.binding.reviewer_identity,
+                correctionArtifactPath: options.artifactPath
+            })
+        }
+    });
+}
+
+function writePreparedCorrectionOnlyLaunchArtifact(options: {
+    artifactPath: string;
+    correctionLaunchArtifactPath: string;
+    artifact: ReviewOutputCorrectionArtifact;
+}): string | null {
+    const artifactFileSha256 = fileSha256(options.artifactPath) || '';
+    if (
+        options.artifact.state !== REVIEW_OUTPUT_CORRECTION_REQUIRED
+        || options.artifact.recovery.selected_transport !== 'correction_only_invocation'
+        || options.artifact.transport_binding?.session_availability === 'pending'
+        || !/^[0-9a-f]{64}$/u.test(artifactFileSha256)
+    ) {
+        return null;
+    }
+    writeFileAtomically(options.correctionLaunchArtifactPath, `${JSON.stringify({
+        schema_version: 1,
+        artifact_type: REVIEW_OUTPUT_CORRECTION_LAUNCH_ARTIFACT_TYPE,
+        state: 'prepared',
+        task_id: options.artifact.task_id,
+        review_type: options.artifact.review_type,
+        correction_artifact_path: normalizePath(options.artifactPath),
+        correction_artifact_sha256: artifactFileSha256,
+        launch_input_sha256: artifactFileSha256,
+        original_reviewer_identity: options.artifact.binding.reviewer_identity,
+        original_reviewer_attempt_id: options.artifact.binding.reviewer_attempt_id,
+        review_context_sha256: options.artifact.binding.review_context_sha256,
+        review_tree_state_sha256: options.artifact.binding.review_tree_state_sha256,
+        provider_id: options.artifact.transport_binding?.provider_id || null,
+        provider_capabilities_sha256:
+            options.artifact.transport_binding?.provider_capabilities_sha256 || null,
+        session_availability: options.artifact.transport_binding?.session_availability || 'not_applicable',
+        provider_response_output_path:
+            options.artifact.recovery.handoff?.provider_response_output_path || null,
+        prepared_at_utc: options.artifact.updated_at_utc
+    }, null, 2)}\n`, { encoding: 'utf8' });
+    return options.correctionLaunchArtifactPath;
 }
 
 function assertPathInsideRepo(repoRoot: string, targetPath: string, label: string): string {
@@ -623,35 +1122,79 @@ export function persistReviewOutputCorrection(options: {
     }
     const artifact = withArtifactSha256(artifactWithoutHash);
     writeFileAtomically(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { encoding: 'utf8' });
-    const artifactFileSha256 = fileSha256(artifactPath) || '';
-    let preparedLaunchArtifactPath: string | null = null;
-    if (
-        artifact.state === REVIEW_OUTPUT_CORRECTION_REQUIRED
-        && artifact.recovery.selected_transport === 'correction_only_invocation'
-        && /^[0-9a-f]{64}$/u.test(artifactFileSha256)
-    ) {
-        writeFileAtomically(correctionLaunchArtifactPath, `${JSON.stringify({
-            schema_version: 1,
-            artifact_type: REVIEW_OUTPUT_CORRECTION_LAUNCH_ARTIFACT_TYPE,
-            state: 'prepared',
-            task_id: artifact.task_id,
-            review_type: artifact.review_type,
-            correction_artifact_path: normalizePath(artifactPath),
-            correction_artifact_sha256: artifactFileSha256,
-            launch_input_sha256: artifactFileSha256,
-            original_reviewer_identity: artifact.binding.reviewer_identity,
-            original_reviewer_attempt_id: artifact.binding.reviewer_attempt_id,
-            review_context_sha256: artifact.binding.review_context_sha256,
-            review_tree_state_sha256: artifact.binding.review_tree_state_sha256,
-            prepared_at_utc: artifact.updated_at_utc
-        }, null, 2)}\n`, { encoding: 'utf8' });
-        preparedLaunchArtifactPath = correctionLaunchArtifactPath;
-    }
+    const preparedLaunchArtifactPath = writePreparedCorrectionOnlyLaunchArtifact({
+        artifactPath,
+        correctionLaunchArtifactPath,
+        artifact
+    });
     return {
         artifactPath,
         rejectedOutputPath,
         correctionLaunchArtifactPath: preparedLaunchArtifactPath,
         artifact
+    };
+}
+
+export function persistReviewOutputCorrectionTransportSelection(options: {
+    repoRoot: string;
+    artifactPath: string;
+    artifact: ReviewOutputCorrectionArtifact;
+    sessionAvailability: Extract<ReviewOutputCorrectionSessionAvailability, 'closed' | 'stateless'>;
+    reviewerIdentity: string;
+    providerInvocationId: string;
+    attestationSource: string;
+    now?: string;
+}): {
+    artifact: ReviewOutputCorrectionArtifact;
+    artifactPath: string;
+    correctionLaunchArtifactPath: string | null;
+    previousArtifactFileSha256: string;
+    artifactFileSha256: string;
+} {
+    const artifactPath = assertPathInsideRepo(
+        options.repoRoot,
+        options.artifactPath,
+        'Review output correction artifact path'
+    );
+    const artifactFileSha256 = fileSha256(artifactPath) || '';
+    const current = readReviewOutputCorrectionArtifact(artifactPath);
+    if (
+        current.violations.length > 0
+        || !current.artifact
+        || current.artifact.artifact_sha256 !== options.artifact.artifact_sha256
+        || !/^[0-9a-f]{64}$/u.test(artifactFileSha256)
+    ) {
+        throw new Error('Correction transport selection requires the current intact correction package.');
+    }
+    const updated = buildReviewOutputCorrectionTransportSelection({
+        artifactPath,
+        artifact: current.artifact,
+        sessionAvailability: options.sessionAvailability,
+        reviewerIdentity: options.reviewerIdentity,
+        providerInvocationId: options.providerInvocationId,
+        attestationSource: options.attestationSource,
+        now: options.now
+    });
+    writeFileAtomically(artifactPath, `${JSON.stringify(updated, null, 2)}\n`, { encoding: 'utf8' });
+    const updatedFileSha256 = fileSha256(artifactPath) || '';
+    if (!/^[0-9a-f]{64}$/u.test(updatedFileSha256)) {
+        throw new Error('Correction transport selection could not hash the updated correction package.');
+    }
+    const correctionLaunchArtifactPath = assertPathInsideRepo(
+        options.repoRoot,
+        getCorrectionLaunchPathFromCorrectionArtifactPath(artifactPath),
+        'Review output correction launch artifact path'
+    );
+    return {
+        artifact: updated,
+        artifactPath,
+        correctionLaunchArtifactPath: writePreparedCorrectionOnlyLaunchArtifact({
+            artifactPath,
+            correctionLaunchArtifactPath,
+            artifact: updated
+        }),
+        previousArtifactFileSha256: artifactFileSha256,
+        artifactFileSha256: updatedFileSha256
     };
 }
 
@@ -682,6 +1225,93 @@ export function readReviewOutputCorrectionArtifact(artifactPath: string): {
     ) {
         violations.push('Review output correction artifact has invalid shape.');
         return { artifact: null, violations };
+    }
+    if (artifact.transport_binding !== undefined) {
+        if (
+            !isRecord(artifact.transport_binding)
+            || !isRecord(artifact.transport_binding.provider_capabilities)
+            || !['pending', 'available', 'closed', 'stateless', 'not_applicable'].includes(
+                String(artifact.transport_binding.session_availability || '')
+            )
+            || artifact.transport_binding.provider_capabilities_sha256
+                !== computeReviewOutputCorrectionProviderCapabilitiesSha256({
+                    providerId: artifact.transport_binding.provider_id,
+                    capabilities: artifact.transport_binding.provider_capabilities
+                })
+        ) {
+            violations.push('Review output correction transport capability binding is invalid.');
+        }
+        const transportAttestation = artifact.transport_binding.availability_attestation;
+        const providerContinuationAccepted = artifact.state === 'CORRECTION_ACCEPTED'
+            && ['live_reviewer_continuation', 'api_conversation_continuation'].includes(
+                artifact.recovery.selected_transport
+            );
+        const acceptedContinuationSessionAvailability =
+            artifact.recovery.selected_transport === 'live_reviewer_continuation'
+                ? 'available'
+                : 'stateless';
+        if (
+            providerContinuationAccepted
+            && (
+                artifact.transport_binding.session_availability
+                    !== acceptedContinuationSessionAvailability
+                || (
+                    artifact.recovery.selected_transport === 'live_reviewer_continuation'
+                    && artifact.transport_binding.provider_capabilities.live_reviewer_continuation !== true
+                )
+                || (
+                    artifact.recovery.selected_transport === 'api_conversation_continuation'
+                    && artifact.transport_binding.provider_capabilities.api_conversation_continuation !== true
+                )
+                || !transportAttestation
+                || transportAttestation.reviewer_identity !== artifact.binding.reviewer_identity
+                || transportAttestation.provider_invocation_id
+                    !== artifact.transport_binding.provider_invocation_id
+                || transportAttestation.evidence_type !== 'provider_native_session_receipt'
+                || normalizeSha256(transportAttestation.provider_invocation_event_sha256)
+                    !== artifact.binding.reviewer_invocation_event_sha256
+                || !normalizeSha256(transportAttestation.provider_response_event_sha256)
+                || !normalizeSha256(transportAttestation.provider_response_sha256)
+                || !isProviderOwnedReviewOutputCorrectionSessionAttestationSource(
+                    transportAttestation.attestation_source
+                )
+            )
+        ) {
+            violations.push('Persisted provider correction response receipt is invalid.');
+        }
+        if (
+            artifactRequiresFailClosedAvailabilityEvidence(artifact)
+            && (
+                !transportAttestation
+                || transportAttestation.attestation_source
+                    !== REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
+                || transportAttestation.evidence_type !== 'fail_closed_no_provider_session_receipt'
+            )
+        ) {
+            violations.push('Correction transport fail-closed availability evidence is invalid.');
+        }
+        const correctionOnlyAccepted = artifact.state === 'CORRECTION_ACCEPTED'
+            && artifact.recovery.selected_transport === 'correction_only_invocation';
+        const producerResponseAttestation = artifact.producer_response_attestation;
+        if (
+            correctionOnlyAccepted
+            && (
+                !producerResponseAttestation
+                || producerResponseAttestation.reviewer_identity === artifact.binding.reviewer_identity
+                || !/^agent:[^\s<>]+$/u.test(producerResponseAttestation.reviewer_identity)
+                || /^agent:pending:/iu.test(producerResponseAttestation.reviewer_identity)
+                || !producerResponseAttestation.provider_invocation_id
+                || producerResponseAttestation.evidence_type !== 'provider_native_session_receipt'
+                || !normalizeSha256(producerResponseAttestation.provider_invocation_event_sha256)
+                || !normalizeSha256(producerResponseAttestation.provider_response_event_sha256)
+                || !normalizeSha256(producerResponseAttestation.provider_response_sha256)
+                || !isProviderOwnedReviewOutputCorrectionSessionAttestationSource(
+                    producerResponseAttestation.attestation_source
+                )
+            )
+        ) {
+            violations.push('Persisted correction-only provider response receipt is invalid.');
+        }
     }
     const declaredSha256 = normalizeSha256(artifact.artifact_sha256);
     const unhashed = { ...artifact };
@@ -763,6 +1393,7 @@ export function verifyCorrectedReviewOutput(options: {
 }): ReviewOutputCorrectionVerification {
     const violations: string[] = [];
     const binding = options.artifact.binding;
+    const transportBinding = options.artifact.transport_binding;
     const producer = options.producerAttestation;
     const invocationEvidence = options.producerInvocationEvidence;
     if (binding.review_context_sha256 !== options.reviewContextSha256.toLowerCase()) {
@@ -779,6 +1410,51 @@ export function verifyCorrectedReviewOutput(options: {
     }
     if (options.artifact.state !== REVIEW_OUTPUT_CORRECTION_REQUIRED) {
         violations.push('Review output correction is not in a pending correction state.');
+    }
+    if (!transportBinding) {
+        violations.push('Correction transport provider capability evidence is missing.');
+    } else {
+        const expectedCapabilitiesSha256 = computeReviewOutputCorrectionProviderCapabilitiesSha256({
+            providerId: transportBinding.provider_id,
+            capabilities: transportBinding.provider_capabilities
+        });
+        if (transportBinding.provider_capabilities_sha256 !== expectedCapabilitiesSha256) {
+            violations.push('Correction transport provider capability evidence is invalid.');
+        }
+        if (
+            options.artifact.recovery.selected_transport === 'live_reviewer_continuation'
+            && !['pending', 'available'].includes(transportBinding.session_availability)
+        ) {
+            violations.push('Live reviewer continuation has invalid session availability state.');
+        }
+        if (
+            artifactRequiresFailClosedAvailabilityEvidence(options.artifact)
+            && (
+                transportBinding.availability_attestation?.attestation_source
+                    !== REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
+                || transportBinding.availability_attestation?.evidence_type
+                    !== 'fail_closed_no_provider_session_receipt'
+            )
+        ) {
+            violations.push('Correction transport fail-closed availability evidence is invalid.');
+        }
+        if (
+            (
+                ['available', 'closed'].includes(transportBinding.session_availability)
+                || (
+                    transportBinding.session_availability === 'stateless'
+                    && transportBinding.provider_capabilities.live_reviewer_continuation
+                )
+            )
+            && (
+                !transportBinding.availability_attestation
+                || transportBinding.availability_attestation.reviewer_identity !== binding.reviewer_identity
+                || transportBinding.availability_attestation.provider_invocation_id
+                    !== transportBinding.provider_invocation_id
+            )
+        ) {
+            violations.push('Correction transport availability attestation is missing or does not match the original invocation.');
+        }
     }
     if (
         !/^agent:[^\s<>]+$/u.test(producer.producer_identity)
@@ -827,6 +1503,9 @@ export function verifyCorrectedReviewOutput(options: {
         if (invocationEvidence.provider_invocation_id !== producer.provider_invocation_id) {
             violations.push('Correction provider invocation id does not match provider-owned invocation evidence.');
         }
+        if (invocationEvidence.attestation_source !== producer.attestation_source) {
+            violations.push('Correction attestation source does not match provider-owned invocation evidence.');
+        }
         if (invocationEvidence.review_context_sha256 !== binding.review_context_sha256) {
             violations.push('Correction producer invocation context does not match the rejected review context.');
         }
@@ -843,6 +1522,15 @@ export function verifyCorrectedReviewOutput(options: {
         ['live_reviewer_continuation', 'api_conversation_continuation'].includes(
             options.artifact.recovery.selected_transport
         )
+        && transportBinding?.provider_invocation_id
+        && producer.provider_invocation_id !== transportBinding.provider_invocation_id
+    ) {
+        violations.push('Correction continuation provider invocation does not match transport capability evidence.');
+    }
+    if (
+        ['live_reviewer_continuation', 'api_conversation_continuation'].includes(
+            options.artifact.recovery.selected_transport
+        )
         && (
             !invocationEvidence
             || invocationEvidence.event_sha256 !== binding.reviewer_invocation_event_sha256
@@ -850,6 +1538,28 @@ export function verifyCorrectedReviewOutput(options: {
         )
     ) {
         violations.push('Correction continuation is not bound to the original provider-owned reviewer invocation.');
+    }
+    if (
+        [
+            'live_reviewer_continuation',
+            'api_conversation_continuation',
+            'correction_only_invocation'
+        ].includes(options.artifact.recovery.selected_transport)
+    ) {
+        const correctedOutputSha256 = computeRawReviewOutputSha256(options.correctedOutput);
+        const expectedResponseEventType = options.artifact.recovery.selected_transport
+            === 'live_reviewer_continuation'
+            ? 'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION'
+            : options.artifact.recovery.selected_transport === 'api_conversation_continuation'
+                ? 'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION'
+                : 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED';
+        if (
+            invocationEvidence?.provider_response_event_type !== expectedResponseEventType
+            || !normalizeSha256(invocationEvidence.provider_response_event_sha256)
+            || invocationEvidence.provider_response_sha256 !== correctedOutputSha256
+        ) {
+            violations.push('Provider correction output lacks a provider-owned response receipt bound to its bytes.');
+        }
     }
     if (options.artifact.recovery.selected_transport === 'correction_only_invocation') {
         if (producer.producer_identity === binding.reviewer_identity) {
@@ -893,27 +1603,78 @@ export function verifyCorrectedReviewOutput(options: {
     };
 }
 
-export async function executeReviewOutputCorrectionWithAdapter(options: {
+const correctionTransportExecutions = new Map<string, Promise<string>>();
+
+async function executeReviewOutputCorrectionWithAdapterUnlocked(options: {
     artifact: ReviewOutputCorrectionArtifact;
     adapter: ReviewOutputCorrectionTransportAdapter;
 }): Promise<string> {
-    const transport = resolveReviewOutputCorrectionTransport({
+    const sessionAvailability: ReviewOutputCorrectionSessionAvailability =
+        options.adapter.capabilities.live_reviewer_continuation
+            ? options.adapter.probeLiveReviewerAvailability
+                ? await options.adapter.probeLiveReviewerAvailability(options.artifact)
+                : 'stateless'
+            : options.adapter.capabilities.api_conversation_continuation ? 'stateless' : 'not_applicable';
+    const selection = resolveReviewOutputCorrectionTransport({
         diagnostics: options.artifact.diagnostics,
         capabilities: options.adapter.capabilities,
         correctionAttempt: options.artifact.recovery.correction_attempt,
         maxCorrectionAttempts: options.artifact.recovery.max_correction_attempts,
+        sessionAvailability,
         forceFullReviewReasons: options.artifact.state === 'FULL_REVIEW_REQUIRED'
             ? [options.artifact.recovery.reason]
             : []
-    }).transport;
+    });
+    const transport = selection.transport;
+    const telemetryEvent = {
+        task_id: options.artifact.task_id,
+        review_type: options.artifact.review_type,
+        adapter_id: options.adapter.id,
+        correction_attempt: options.artifact.recovery.correction_attempt,
+        selected_transport: transport,
+        session_availability: sessionAvailability,
+        reason: selection.reason
+    };
     if (transport === 'live_reviewer_continuation' && options.adapter.continueReview) {
+        await options.adapter.recordTelemetry?.({ ...telemetryEvent, event: 'live_continuation' });
         return options.adapter.continueReview(options.artifact);
     }
     if (transport === 'api_conversation_continuation' && options.adapter.continueApiConversation) {
+        await options.adapter.recordTelemetry?.({ ...telemetryEvent, event: 'api_continuation' });
         return options.adapter.continueApiConversation(options.artifact);
     }
     if (transport === 'correction_only_invocation' && options.adapter.invokeCorrectionOnly) {
+        await options.adapter.recordTelemetry?.({ ...telemetryEvent, event: 'correction_only_invocation' });
         return options.adapter.invokeCorrectionOnly(options.artifact);
     }
+    if (transport === 'full_reviewer_relaunch') {
+        await options.adapter.recordTelemetry?.({ ...telemetryEvent, event: 'full_reviewer_relaunch' });
+    }
     throw new Error(`Correction adapter '${options.adapter.id}' cannot execute selected transport '${transport}'.`);
+}
+
+export async function executeReviewOutputCorrectionWithAdapter(options: {
+    artifact: ReviewOutputCorrectionArtifact;
+    adapter: ReviewOutputCorrectionTransportAdapter;
+}): Promise<string> {
+    const key = [
+        options.artifact.task_id,
+        options.artifact.review_type,
+        options.artifact.recovery.correction_attempt,
+        options.artifact.binding.original_output_sha256,
+        options.adapter.id
+    ].join(':');
+    const current = correctionTransportExecutions.get(key);
+    if (current) {
+        return current;
+    }
+    const execution = executeReviewOutputCorrectionWithAdapterUnlocked(options);
+    correctionTransportExecutions.set(key, execution);
+    try {
+        return await execution;
+    } finally {
+        if (correctionTransportExecutions.get(key) === execution) {
+            correctionTransportExecutions.delete(key);
+        }
+    }
 }

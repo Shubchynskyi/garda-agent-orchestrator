@@ -21,6 +21,7 @@ import {
     emitReviewOutputCorrectionInvocationAttestedEventAsync,
     emitReviewOutputCorrectionNormalizedEventAsync,
     emitReviewOutputCorrectionRequiredEventAsync,
+    emitReviewOutputCorrectionTransportEventAsync,
     emitReviewerDelegationStartedEventAsync,
     emitReviewerInvocationAttestedEventAsync,
     emitReviewerLaunchFailedEventAsync
@@ -81,6 +82,8 @@ import {
     type ReviewResultHandlersDependencies,
     type ReviewerExecutionMode,
     recordReviewOutputCorrectionInvocationOptionDefinitions,
+    recordReviewOutputCorrectionResponseOptionDefinitions,
+    recordReviewOutputCorrectionTransportOptionDefinitions,
     recordReviewReceiptOptionDefinitions,
     recordReviewResultOptionDefinitions
 } from './review-result-handler-contract';
@@ -134,19 +137,26 @@ import {
     type ReviewFindingsReport
 } from '../../../../gates/review/review-findings-schema';
 import {
-    buildReviewOutputCorrectionStateTransition,
+    buildReviewOutputCorrectionApiContinuationAcceptance,
+    buildReviewOutputCorrectionCorrectionOnlyAcceptance,
+    buildReviewOutputCorrectionLiveContinuationAcceptance,
     buildReviewOutputCorrectionArtifact,
     classifyReviewOutputCorrectionDiagnostics,
     computeRawReviewOutputSha256,
     getRejectedReviewOutputArtifactPath,
     getReviewOutputCorrectionArtifactPath,
     getReviewOutputCorrectionLaunchArtifactPath,
+    hasCommittedReviewOutputCorrectionTransportEvent,
+    isProviderOwnedReviewOutputCorrectionSessionAttestationSource,
     normalizeReviewOutputMechanically,
     persistReviewOutputCorrection,
+    persistReviewOutputCorrectionTransportSelection,
     readReviewOutputCorrectionArtifact,
     updateReviewOutputCorrectionState,
     verifyCorrectedReviewOutput,
     type ReviewOutputCorrectionArtifact,
+    type ReviewOutputCorrectionSessionAvailability,
+    REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE,
     REVIEW_OUTPUT_CORRECTION_LAUNCH_ARTIFACT_TYPE,
     type ReviewOutputCorrectionProducerAttestation,
     type ReviewOutputCorrectionProducerInvocationEvidence
@@ -411,6 +421,22 @@ function getArtifactStringField(artifact: Record<string, unknown>, ...keys: stri
         }
     }
     return '';
+}
+
+function correctionTransportEventMatchesPersistedSelection(options: {
+    timelinePath: string;
+    reviewType: string;
+    selection: {
+        artifact: ReviewOutputCorrectionArtifact;
+        artifactFileSha256: string;
+    } | null;
+}): boolean {
+    return options.selection !== null && hasCommittedReviewOutputCorrectionTransportEvent({
+        timelineEvents: readDependencyTimelineEvents(options.timelinePath),
+        reviewType: options.reviewType,
+        correctionArtifactSha256: options.selection.artifact.artifact_sha256 || '',
+        correctionPackageSha256: options.selection.artifactFileSha256
+    });
 }
 
 function normalizeArtifactPathForComparison(value: string): string {
@@ -925,10 +951,14 @@ function resolveAuthenticatedReviewOutputCorrectionCapabilities(options: {
 }): {
     liveReviewerContinuation: boolean;
     apiConversationContinuation: boolean;
+    providerId: string | null;
+    providerInvocationId: string | null;
 } {
     const unavailable = {
         liveReviewerContinuation: false,
-        apiConversationContinuation: false
+        apiConversationContinuation: false,
+        providerId: null,
+        providerInvocationId: null
     };
     const launchArtifactPathValue = getArtifactStringField(
         options.invocationDetails,
@@ -1025,7 +1055,9 @@ function resolveAuthenticatedReviewOutputCorrectionCapabilities(options: {
         // actual provider invocation and its completed delegated launch.
         liveReviewerContinuation:
             capabilities.liveReviewerContinuation && hasProviderOwnedLiveSessionBinding,
-        apiConversationContinuation: capabilities.apiConversationContinuation
+        apiConversationContinuation: capabilities.apiConversationContinuation,
+        providerId: provider || null,
+        providerInvocationId: providerInvocationId || null
     };
 }
 
@@ -1136,7 +1168,10 @@ async function persistReviewOutputCorrectionRequired(options: {
             live_reviewer_continuation: correctionCapabilities.liveReviewerContinuation,
             api_conversation_continuation: correctionCapabilities.apiConversationContinuation,
             correction_only_invocation: true
-        }
+        },
+        providerId: correctionCapabilities.providerId,
+        providerInvocationId: correctionCapabilities.providerInvocationId,
+        sessionAvailability: 'pending'
     });
     const rejectedOutputPath = getRejectedReviewOutputArtifactPath(
         reviewArtifactPath,
@@ -1168,6 +1203,7 @@ async function persistReviewOutputCorrectionRequired(options: {
         state: persisted.artifact.state,
         reviewer_identity: options.reviewerIdentity,
         reviewer_attempt_id: reviewerAttemptId,
+        reviewer_invocation_event_sha256: persisted.artifact.binding.reviewer_invocation_event_sha256,
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
         rejected_output_path: normalizePath(persisted.rejectedOutputPath),
@@ -1177,10 +1213,17 @@ async function persistReviewOutputCorrectionRequired(options: {
         validation_artifact_sha256: options.validationEvidence.artifactSha256,
         correction_artifact_path: normalizePath(persisted.artifactPath),
         correction_artifact_sha256: persisted.artifact.artifact_sha256,
+        correction_package_sha256: fileSha256(persisted.artifactPath),
         correction_attempt: persisted.artifact.recovery.correction_attempt,
         max_correction_attempts: persisted.artifact.recovery.max_correction_attempts,
         selected_transport: persisted.artifact.recovery.selected_transport,
-        diagnostic_codes: persisted.artifact.diagnostics.map((diagnostic) => diagnostic.code)
+        diagnostic_codes: persisted.artifact.diagnostics.map((diagnostic) => diagnostic.code),
+        provider_id: persisted.artifact.transport_binding?.provider_id || null,
+        provider_invocation_id: persisted.artifact.transport_binding?.provider_invocation_id || null,
+        provider_capabilities: persisted.artifact.transport_binding?.provider_capabilities || null,
+        provider_capabilities_sha256:
+            persisted.artifact.transport_binding?.provider_capabilities_sha256 || null,
+        session_availability: persisted.artifact.transport_binding?.session_availability || null
     };
     try {
         const event = persisted.artifact.state === 'FULL_REVIEW_REQUIRED'
@@ -1207,6 +1250,90 @@ async function persistReviewOutputCorrectionRequired(options: {
         restoreReviewArtifactFile(options.repoRoot, correctionLaunchArtifactSnapshot);
         restoreReviewArtifactFile(options.repoRoot, correctionArtifactSnapshot);
         throw error;
+    }
+    if (
+        persisted.artifact.state === 'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        && (
+            persisted.artifact.recovery.selected_transport === 'api_conversation_continuation'
+            || persisted.artifact.recovery.selected_transport === 'correction_only_invocation'
+        )
+    ) {
+        const pendingArtifactSnapshot = captureReviewArtifactFile(
+            options.repoRoot,
+            persisted.artifactPath
+        );
+        const pendingLaunchArtifactSnapshot = captureReviewArtifactFile(
+            options.repoRoot,
+            getReviewOutputCorrectionLaunchArtifactPath(reviewArtifactPath)
+        );
+        let selection: ReturnType<typeof persistReviewOutputCorrectionTransportSelection> | null = null;
+        try {
+            selection = persistReviewOutputCorrectionTransportSelection({
+                repoRoot: options.repoRoot,
+                artifactPath: persisted.artifactPath,
+                artifact: persisted.artifact,
+                sessionAvailability: 'stateless',
+                reviewerIdentity: options.reviewerIdentity,
+                providerInvocationId: correctionCapabilities.providerInvocationId || '',
+                attestationSource: REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
+            });
+            const binding = selection.artifact.transport_binding;
+            const selectedTransport = selection.artifact.recovery.selected_transport;
+            if (
+                selectedTransport !== 'api_conversation_continuation'
+                && selectedTransport !== 'correction_only_invocation'
+            ) {
+                throw new Error(
+                    `Initial stateless correction selection produced unsupported transport '${selectedTransport}'.`
+                );
+            }
+            const transportEvent = await emitReviewOutputCorrectionTransportEventAsync(
+                gateHelpers.joinOrchestratorPath(options.repoRoot, ''),
+                options.taskId,
+                options.reviewType,
+                selectedTransport,
+                {
+                    task_id: options.taskId,
+                    review_type: options.reviewType,
+                    reviewer_identity: options.reviewerIdentity,
+                    reviewer_attempt_id: selection.artifact.binding.reviewer_attempt_id,
+                    reviewer_invocation_event_sha256:
+                        selection.artifact.binding.reviewer_invocation_event_sha256,
+                    provider_id: binding?.provider_id || null,
+                    provider_invocation_id: binding?.provider_invocation_id || null,
+                    provider_capabilities: binding?.provider_capabilities || null,
+                    provider_capabilities_sha256: binding?.provider_capabilities_sha256 || null,
+                    session_availability: binding?.session_availability || null,
+                    availability_attestation_source:
+                        binding?.availability_attestation?.attestation_source || null,
+                    availability_evidence_type:
+                        binding?.availability_attestation?.evidence_type || null,
+                    availability_provider_invocation_event_sha256:
+                        binding?.availability_attestation?.provider_invocation_event_sha256 || null,
+                    availability_provider_response_sha256:
+                        binding?.availability_attestation?.provider_response_sha256 || null,
+                    selected_transport: selectedTransport,
+                    correction_attempt: selection.artifact.recovery.correction_attempt,
+                    previous_correction_package_sha256: selection.previousArtifactFileSha256,
+                    correction_package_sha256: selection.artifactFileSha256,
+                    correction_artifact_path: normalizePath(selection.artifactPath),
+                    correction_artifact_sha256: selection.artifact.artifact_sha256
+                }
+            );
+            if (!transportEvent || taskEventAppendHasBlockingFailure(transportEvent, false)) {
+                throw new Error(`Initial correction transport telemetry failed for '${options.reviewType}'.`);
+            }
+        } catch (error) {
+            if (!correctionTransportEventMatchesPersistedSelection({
+                timelinePath,
+                reviewType: options.reviewType,
+                selection
+            })) {
+                restoreReviewArtifactFile(options.repoRoot, pendingLaunchArtifactSnapshot);
+                restoreReviewArtifactFile(options.repoRoot, pendingArtifactSnapshot);
+            }
+            throw error;
+        }
     }
 }
 
@@ -1662,6 +1789,7 @@ function summarizeReviewFindingsDispositionEvidence(evidence: ReviewFindingsDisp
 interface ReviewOutputCorrectionAcceptanceTransaction {
     artifactPath: string;
     artifact: ReviewOutputCorrectionArtifact;
+    providerResponseEventSha256?: string;
     invocationEventDetails: Record<string, unknown>;
     acceptedEventDetails: Record<string, unknown>;
 }
@@ -1855,12 +1983,15 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
                 sha256RedactedJsonPayload(options.correctionAcceptance.artifact),
                 'Review output correction artifact'
             );
-            if (!hasReviewOutputCorrectionInvocationAttestation({
+            if (
+                !options.correctionAcceptance.providerResponseEventSha256
+                && !hasReviewOutputCorrectionInvocationAttestation({
                 repoRoot: options.repoRoot,
                 taskId: options.taskId,
                 reviewType: options.reviewType,
                 details: options.correctionAcceptance.invocationEventDetails
-            })) {
+                })
+            ) {
                 const invocationEvent = await emitReviewOutputCorrectionInvocationAttestedEventAsync(
                     orchestratorRoot,
                     options.taskId,
@@ -2523,6 +2654,7 @@ async function handleRecordReviewResultUnlocked(
     let pendingCorrectionLaunchInputSha256: string | null = null;
     let pendingCorrectionOriginalReviewerAttemptId: string | null = null;
     let pendingCorrectionProducerInvocationEvidence: ReviewOutputCorrectionProducerInvocationEvidence | null = null;
+    const correctionResponseOutputSha256 = computeRawReviewOutputSha256(reviewOutput.reviewContent);
     if (fs.existsSync(correctionArtifactPath)) {
         const correctionRead = readReviewOutputCorrectionArtifact(correctionArtifactPath);
         if (!correctionRead.artifact) {
@@ -2573,6 +2705,35 @@ async function handleRecordReviewResultUnlocked(
                 ? options.correctionForkContext
                 : null
         };
+        const expectedProviderResponseEventType =
+            correctionArtifact.recovery.selected_transport === 'live_reviewer_continuation'
+                ? 'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION'
+                : correctionArtifact.recovery.selected_transport === 'api_conversation_continuation'
+                    ? 'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION'
+                    : correctionArtifact.recovery.selected_transport === 'correction_only_invocation'
+                        ? 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED'
+                        : '';
+        const expectedProviderResponseReviewerIdentity =
+            correctionArtifact.recovery.selected_transport === 'correction_only_invocation'
+                ? producerAttestation.producer_identity
+                : reviewerIdentity;
+        const providerResponseEvent = [...timelineEvents].reverse().find((event) => {
+            const details = event.details || {};
+            return event.event_type === expectedProviderResponseEventType
+                && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === reviewType
+                && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity')
+                    === expectedProviderResponseReviewerIdentity
+                && getArtifactStringField(details, 'provider_invocation_id', 'providerInvocationId')
+                    === producerAttestation.provider_invocation_id
+                && getArtifactStringField(details, 'availability_attestation_source')
+                    .toLowerCase() === producerAttestation.attestation_source
+                && getArtifactStringField(details, 'correction_artifact_sha256').toLowerCase()
+                    === String(correctionArtifact.artifact_sha256 || '').toLowerCase()
+                && getArtifactStringField(details, 'correction_package_sha256').toLowerCase()
+                    === correctionArtifactSha256.toLowerCase()
+                && getArtifactStringField(details, 'availability_provider_response_sha256').toLowerCase()
+                    === correctionResponseOutputSha256;
+        }) || null;
         const producerInvocation = producerAttestation.provider_invocation_event_sha256
             ? timelineEvents.find((event) => (
                 String(event.integrity?.event_sha256 || '').trim().toLowerCase()
@@ -2616,6 +2777,12 @@ async function handleRecordReviewResultUnlocked(
                     'controller_invocation_id',
                     'controllerInvocationId'
                 ),
+                attestation_source: getArtifactStringField(
+                    producerInvocationDetails,
+                    'reviewer_launch_attestation_source',
+                    'attestation_source',
+                    'attestationSource'
+                ).toLowerCase(),
                 review_context_sha256: getArtifactStringField(
                     producerInvocationDetails,
                     'review_context_sha256',
@@ -2645,6 +2812,14 @@ async function handleRecordReviewResultUnlocked(
                 correction_launch_artifact_sha256: getArtifactStringField(
                     delegationStartedDetails,
                     'reviewer_launch_artifact_sha256'
+                ).toLowerCase(),
+                provider_response_event_type: String(providerResponseEvent?.event_type || '').trim(),
+                provider_response_event_sha256: String(
+                    providerResponseEvent?.integrity?.event_sha256 || ''
+                ).trim().toLowerCase(),
+                provider_response_sha256: getArtifactStringField(
+                    providerResponseEvent?.details || {},
+                    'availability_provider_response_sha256'
                 ).toLowerCase()
             }
             : null;
@@ -2812,6 +2987,8 @@ async function handleRecordReviewResultUnlocked(
                             reviewer_attempt_id: pendingCorrectionOriginalReviewerAttemptId,
                             correction_artifact_path: normalizePath(correctionArtifactPath),
                             correction_artifact_sha256: updated.artifact_sha256,
+                            correction_package_sha256: fileSha256(correctionArtifactPath),
+                            correction_attempt: updated.recovery.correction_attempt,
                             reasons
                         }
                     );
@@ -3048,15 +3225,71 @@ async function handleRecordReviewResultUnlocked(
         && pendingCorrectionProducerAttestation
         && pendingCorrectionLaunchInputSha256
         ? (() => {
-            const acceptedCorrection = buildReviewOutputCorrectionStateTransition({
-                artifactPath: correctionArtifactPath,
-                artifact: pendingCorrectionArtifact,
-                state: 'CORRECTION_ACCEPTED',
-                reason: 'Attested corrected output preserved the bound reviewer attempt and findings semantic fingerprint.'
-            });
+            const acceptanceReason =
+                'Attested corrected output preserved the bound reviewer attempt and findings semantic fingerprint.';
+            const providerContinuation = [
+                'live_reviewer_continuation',
+                'api_conversation_continuation'
+            ].includes(pendingCorrectionArtifact.recovery.selected_transport);
+            const liveContinuation = pendingCorrectionArtifact.recovery.selected_transport
+                === 'live_reviewer_continuation';
+            const acceptedCorrection = liveContinuation
+                ? buildReviewOutputCorrectionLiveContinuationAcceptance({
+                    artifactPath: correctionArtifactPath,
+                    artifact: pendingCorrectionArtifact,
+                    reviewerIdentity,
+                    providerInvocationId: pendingCorrectionProducerAttestation.provider_invocation_id,
+                    providerInvocationEventSha256:
+                        pendingCorrectionProducerAttestation.provider_invocation_event_sha256,
+                    providerResponseEventSha256:
+                        pendingCorrectionProducerInvocationEvidence?.provider_response_event_sha256 || '',
+                    providerResponseSha256: rawReviewOutputSha256,
+                    attestationSource: pendingCorrectionProducerAttestation.attestation_source,
+                    reason: acceptanceReason
+                })
+                : pendingCorrectionArtifact.recovery.selected_transport === 'api_conversation_continuation'
+                    ? buildReviewOutputCorrectionApiContinuationAcceptance({
+                        artifactPath: correctionArtifactPath,
+                        artifact: pendingCorrectionArtifact,
+                        reviewerIdentity,
+                        providerInvocationId:
+                            pendingCorrectionProducerAttestation.provider_invocation_id,
+                        providerInvocationEventSha256:
+                            pendingCorrectionProducerAttestation.provider_invocation_event_sha256,
+                        providerResponseEventSha256:
+                            pendingCorrectionProducerInvocationEvidence?.provider_response_event_sha256 || '',
+                        providerResponseSha256: rawReviewOutputSha256,
+                        attestationSource: pendingCorrectionProducerAttestation.attestation_source,
+                        reason: acceptanceReason
+                    })
+                    : buildReviewOutputCorrectionCorrectionOnlyAcceptance({
+                        artifactPath: correctionArtifactPath,
+                        artifact: pendingCorrectionArtifact,
+                        reviewerIdentity: pendingCorrectionProducerAttestation.producer_identity,
+                        providerInvocationId:
+                            pendingCorrectionProducerAttestation.provider_invocation_id,
+                        providerInvocationEventSha256:
+                            pendingCorrectionProducerAttestation.provider_invocation_event_sha256,
+                        providerResponseEventSha256:
+                            pendingCorrectionProducerInvocationEvidence?.provider_response_event_sha256 || '',
+                        providerResponseSha256: rawReviewOutputSha256,
+                        attestationSource: pendingCorrectionProducerAttestation.attestation_source,
+                        reason: acceptanceReason
+                    });
+            const transportBinding = acceptedCorrection.transport_binding;
+            const transportAttestation = transportBinding?.availability_attestation;
+            const providerResponseAttestation = acceptedCorrection.producer_response_attestation;
             return {
                 artifactPath: correctionArtifactPath,
                 artifact: acceptedCorrection,
+                ...(providerContinuation || providerResponseAttestation
+                    ? {
+                        providerResponseEventSha256:
+                            transportAttestation?.provider_response_event_sha256
+                            || providerResponseAttestation?.provider_response_event_sha256
+                            || ''
+                    }
+                    : {}),
                 invocationEventDetails: {
                     task_id: taskId,
                     review_type: reviewType,
@@ -3068,7 +3301,17 @@ async function handleRecordReviewResultUnlocked(
                     launch_input_sha256: pendingCorrectionLaunchInputSha256,
                     fork_context: pendingCorrectionProducerAttestation.fork_context,
                     corrected_output_sha256: rawReviewOutputSha256,
-                    selected_transport: pendingCorrectionArtifact.recovery.selected_transport
+                    provider_response_event_sha256:
+                        transportAttestation?.provider_response_event_sha256
+                        || providerResponseAttestation?.provider_response_event_sha256
+                        || null,
+                    selected_transport: pendingCorrectionArtifact.recovery.selected_transport,
+                    correction_package_sha256: pendingCorrectionLaunchInputSha256,
+                    provider_id: pendingCorrectionArtifact.transport_binding?.provider_id || null,
+                    provider_capabilities_sha256:
+                        pendingCorrectionArtifact.transport_binding?.provider_capabilities_sha256 || null,
+                    session_availability:
+                        acceptedCorrection.transport_binding?.session_availability || null
                 },
                 acceptedEventDetails: {
                     task_id: taskId,
@@ -3082,8 +3325,18 @@ async function handleRecordReviewResultUnlocked(
                     correction_artifact_sha256: acceptedCorrection.artifact_sha256,
                     original_output_sha256: acceptedCorrection.binding.original_output_sha256,
                     corrected_output_sha256: rawReviewOutputSha256,
+                    provider_response_event_sha256:
+                        transportAttestation?.provider_response_event_sha256
+                        || providerResponseAttestation?.provider_response_event_sha256
+                        || null,
                     findings_semantic_fingerprint: acceptedCorrection.binding.findings_semantic_fingerprint,
-                    selected_transport: acceptedCorrection.recovery.selected_transport
+                    selected_transport: acceptedCorrection.recovery.selected_transport,
+                    correction_package_sha256: pendingCorrectionLaunchInputSha256,
+                    provider_id: acceptedCorrection.transport_binding?.provider_id || null,
+                    provider_capabilities_sha256:
+                        acceptedCorrection.transport_binding?.provider_capabilities_sha256 || null,
+                    session_availability:
+                        acceptedCorrection.transport_binding?.session_availability || null
                 }
             } satisfies ReviewOutputCorrectionAcceptanceTransaction;
         })()
@@ -3229,6 +3482,24 @@ async function handleRecordReviewReceiptWithDependencies(
     });
 }
 
+function getReviewOutputCorrectionTransportLockPath(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string
+): string {
+    return gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join(
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            reviewType,
+            '.record-review-output-correction-transport.lock'
+        )
+    );
+}
+
 async function handleRecordReviewResultWithDependencies(
     gateArgv: string[],
     dependencies: ReviewResultHandlersDependencies
@@ -3250,12 +3521,567 @@ async function handleRecordReviewResultWithDependencies(
         repoRoot,
         path.join('runtime', 'tmp', 'reviews', taskId, reviewType, '.record-review-result.lock')
     );
+    const correctionTransportLockPath = getReviewOutputCorrectionTransportLockPath(
+        repoRoot,
+        taskId,
+        reviewType
+    );
     await withReviewerLaunchLaneTransaction(launchArtifactPath, async () => {
-        const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
-            ownerLabel: `record-review-result:${taskId}:${reviewType}`
+        const { handle: correctionTransportHandle } = await acquireFilesystemLockAsync(
+            correctionTransportLockPath,
+            {
+                ownerLabel: `review-output-correction-transport:${taskId}:${reviewType}`
+            }
+        );
+        try {
+            const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
+                ownerLabel: `record-review-result:${taskId}:${reviewType}`
+            });
+            try {
+                await handleRecordReviewResultUnlocked(gateArgv, dependencies);
+            } finally {
+                releaseFilesystemLock(handle);
+            }
+        } finally {
+            releaseFilesystemLock(correctionTransportHandle);
+        }
+    });
+}
+
+async function handleRecordReviewOutputCorrectionTransportUnlocked(gateArgv: string[]): Promise<void> {
+    const { options: rawOptions } = parseOptions(
+        gateArgv,
+        recordReviewOutputCorrectionTransportOptionDefinitions(),
+        { allowPositionals: false }
+    );
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-output-correction-transport', 'review_phase');
+    const canonicalReviewArtifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-${reviewType}.md`)
+    );
+    const canonicalCorrectionArtifactPath = getReviewOutputCorrectionArtifactPath(canonicalReviewArtifactPath);
+    const suppliedCorrectionArtifactPath = path.resolve(
+        repoRoot,
+        String(options.correctionArtifactPath || '').trim()
+    );
+    if (
+        normalizePath(suppliedCorrectionArtifactPath).toLowerCase()
+        !== normalizePath(canonicalCorrectionArtifactPath).toLowerCase()
+    ) {
+        throw new Error(
+            `Correction transport selection requires canonical artifact '${normalizePath(canonicalCorrectionArtifactPath)}'.`
+        );
+    }
+    const correctionRead = readReviewOutputCorrectionArtifact(canonicalCorrectionArtifactPath);
+    if (correctionRead.violations.length > 0 || !correctionRead.artifact) {
+        throw new Error(
+            `Correction transport selection requires intact correction evidence: ${correctionRead.violations.join(' ')}`
+        );
+    }
+    const correctionArtifact = correctionRead.artifact;
+    const sessionAvailability = String(options.sessionAvailability || '').trim().toLowerCase();
+    if (!['closed', 'stateless'].includes(sessionAvailability)) {
+        throw new Error(
+            "Correction transport selection requires fail-closed --session-availability 'closed' or 'stateless'. " +
+            'Live continuation is frozen only with an authenticated corrected response in record-review-result.'
+        );
+    }
+    const reviewerIdentity = String(options.reviewerIdentity || '').trim();
+    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    const suppliedAttestationSource = String(options.attestationSource || '').trim().toLowerCase();
+    const attestationSource = suppliedAttestationSource
+        || REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE;
+    const timelinePath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'task-events', `${taskId}.jsonl`)
+    );
+    const existingEvents = readDependencyTimelineEvents(timelinePath);
+    const transportEventTypes = new Set([
+        'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION',
+        'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION',
+        'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION',
+        'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED'
+    ]);
+    const emitPersistedTransportSelection = async (selection: {
+        artifact: ReviewOutputCorrectionArtifact;
+        artifactPath: string;
+        previousArtifactFileSha256: string;
+        artifactFileSha256: string;
+    }): Promise<void> => {
+        const binding = selection.artifact.transport_binding;
+        const details = {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_identity: reviewerIdentity,
+            reviewer_attempt_id: selection.artifact.binding.reviewer_attempt_id,
+            reviewer_invocation_event_sha256:
+                selection.artifact.binding.reviewer_invocation_event_sha256,
+            provider_id: binding?.provider_id || null,
+            provider_invocation_id: providerInvocationId,
+            provider_capabilities: binding?.provider_capabilities || null,
+            provider_capabilities_sha256: binding?.provider_capabilities_sha256 || null,
+            session_availability: binding?.session_availability || null,
+            availability_attestation_source: binding?.availability_attestation?.attestation_source || null,
+            availability_evidence_type: binding?.availability_attestation?.evidence_type || null,
+            availability_provider_invocation_event_sha256:
+                binding?.availability_attestation?.provider_invocation_event_sha256 || null,
+            availability_provider_response_sha256:
+                binding?.availability_attestation?.provider_response_sha256 || null,
+            selected_transport: selection.artifact.recovery.selected_transport,
+            correction_attempt: selection.artifact.recovery.correction_attempt,
+            previous_correction_package_sha256: selection.previousArtifactFileSha256,
+            correction_package_sha256: selection.artifactFileSha256,
+            correction_artifact_path: normalizePath(selection.artifactPath),
+            correction_artifact_sha256: selection.artifact.artifact_sha256
+        };
+        const selectedTransport = selection.artifact.recovery.selected_transport;
+        if (
+            selectedTransport !== 'full_reviewer_relaunch'
+            && selectedTransport !== 'live_reviewer_continuation'
+            && selectedTransport !== 'api_conversation_continuation'
+            && selectedTransport !== 'correction_only_invocation'
+        ) {
+            throw new Error(`Correction transport selection produced unsupported transport '${selectedTransport}'.`);
+        }
+        const event = selectedTransport === 'full_reviewer_relaunch'
+            ? await emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+                gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                taskId,
+                reviewType,
+                details
+            )
+            : await emitReviewOutputCorrectionTransportEventAsync(
+                gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                taskId,
+                reviewType,
+                selectedTransport,
+                details
+            );
+        if (!event || taskEventAppendHasBlockingFailure(event, false)) {
+            throw new Error(`Correction transport telemetry failed for '${reviewType}'.`);
+        }
+    };
+    if (correctionArtifact.transport_binding?.session_availability !== 'pending') {
+        const attestation = correctionArtifact.transport_binding?.availability_attestation;
+        const existingEvent = [...existingEvents].reverse().find((event) => {
+            const details = event.details || {};
+            return transportEventTypes.has(event.event_type)
+                && getArtifactStringField(details, 'correction_artifact_sha256')
+                    === String(correctionArtifact.artifact_sha256 || '').toLowerCase();
+        });
+        const attestationMatches = (
+            correctionArtifact.transport_binding?.session_availability === sessionAvailability
+            && attestation?.reviewer_identity === reviewerIdentity
+            && attestation.provider_invocation_id === providerInvocationId
+            && attestation.attestation_source === attestationSource.toLowerCase()
+        );
+        if (
+            attestationMatches
+            && existingEvent
+        ) {
+            console.log(`REVIEW_OUTPUT_CORRECTION_TRANSPORT_ALREADY_RECORDED: ${reviewType}`);
+            console.log(`SelectedTransport: ${correctionArtifact.recovery.selected_transport}`);
+            console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
+            return;
+        }
+        if (attestationMatches) {
+            const predecessorEvent = [...existingEvents].reverse().find((event) => {
+                const details = event.details || {};
+                return event.event_type === 'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+                    && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === reviewType
+                    && Number(details.correction_attempt) === correctionArtifact.recovery.correction_attempt
+                    && getArtifactStringField(details, 'reviewer_identity', 'reviewerIdentity')
+                        === reviewerIdentity
+                    && getArtifactStringField(details, 'provider_invocation_id', 'providerInvocationId')
+                        === providerInvocationId
+                    && getArtifactStringField(details, 'reviewer_invocation_event_sha256')
+                        === correctionArtifact.binding.reviewer_invocation_event_sha256;
+            });
+            const previousArtifactFileSha256 = getArtifactStringField(
+                predecessorEvent?.details || {},
+                'correction_package_sha256'
+            ).toLowerCase();
+            const artifactFileSha256 = String(
+                fileSha256(canonicalCorrectionArtifactPath) || ''
+            ).toLowerCase();
+            const predecessorAlreadyConsumed = existingEvents.some((event) => (
+                transportEventTypes.has(event.event_type)
+                && getArtifactStringField(event.details || {}, 'previous_correction_package_sha256')
+                    === previousArtifactFileSha256
+            ));
+            if (
+                predecessorEvent
+                && /^[0-9a-f]{64}$/u.test(previousArtifactFileSha256)
+                && /^[0-9a-f]{64}$/u.test(artifactFileSha256)
+                && !predecessorAlreadyConsumed
+            ) {
+                await emitPersistedTransportSelection({
+                    artifact: correctionArtifact,
+                    artifactPath: canonicalCorrectionArtifactPath,
+                    previousArtifactFileSha256,
+                    artifactFileSha256
+                });
+                console.log(`REVIEW_OUTPUT_CORRECTION_TRANSPORT_RECOVERED: ${reviewType}`);
+                console.log(`SelectedTransport: ${correctionArtifact.recovery.selected_transport}`);
+                console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
+                return;
+            }
+        }
+        throw new Error('Correction transport availability is already frozen and cannot be redefined.');
+    }
+    const correctionArtifactSnapshot = captureReviewArtifactFile(
+        repoRoot,
+        canonicalCorrectionArtifactPath
+    );
+    const correctionLaunchArtifactPath = getReviewOutputCorrectionLaunchArtifactPath(
+        canonicalReviewArtifactPath
+    );
+    const correctionLaunchArtifactSnapshot = captureReviewArtifactFile(
+        repoRoot,
+        correctionLaunchArtifactPath
+    );
+    let persisted: ReturnType<typeof persistReviewOutputCorrectionTransportSelection> | null = null;
+    try {
+        persisted = persistReviewOutputCorrectionTransportSelection({
+            repoRoot,
+            artifactPath: canonicalCorrectionArtifactPath,
+            artifact: correctionArtifact,
+            sessionAvailability: sessionAvailability as Extract<
+                ReviewOutputCorrectionSessionAvailability,
+                'closed' | 'stateless'
+            >,
+            reviewerIdentity,
+            providerInvocationId,
+            attestationSource
+        });
+        await emitPersistedTransportSelection(persisted);
+        console.log(`REVIEW_OUTPUT_CORRECTION_TRANSPORT_RECORDED: ${reviewType}`);
+        console.log(`SessionAvailability: ${sessionAvailability}`);
+        console.log(`SelectedTransport: ${persisted.artifact.recovery.selected_transport}`);
+        console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
+    } catch (error) {
+        if (!correctionTransportEventMatchesPersistedSelection({
+            timelinePath,
+            reviewType,
+            selection: persisted
+        })) {
+            restoreReviewArtifactFile(repoRoot, correctionLaunchArtifactSnapshot);
+            restoreReviewArtifactFile(repoRoot, correctionArtifactSnapshot);
+        }
+        throw error;
+    }
+}
+
+async function handleRecordReviewOutputCorrectionTransport(gateArgv: string[]): Promise<void> {
+    const { options: rawOptions } = parseOptions(
+        gateArgv,
+        recordReviewOutputCorrectionTransportOptionDefinitions(),
+        { allowPositionals: false }
+    );
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const canonicalReviewArtifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-${reviewType}.md`)
+    );
+    const correctionLaunchArtifactPath = getReviewOutputCorrectionLaunchArtifactPath(
+        canonicalReviewArtifactPath
+    );
+    const selectionLockPath = getReviewOutputCorrectionTransportLockPath(
+        repoRoot,
+        taskId,
+        reviewType
+    );
+    await withReviewerLaunchLaneTransaction(correctionLaunchArtifactPath, async () => {
+        const { handle } = await acquireFilesystemLockAsync(selectionLockPath, {
+            ownerLabel: `record-review-output-correction-transport:${taskId}:${reviewType}`
         });
         try {
-            await handleRecordReviewResultUnlocked(gateArgv, dependencies);
+            await handleRecordReviewOutputCorrectionTransportUnlocked(gateArgv);
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+    });
+}
+
+async function handleRecordReviewOutputCorrectionResponseUnlocked(gateArgv: string[]): Promise<void> {
+    const { options: rawOptions } = parseOptions(
+        gateArgv,
+        recordReviewOutputCorrectionResponseOptionDefinitions(),
+        { allowPositionals: false }
+    );
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-output-correction-response', 'review_phase');
+    const canonicalReviewArtifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-${reviewType}.md`)
+    );
+    const canonicalCorrectionArtifactPath = getReviewOutputCorrectionArtifactPath(
+        canonicalReviewArtifactPath
+    );
+    const suppliedCorrectionArtifactPath = path.resolve(
+        repoRoot,
+        String(options.correctionArtifactPath || '').trim()
+    );
+    if (
+        normalizePath(suppliedCorrectionArtifactPath).toLowerCase()
+        !== normalizePath(canonicalCorrectionArtifactPath).toLowerCase()
+    ) {
+        throw new Error(
+            `Correction response attestation requires canonical artifact '${normalizePath(canonicalCorrectionArtifactPath)}'.`
+        );
+    }
+    const correctionRead = readReviewOutputCorrectionArtifact(canonicalCorrectionArtifactPath);
+    if (correctionRead.violations.length > 0 || !correctionRead.artifact) {
+        throw new Error(
+            `Correction response attestation requires intact correction evidence: ${correctionRead.violations.join(' ')}`
+        );
+    }
+    const correctionArtifact = correctionRead.artifact;
+    const binding = correctionArtifact.transport_binding;
+    const selectedTransport = correctionArtifact.recovery.selected_transport;
+    const isLiveContinuation = selectedTransport === 'live_reviewer_continuation';
+    const isApiContinuation = selectedTransport === 'api_conversation_continuation';
+    if (
+        correctionArtifact.state !== 'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        || !binding
+        || (
+            !isLiveContinuation
+            && !isApiContinuation
+        )
+        || (
+            isLiveContinuation
+            && (
+                binding.session_availability !== 'pending'
+                || binding.provider_capabilities.live_reviewer_continuation !== true
+            )
+        )
+        || (
+            isApiContinuation
+            && (
+                binding.session_availability !== 'stateless'
+                || binding.provider_capabilities.api_conversation_continuation !== true
+            )
+        )
+    ) {
+        throw new Error('Correction response attestation requires a pending provider-continuation package.');
+    }
+    const reviewerIdentity = String(options.reviewerIdentity || '').trim();
+    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    const attestationSource = String(options.attestationSource || '').trim().toLowerCase();
+    if (
+        !isResolvedReviewerIdentity(reviewerIdentity)
+        || reviewerIdentity !== correctionArtifact.binding.reviewer_identity
+        || providerInvocationId !== binding.provider_invocation_id
+        || !isProviderOwnedReviewOutputCorrectionSessionAttestationSource(attestationSource)
+    ) {
+        throw new Error('Correction response attestation does not match the provider-owned reviewer session.');
+    }
+    const canonicalOutputRoot = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'tmp', 'reviews', taskId, reviewType)
+    );
+    const reviewOutputPath = path.resolve(repoRoot, String(options.reviewOutputPath || '').trim());
+    const relativeOutputPath = path.relative(path.resolve(canonicalOutputRoot), reviewOutputPath);
+    const outputStat = fs.lstatSync(reviewOutputPath);
+    if (
+        !relativeOutputPath
+        || path.isAbsolute(relativeOutputPath)
+        || relativeOutputPath === '..'
+        || relativeOutputPath.startsWith(`..${path.sep}`)
+        || outputStat.isSymbolicLink()
+        || !outputStat.isFile()
+    ) {
+        throw new Error('Correction response attestation requires a regular task-owned review output file.');
+    }
+    if (!gateHelpers.isPathRealpathInsideRoot(reviewOutputPath, canonicalOutputRoot)) {
+        throw new Error(
+            'Correction response attestation output must not escape through symlinks or junctions.'
+        );
+    }
+    const realReviewOutputPath = fs.realpathSync.native(reviewOutputPath);
+    if (
+        normalizePath(realReviewOutputPath).toLowerCase()
+        !== normalizePath(reviewOutputPath).toLowerCase()
+    ) {
+        throw new Error(
+            'Correction response attestation output must not traverse symlinks or junctions.'
+        );
+    }
+    const providerResponseSha256 = fileSha256(reviewOutputPath) || '';
+    if (!/^[0-9a-f]{64}$/u.test(providerResponseSha256)) {
+        throw new Error('Correction response attestation could not hash the provider response.');
+    }
+    const timelinePath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'task-events', `${taskId}.jsonl`)
+    );
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const invocationEvent = timelineEvents.find((event) => (
+        String(event.integrity?.event_sha256 || '').trim().toLowerCase()
+            === correctionArtifact.binding.reviewer_invocation_event_sha256
+    ));
+    const invocationDetails = invocationEvent?.details || {};
+    if (
+        invocationEvent?.event_type !== 'REVIEWER_INVOCATION_ATTESTED'
+        || getArtifactStringField(invocationDetails, 'reviewer_identity', 'reviewerIdentity')
+            !== reviewerIdentity
+        || getArtifactStringField(invocationDetails, 'provider_invocation_id', 'providerInvocationId')
+            !== providerInvocationId
+        || getArtifactStringField(
+            invocationDetails,
+            'reviewer_launch_attestation_source',
+            'attestation_source',
+            'attestationSource'
+        ).toLowerCase() !== attestationSource
+    ) {
+        throw new Error('Correction response attestation lacks matching provider-owned invocation telemetry.');
+    }
+    const boundLaunchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: getArtifactStringField(
+            invocationDetails,
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        ) || undefined
+    });
+    const boundLaunchArtifactSha256 = fileSha256(boundLaunchArtifactPath) || '';
+    let boundLaunchArtifact: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(boundLaunchArtifactPath, 'utf8')) as unknown;
+        if (!isPlainRecord(parsed)) {
+            throw new Error('not an object');
+        }
+        boundLaunchArtifact = parsed;
+    } catch {
+        throw new Error('Correction response attestation requires the intact provider launch artifact.');
+    }
+    const boundReviewOutputPath = gateHelpers.resolvePathInsideRepo(
+        getArtifactStringField(boundLaunchArtifact, 'review_output_path', 'reviewOutputPath'),
+        repoRoot,
+        { allowMissing: false }
+    );
+    if (!boundReviewOutputPath) {
+        throw new Error('Correction response launch output binding is missing.');
+    }
+    if (
+        getArtifactStringField(
+            invocationDetails,
+            'reviewer_launch_artifact_sha256',
+            'reviewerLaunchArtifactSha256'
+        ).toLowerCase() !== boundLaunchArtifactSha256.toLowerCase()
+        || normalizePath(path.resolve(boundReviewOutputPath)).toLowerCase()
+            !== normalizePath(reviewOutputPath).toLowerCase()
+    ) {
+        throw new Error(
+            'Correction response output does not match the immutable provider launch output binding.'
+        );
+    }
+    const delegationStartedAtMs = Date.parse(getArtifactStringField(
+        invocationDetails,
+        'delegation_started_at_utc',
+        'delegationStartedAtUtc',
+        'launched_at_utc',
+        'launchedAtUtc'
+    ));
+    if (Number.isFinite(delegationStartedAtMs) && outputStat.mtimeMs + 1 < delegationStartedAtMs) {
+        throw new Error('Correction response output predates the provider-owned reviewer delegation.');
+    }
+    const correctionPackageSha256 = fileSha256(canonicalCorrectionArtifactPath) || '';
+    const expectedResponseEventType = isLiveContinuation
+        ? 'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION'
+        : 'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION';
+    const existingEvent = [...timelineEvents].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === expectedResponseEventType
+            && getArtifactStringField(details, 'correction_artifact_sha256').toLowerCase()
+                === String(correctionArtifact.artifact_sha256 || '').toLowerCase()
+            && getArtifactStringField(details, 'correction_package_sha256').toLowerCase()
+                === correctionPackageSha256
+            && getArtifactStringField(details, 'availability_provider_response_sha256').toLowerCase()
+                === providerResponseSha256;
+    });
+    if (existingEvent) {
+        console.log(`REVIEW_OUTPUT_CORRECTION_RESPONSE_ALREADY_ATTESTED: ${reviewType}`);
+        console.log(`ProviderResponseEventSha256: ${existingEvent.integrity?.event_sha256 || ''}`);
+        console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
+        return;
+    }
+    const event = await emitReviewOutputCorrectionTransportEventAsync(
+        gateHelpers.joinOrchestratorPath(repoRoot, ''),
+        taskId,
+        reviewType,
+        selectedTransport,
+        {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_identity: reviewerIdentity,
+            reviewer_attempt_id: correctionArtifact.binding.reviewer_attempt_id,
+            reviewer_invocation_event_sha256:
+                correctionArtifact.binding.reviewer_invocation_event_sha256,
+            provider_id: binding.provider_id,
+            provider_invocation_id: providerInvocationId,
+            provider_capabilities: binding.provider_capabilities,
+            provider_capabilities_sha256: binding.provider_capabilities_sha256,
+            session_availability: isLiveContinuation ? 'available' : 'stateless',
+            availability_attestation_source: attestationSource,
+            availability_evidence_type: 'provider_native_session_receipt',
+            availability_provider_invocation_event_sha256:
+                correctionArtifact.binding.reviewer_invocation_event_sha256,
+            availability_provider_response_sha256: providerResponseSha256,
+            provider_response_output_path: normalizePath(reviewOutputPath),
+            selected_transport: selectedTransport,
+            correction_attempt: correctionArtifact.recovery.correction_attempt,
+            previous_correction_package_sha256: correctionPackageSha256,
+            correction_package_sha256: correctionPackageSha256,
+            correction_artifact_path: normalizePath(canonicalCorrectionArtifactPath),
+            correction_artifact_sha256: correctionArtifact.artifact_sha256
+        }
+    );
+    if (!event || taskEventAppendHasBlockingFailure(event, false)) {
+        throw new Error(`Correction provider response attestation failed for '${reviewType}'.`);
+    }
+    console.log(`REVIEW_OUTPUT_CORRECTION_RESPONSE_ATTESTED: ${reviewType}`);
+    console.log(`ProviderResponseSha256: ${providerResponseSha256}`);
+    console.log(`ProviderResponseEventSha256: ${event.integrity?.event_sha256 || ''}`);
+    console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
+}
+
+async function handleRecordReviewOutputCorrectionResponse(gateArgv: string[]): Promise<void> {
+    const { options: rawOptions } = parseOptions(
+        gateArgv,
+        recordReviewOutputCorrectionResponseOptionDefinitions(),
+        { allowPositionals: false }
+    );
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const canonicalReviewArtifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-${reviewType}.md`)
+    );
+    const correctionLaunchArtifactPath = getReviewOutputCorrectionLaunchArtifactPath(
+        canonicalReviewArtifactPath
+    );
+    const responseLockPath = getReviewOutputCorrectionTransportLockPath(repoRoot, taskId, reviewType);
+    await withReviewerLaunchLaneTransaction(correctionLaunchArtifactPath, async () => {
+        const { handle } = await acquireFilesystemLockAsync(responseLockPath, {
+            ownerLabel: `record-review-output-correction-response:${taskId}:${reviewType}`
+        });
+        try {
+            await handleRecordReviewOutputCorrectionResponseUnlocked(gateArgv);
         } finally {
             releaseFilesystemLock(handle);
         }
@@ -3336,28 +4162,60 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
             !== correctionArtifact.binding.review_context_sha256
         || String(correctionLaunchArtifact.review_tree_state_sha256 || '').toLowerCase()
             !== correctionArtifact.binding.review_tree_state_sha256
+        || String(correctionLaunchArtifact.provider_capabilities_sha256 || '').toLowerCase()
+            !== String(correctionArtifact.transport_binding?.provider_capabilities_sha256 || '').toLowerCase()
+        || String(correctionLaunchArtifact.session_availability || '')
+            !== String(correctionArtifact.transport_binding?.session_availability || '')
+        || normalizePath(String(correctionLaunchArtifact.provider_response_output_path || '')).toLowerCase()
+            !== normalizePath(
+                String(correctionArtifact.recovery.handoff?.provider_response_output_path || '')
+            ).toLowerCase()
     ) {
         throw new Error('Correction-only invocation launch artifact is stale or does not match the correction package.');
     }
-    const launchInputSha256 = String(options.launchInputSha256 || '').trim().toLowerCase();
+    const launchArtifactState = String(correctionLaunchArtifact.state || '');
+    const callerSuppliedLaunchProvenance = [
+        options.correctionProducerIdentity,
+        options.providerInvocationId,
+        options.attestationSource,
+        options.launchInputSha256
+    ].some((value) => typeof value !== 'undefined')
+        || typeof options.forkContext !== 'undefined';
+    if (launchArtifactState === 'delegation_started' && callerSuppliedLaunchProvenance) {
+        throw new Error(
+            'Correction-only invocation completion consumes the frozen provider delegation receipt; ' +
+            'do not resupply identity, invocation, attestation, launch-input, or fork-context fields.'
+        );
+    }
+    const launchInputSha256 = launchArtifactState === 'delegation_started'
+        ? String(correctionLaunchArtifact.launch_input_sha256 || '').trim().toLowerCase()
+        : String(options.launchInputSha256 || '').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/u.test(launchInputSha256) || launchInputSha256 !== correctionArtifactSha256) {
         throw new Error('Correction invocation launch input does not match the persisted correction package.');
     }
-    const correctionProducerIdentity = String(options.correctionProducerIdentity || '').trim();
+    const correctionProducerIdentity = launchArtifactState === 'delegation_started'
+        ? String(correctionLaunchArtifact.correction_producer_identity || '').trim()
+        : String(options.correctionProducerIdentity || '').trim();
     if (
         !isResolvedReviewerIdentity(correctionProducerIdentity)
         || correctionProducerIdentity === correctionArtifact.binding.reviewer_identity
     ) {
         throw new Error('Correction-only invocation requires a fresh resolved provider reviewer identity.');
     }
-    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    const providerInvocationId = launchArtifactState === 'delegation_started'
+        ? String(correctionLaunchArtifact.provider_invocation_id || '').trim()
+        : String(options.providerInvocationId || '').trim();
     if (
         !providerInvocationId
         || /^(?:unknown|n\/a|na|null|none|manual|mock|test|placeholder|<.*>)$/iu.test(providerInvocationId)
     ) {
         throw new Error('Correction-only invocation requires the actual provider invocation id.');
     }
-    const attestationSource = String(options.attestationSource || '').trim().toLowerCase();
+    const attestationSource = (
+        launchArtifactState === 'delegation_started'
+            ? String(correctionLaunchArtifact.attestation_source || '')
+            : String(options.attestationSource || '')
+    ).trim().toLowerCase();
     if (
         !attestationSource
         || /^(?:garda_prepare_reviewer_launch|orchestrator_mock|manual|mock|test|placeholder)$/iu.test(attestationSource)
@@ -3365,7 +4223,10 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
     ) {
         throw new Error('Correction-only invocation requires provider/controller-owned attestation source.');
     }
-    if (options.forkContext !== false) {
+    const forkContext = launchArtifactState === 'delegation_started'
+        ? correctionLaunchArtifact.fork_context
+        : options.forkContext;
+    if (forkContext !== false) {
         throw new Error('Correction-only invocation requires --fork-context false.');
     }
     const timelinePath = gateHelpers.joinOrchestratorPath(
@@ -3373,6 +4234,21 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
         path.join('runtime', 'task-events', `${taskId}.jsonl`)
     );
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    if (['closed', 'stateless'].includes(
+        correctionArtifact.transport_binding?.session_availability || ''
+    )) {
+        const transportEvent = [...timelineEvents].reverse().find((event) => {
+            const details = event.details || {};
+            return event.event_type === 'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION'
+                && getArtifactStringField(details, 'correction_artifact_sha256')
+                    === String(correctionArtifact.artifact_sha256 || '').toLowerCase()
+                && getArtifactStringField(details, 'provider_capabilities_sha256')
+                    === correctionArtifact.transport_binding?.provider_capabilities_sha256;
+        });
+        if (!transportEvent) {
+            throw new Error('Correction-only invocation lacks authenticated transport-selection telemetry.');
+        }
+    }
     const originalInvocation = timelineEvents.find((event) => (
         event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
         && String(event.integrity?.event_sha256 || '').trim().toLowerCase()
@@ -3387,7 +4263,6 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
         'routing_event_sha256',
         'routingEventSha256'
     );
-    const launchArtifactState = String(correctionLaunchArtifact.state || '');
     const restorePreparedCorrectionLaunch = (): void => {
         if (launchArtifactState !== 'delegation_started') {
             writeFileAtomically(
@@ -3408,6 +4283,57 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
     const delegationStartedAtUtc = launchArtifactState === 'delegation_started'
         ? String(correctionLaunchArtifact.delegation_started_at_utc || '')
         : new Date().toISOString();
+    let providerResponseOutputPath = '';
+    let providerResponseSha256 = '';
+    if (launchArtifactState === 'delegation_started') {
+        const declaredProviderResponseOutputPath = String(
+            correctionLaunchArtifact.provider_response_output_path || ''
+        ).trim();
+        const expectedProviderResponseOutputPath = String(
+            correctionArtifact.recovery.handoff?.provider_response_output_path || ''
+        ).trim();
+        if (!declaredProviderResponseOutputPath || !expectedProviderResponseOutputPath) {
+            throw new Error('Correction-only completion requires a predeclared provider response output path.');
+        }
+        const resolvedProviderResponseOutputPath = gateHelpers.resolvePathInsideRepo(
+            declaredProviderResponseOutputPath,
+            repoRoot,
+            { allowMissing: false }
+        );
+        if (!resolvedProviderResponseOutputPath) {
+            throw new Error('Correction-only provider response output binding is missing.');
+        }
+        providerResponseOutputPath = resolvedProviderResponseOutputPath;
+        if (
+            normalizePath(providerResponseOutputPath).toLowerCase()
+            !== normalizePath(path.resolve(expectedProviderResponseOutputPath)).toLowerCase()
+        ) {
+            throw new Error('Correction-only provider response does not match the prepared launch output binding.');
+        }
+        const providerResponseStat = fs.lstatSync(providerResponseOutputPath);
+        const canonicalProviderResponseRoot = gateHelpers.joinOrchestratorPath(
+            repoRoot,
+            path.join('runtime', 'reviews')
+        );
+        if (
+            providerResponseStat.isSymbolicLink()
+            || !providerResponseStat.isFile()
+            || !gateHelpers.isPathRealpathInsideRoot(
+                providerResponseOutputPath,
+                canonicalProviderResponseRoot
+            )
+        ) {
+            throw new Error('Correction-only provider response must be a regular task-owned output file.');
+        }
+        const preparedAtMs = Date.parse(String(correctionLaunchArtifact.prepared_at_utc || ''));
+        if (Number.isFinite(preparedAtMs) && providerResponseStat.mtimeMs + 1 < preparedAtMs) {
+            throw new Error('Correction-only provider response predates the prepared provider launch.');
+        }
+        providerResponseSha256 = fileSha256(providerResponseOutputPath) || '';
+        if (!/^[0-9a-f]{64}$/u.test(providerResponseSha256)) {
+            throw new Error('Correction-only provider response hash is unavailable.');
+        }
+    }
     if (launchArtifactState === 'delegation_started' && (
         correctionLaunchArtifact.correction_producer_identity !== correctionProducerIdentity
         || correctionLaunchArtifact.provider_invocation_id !== providerInvocationId
@@ -3583,10 +4509,17 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
         return event.event_type === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED'
             && getArtifactStringField(details, 'task_id', 'taskId') === taskId
             && getArtifactStringField(details, 'review_type', 'reviewType').toLowerCase() === reviewType
-            && getArtifactStringField(details, 'correction_artifact_sha256') === correctionArtifactSha256
+            && getArtifactStringField(details, 'correction_artifact_sha256')
+                === String(correctionArtifact.artifact_sha256 || '').toLowerCase()
+            && getArtifactStringField(details, 'correction_package_sha256') === correctionArtifactSha256
             && getArtifactStringField(details, 'correction_producer_identity') === correctionProducerIdentity
-            && getArtifactStringField(details, 'provider_invocation_id') === providerInvocationId;
+            && getArtifactStringField(details, 'provider_invocation_id') === providerInvocationId
+            && getArtifactStringField(details, 'availability_provider_response_sha256')
+                === providerResponseSha256;
     });
+    let correctionResponseEventSha256 = String(
+        existingCorrectionInvocation?.integrity?.event_sha256 || ''
+    ).trim().toLowerCase();
     if (!existingCorrectionInvocation) {
         const correctionInvocationEvent = await emitWithPreparedLaunchRollback(() => (
             emitReviewOutputCorrectionInvocationAttestedEventAsync(
@@ -3603,13 +4536,23 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
                 provider_invocation_id: providerInvocationId,
                 provider_invocation_event_sha256: invocationEventSha256,
                 attestation_source: attestationSource,
+                availability_attestation_source: attestationSource,
+                availability_evidence_type: 'provider_native_response_receipt',
+                availability_provider_response_sha256: providerResponseSha256,
+                provider_response_output_path: normalizePath(providerResponseOutputPath),
                 launch_input_mode: 'review_output_correction_artifact_path',
                 launch_input_sha256: launchInputSha256,
                 correction_artifact_path: normalizePath(canonicalCorrectionArtifactPath),
-                correction_artifact_sha256: correctionArtifactSha256,
+                correction_artifact_sha256: correctionArtifact.artifact_sha256,
+                correction_package_sha256: correctionArtifactSha256,
                 correction_attempt: correctionArtifact.recovery.correction_attempt,
                 validation_artifact_sha256: correctionArtifact.binding.validation_artifact_sha256,
                 selected_transport: correctionArtifact.recovery.selected_transport,
+                provider_id: correctionArtifact.transport_binding?.provider_id || null,
+                provider_capabilities_sha256:
+                    correctionArtifact.transport_binding?.provider_capabilities_sha256 || null,
+                session_availability:
+                    correctionArtifact.transport_binding?.session_availability || null,
                 state: 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
                 fork_context: false
             }
@@ -3622,11 +4565,19 @@ async function handleRecordReviewOutputCorrectionInvocationUnlocked(gateArgv: st
             restorePreparedCorrectionLaunch();
             throw new Error(`Correction-only invocation telemetry failed for '${reviewType}'.`);
         }
+        correctionResponseEventSha256 = String(
+            correctionInvocationEvent.integrity?.event_sha256 || ''
+        ).trim().toLowerCase();
+    }
+    if (!/^[0-9a-f]{64}$/u.test(correctionResponseEventSha256)) {
+        throw new Error('Correction-only provider response event hash is unavailable.');
     }
     console.log(`REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED: ${reviewType}`);
     console.log(`CorrectionProducerIdentity: ${correctionProducerIdentity}`);
     console.log(`ProviderInvocationId: ${providerInvocationId}`);
     console.log(`CorrectionInvocationEventSha256: ${invocationEventSha256}`);
+    console.log(`ProviderResponseSha256: ${providerResponseSha256}`);
+    console.log(`ProviderResponseEventSha256: ${correctionResponseEventSha256}`);
     console.log(`NextStep: node bin/garda.js next-step "${taskId}" --repo-root "."`);
 }
 
@@ -3674,6 +4625,8 @@ export function createReviewResultHandlers(dependencies: ReviewResultHandlersDep
     return {
         handleRecordReviewResult: (gateArgv) => handleRecordReviewResultWithDependencies(gateArgv, dependencies),
         handleRecordReviewReceipt: (gateArgv) => handleRecordReviewReceiptWithDependencies(gateArgv, dependencies),
+        handleRecordReviewOutputCorrectionTransport,
+        handleRecordReviewOutputCorrectionResponse,
         handleRecordReviewOutputCorrectionInvocation
     };
 }

@@ -6,15 +6,21 @@ import { describe, it } from 'node:test';
 
 import { fileSha256 } from '../../../../src/gate-runtime/hash';
 import {
+    buildReviewOutputCorrectionApiContinuationAcceptance,
     buildReviewOutputCorrectionArtifact,
+    buildReviewOutputCorrectionLiveContinuationAcceptance,
+    buildReviewOutputCorrectionTransportSelection,
     classifyReviewOutputCorrectionDiagnostics,
+    computeRawReviewOutputSha256,
     computeReviewFindingsSemanticFingerprint,
     executeReviewOutputCorrectionWithAdapter,
+    hasCommittedReviewOutputCorrectionTransportEvent,
     normalizeReviewOutputMechanically,
     persistReviewOutputCorrection,
     readReviewOutputCorrectionArtifact,
     resolveReviewOutputCorrectionTransport,
-    verifyCorrectedReviewOutput
+    verifyCorrectedReviewOutput,
+    REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
 } from '../../../../src/gates/review/review-output-correction';
 
 const SHA_A = 'a'.repeat(64);
@@ -59,6 +65,37 @@ function findingsOutput(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('review output correction contract', () => {
+    it('recognizes only a committed transport event bound to the persisted correction package', () => {
+        const matchingEvent = {
+            event_type: 'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION',
+            details: {
+                review_type: 'code',
+                correction_artifact_sha256: SHA_A,
+                correction_package_sha256: SHA_B
+            },
+            integrity: { event_sha256: SHA_C }
+        };
+        const matches = (timelineEvents: readonly unknown[]) => (
+            hasCommittedReviewOutputCorrectionTransportEvent({
+                timelineEvents,
+                reviewType: 'code',
+                correctionArtifactSha256: SHA_A,
+                correctionPackageSha256: SHA_B
+            })
+        );
+
+        assert.equal(matches([matchingEvent]), true);
+        assert.equal(matches([{ ...matchingEvent, integrity: undefined }]), false);
+        assert.equal(matches([{
+            ...matchingEvent,
+            details: { ...matchingEvent.details, correction_package_sha256: SHA_D }
+        }]), false);
+        assert.equal(matches([{
+            ...matchingEvent,
+            event_type: 'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        }]), false);
+    });
+
     it('normalizes only mechanically derivable bindings without changing finding semantics', () => {
         const content = findingsOutput();
         const diagnostics = classifyReviewOutputCorrectionDiagnostics([
@@ -202,6 +239,7 @@ describe('review output correction contract', () => {
                     reviewer_identity: 'agent:/root/correction-review',
                     reviewer_attempt_id: 'correction-attempt-1',
                     provider_invocation_id: 'correction-invocation-1',
+                    attestation_source: 'codex_collaboration_spawn_agent',
                     review_context_sha256: SHA_A,
                     launch_input_sha256: SHA_A,
                     delegation_started_event_type: 'REVIEWER_DELEGATION_STARTED',
@@ -263,6 +301,397 @@ describe('review output correction contract', () => {
         }).transport, 'full_reviewer_relaunch');
     });
 
+    it('rejects tampered provider capability evidence and falls back when the original session is closed', () => {
+        const artifactPath = path.join(os.tmpdir(), 'T-1-code-output-correction.json');
+        const artifact = buildReviewOutputCorrectionArtifact({
+            taskId: 'T-1',
+            reviewType: 'code',
+            rejectedOutputPath: path.join(os.tmpdir(), 'rejected.md'),
+            rejectedOutputSha256: SHA_A,
+            rejectedOutputContent: findingsOutput(),
+            reviewContextPath: path.join(os.tmpdir(), 'context.json'),
+            reviewContextSha256: SHA_A,
+            reviewTreeStateSha256: SHA_B,
+            reviewerIdentity: 'agent:/root/code-review',
+            reviewerAttemptId: 'attempt-1',
+            reviewerInvocationEventSha256: SHA_D,
+            validationArtifactPath: path.join(os.tmpdir(), 'validation.json'),
+            validationArtifactSha256: SHA_C,
+            violations: ['findings.high[0].description is required.'],
+            capabilities: {
+                live_reviewer_continuation: true,
+                correction_only_invocation: true
+            },
+            providerId: 'Codex',
+            providerInvocationId: '/root/code-review'
+        });
+        assert.equal(artifact.transport_binding?.session_availability, 'pending');
+        assert.equal(artifact.recovery.selected_transport, 'live_reviewer_continuation');
+
+        const forgedLiveSource = verifyCorrectedReviewOutput({
+            artifact,
+            correctedOutput: findingsOutput(),
+            reviewContextSha256: SHA_A,
+            reviewTreeStateSha256: SHA_B,
+            originalReviewerIdentity: 'agent:/root/code-review',
+            originalReviewerAttemptId: 'attempt-1',
+            correctionArtifactSha256: SHA_C,
+            producerAttestation: {
+                producer_identity: 'agent:/root/code-review',
+                provider_invocation_id: '/root/code-review',
+                provider_invocation_event_sha256: SHA_D,
+                attestation_source: 'codex_collaboration_followup_task',
+                launch_input_sha256: SHA_C,
+                fork_context: null
+            },
+            producerInvocationEvidence: {
+                event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                event_sha256: SHA_D,
+                reviewer_identity: 'agent:/root/code-review',
+                reviewer_attempt_id: 'attempt-1',
+                provider_invocation_id: '/root/code-review',
+                attestation_source: 'codex_collaboration_spawn_agent',
+                review_context_sha256: SHA_A,
+                launch_input_sha256: SHA_A,
+                delegation_started_event_type: 'REVIEWER_DELEGATION_STARTED',
+                delegation_started_event_sha256: SHA_C,
+                delegation_started_reviewer_identity: 'agent:/root/code-review',
+                delegation_started_provider_invocation_id: '/root/code-review',
+                correction_launch_artifact_sha256: ''
+            }
+        });
+        assert.match(
+            forgedLiveSource.violations.join(' '),
+            /attestation source does not match provider-owned invocation evidence/iu
+        );
+        assert.match(
+            forgedLiveSource.violations.join(' '),
+            /provider-owned response receipt bound to its bytes/iu
+        );
+
+        const selected = buildReviewOutputCorrectionTransportSelection({
+            artifactPath,
+            artifact,
+            sessionAvailability: 'closed',
+            reviewerIdentity: 'agent:/root/code-review',
+            providerInvocationId: '/root/code-review',
+            attestationSource: REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE,
+            now: '2026-08-20T00:01:00.000Z'
+        });
+        assert.equal(selected.transport_binding?.session_availability, 'closed');
+        assert.equal(selected.recovery.selected_transport, 'correction_only_invocation');
+        assert.equal(
+            selected.transport_binding?.availability_attestation?.provider_invocation_id,
+            '/root/code-review'
+        );
+        assert.equal(
+            selected.transport_binding?.availability_attestation?.evidence_type,
+            'fail_closed_no_provider_session_receipt'
+        );
+        const liveSelected = buildReviewOutputCorrectionLiveContinuationAcceptance({
+            artifactPath,
+            artifact,
+            reviewerIdentity: 'agent:/root/code-review',
+            providerInvocationId: '/root/code-review',
+            providerInvocationEventSha256: SHA_D,
+            providerResponseEventSha256: SHA_B,
+            providerResponseSha256: SHA_C,
+            attestationSource: 'codex_collaboration_spawn_agent',
+            reason: 'Authenticated corrected response accepted.'
+        });
+        assert.equal(liveSelected.transport_binding?.session_availability, 'available');
+        assert.equal(liveSelected.recovery.selected_transport, 'live_reviewer_continuation');
+        assert.equal(liveSelected.state, 'CORRECTION_ACCEPTED');
+        assert.equal(
+            liveSelected.transport_binding?.availability_attestation?.evidence_type,
+            'provider_native_session_receipt'
+        );
+        assert.equal(
+            liveSelected.transport_binding?.availability_attestation?.provider_invocation_event_sha256,
+            SHA_D
+        );
+        assert.equal(
+            liveSelected.transport_binding?.availability_attestation?.provider_response_sha256,
+            SHA_C
+        );
+        assert.equal(
+            liveSelected.transport_binding?.availability_attestation?.provider_response_event_sha256,
+            SHA_B
+        );
+        assert.throws(() => buildReviewOutputCorrectionLiveContinuationAcceptance({
+            artifactPath,
+            artifact,
+            reviewerIdentity: 'agent:/root/code-review',
+            providerInvocationId: '/root/code-review',
+            providerInvocationEventSha256: SHA_D,
+            providerResponseEventSha256: SHA_B,
+            providerResponseSha256: SHA_C,
+            attestationSource: REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE,
+            reason: 'Untrusted response.'
+        }), /provider\/controller-owned live-session attestation source/iu);
+        assert.throws(() => buildReviewOutputCorrectionTransportSelection({
+            artifactPath,
+            artifact: {
+                ...artifact,
+                transport_binding: artifact.transport_binding
+                    ? {
+                        ...artifact.transport_binding,
+                        provider_capabilities_sha256: SHA_A
+                    }
+                    : undefined
+            },
+            sessionAvailability: 'closed',
+            reviewerIdentity: 'agent:/root/code-review',
+            providerInvocationId: '/root/code-review',
+            attestationSource: REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
+        }), /capability evidence is invalid/iu);
+    });
+
+    it('requires a provider-bound response receipt for API-only stateless correction packages', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-correction-api-only-'));
+        try {
+            const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            const reviewArtifactPath = path.join(reviewsRoot, 'T-1-code.md');
+            const rejectedOutputPath = path.join(reviewsRoot, 'placeholder.md');
+            const contextPath = path.join(reviewsRoot, 'T-1-code-review-context.json');
+            const validationPath = path.join(reviewsRoot, 'T-1-code-findings-validation.json');
+            const rawOutput = findingsOutput();
+            fs.writeFileSync(rejectedOutputPath, rawOutput, 'utf8');
+            fs.writeFileSync(contextPath, '{}\n', 'utf8');
+            fs.writeFileSync(validationPath, '{}\n', 'utf8');
+            const artifact = buildReviewOutputCorrectionArtifact({
+                taskId: 'T-1',
+                reviewType: 'code',
+                rejectedOutputPath,
+                rejectedOutputSha256: fileSha256(rejectedOutputPath)!,
+                reviewContextPath: contextPath,
+                reviewContextSha256: SHA_A,
+                reviewTreeStateSha256: SHA_B,
+                reviewerIdentity: 'agent:/root/code-review',
+                reviewerAttemptId: 'attempt-1',
+                reviewerInvocationEventSha256: SHA_D,
+                validationArtifactPath: validationPath,
+                validationArtifactSha256: fileSha256(validationPath)!,
+                violations: ['findings.high[0].description is required.'],
+                capabilities: {
+                    live_reviewer_continuation: false,
+                    api_conversation_continuation: true,
+                    correction_only_invocation: true
+                },
+                providerId: 'Codex',
+                providerInvocationId: '/root/code-review'
+            });
+            const persisted = persistReviewOutputCorrection({
+                repoRoot,
+                reviewArtifactPath,
+                rawOutput,
+                artifact
+            });
+            const loaded = readReviewOutputCorrectionArtifact(persisted.artifactPath);
+            assert.deepEqual(loaded.violations, []);
+            assert.equal(loaded.artifact?.recovery.selected_transport, 'api_conversation_continuation');
+            assert.equal(loaded.artifact?.transport_binding?.session_availability, 'stateless');
+            assert.equal(loaded.artifact?.transport_binding?.availability_attestation, null);
+
+            const correctionArtifactSha256 = fileSha256(persisted.artifactPath)!;
+            const verifyApiCorrection = (
+                producerInvocationEvidence:
+                    Parameters<typeof verifyCorrectedReviewOutput>[0]['producerInvocationEvidence']
+            ) => verifyCorrectedReviewOutput({
+                artifact: loaded.artifact!,
+                correctedOutput: findingsOutput(),
+                reviewContextSha256: SHA_A,
+                reviewTreeStateSha256: SHA_B,
+                originalReviewerIdentity: 'agent:/root/code-review',
+                originalReviewerAttemptId: 'attempt-1',
+                correctionArtifactSha256,
+                producerAttestation: {
+                    producer_identity: 'agent:/root/code-review',
+                    provider_invocation_id: '/root/code-review',
+                    provider_invocation_event_sha256: SHA_D,
+                    attestation_source: 'codex_collaboration_spawn_agent',
+                    launch_input_sha256: correctionArtifactSha256,
+                    fork_context: null
+                },
+                producerInvocationEvidence
+            });
+            const invocationEvidence = {
+                event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                event_sha256: SHA_D,
+                reviewer_identity: 'agent:/root/code-review',
+                reviewer_attempt_id: 'attempt-1',
+                provider_invocation_id: '/root/code-review',
+                attestation_source: 'codex_collaboration_spawn_agent',
+                review_context_sha256: SHA_A,
+                launch_input_sha256: '',
+                delegation_started_event_type: 'REVIEWER_DELEGATION_STARTED',
+                delegation_started_event_sha256: SHA_C,
+                delegation_started_reviewer_identity: 'agent:/root/code-review',
+                delegation_started_provider_invocation_id: '/root/code-review',
+                correction_launch_artifact_sha256: ''
+            };
+            const missingResponseReceipt = verifyApiCorrection(invocationEvidence);
+            assert.equal(missingResponseReceipt.valid, false);
+            assert.match(
+                missingResponseReceipt.violations.join(' '),
+                /provider-owned response receipt bound to its bytes/iu
+            );
+
+            const correctedOutputSha256 = computeRawReviewOutputSha256(findingsOutput());
+            const verification = verifyApiCorrection({
+                ...invocationEvidence,
+                provider_response_event_type: 'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION',
+                provider_response_event_sha256: SHA_B,
+                provider_response_sha256: correctedOutputSha256
+            });
+            assert.deepEqual(verification.violations, []);
+            assert.equal(verification.valid, true);
+
+            const accepted = buildReviewOutputCorrectionApiContinuationAcceptance({
+                artifactPath: persisted.artifactPath,
+                artifact: loaded.artifact!,
+                reviewerIdentity: 'agent:/root/code-review',
+                providerInvocationId: '/root/code-review',
+                providerInvocationEventSha256: SHA_D,
+                providerResponseEventSha256: SHA_B,
+                providerResponseSha256: correctedOutputSha256,
+                attestationSource: 'codex_collaboration_spawn_agent',
+                reason: 'Authenticated API correction response accepted.'
+            });
+            assert.equal(accepted.state, 'CORRECTION_ACCEPTED');
+            assert.equal(accepted.recovery.selected_transport, 'api_conversation_continuation');
+            assert.equal(accepted.transport_binding?.session_availability, 'stateless');
+            assert.equal(
+                accepted.transport_binding?.availability_attestation?.provider_response_event_sha256,
+                SHA_B
+            );
+            assert.equal(
+                accepted.transport_binding?.availability_attestation?.provider_response_sha256,
+                correctedOutputSha256
+            );
+            fs.writeFileSync(persisted.artifactPath, `${JSON.stringify(accepted, null, 2)}\n`, 'utf8');
+            assert.deepEqual(readReviewOutputCorrectionArtifact(persisted.artifactPath).violations, []);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects exhausted recovery and serializes concurrent live, closed, stateless, and API transports offline', async () => {
+        const makeArtifact = (correctionAttempt = 1) => buildReviewOutputCorrectionArtifact({
+            taskId: 'T-1',
+            reviewType: 'code',
+            rejectedOutputPath: 'rejected.md',
+            rejectedOutputSha256: SHA_A,
+            rejectedOutputContent: findingsOutput(),
+            reviewContextPath: 'context.json',
+            reviewContextSha256: SHA_A,
+            reviewTreeStateSha256: SHA_B,
+            reviewerIdentity: 'agent:/root/code-review',
+            reviewerAttemptId: 'attempt-1',
+            reviewerInvocationEventSha256: SHA_D,
+            validationArtifactPath: 'validation.json',
+            validationArtifactSha256: SHA_C,
+            violations: ['findings.high[0].description is required.'],
+            correctionAttempt,
+            maxCorrectionAttempts: 2,
+            capabilities: {
+                live_reviewer_continuation: true,
+                api_conversation_continuation: true,
+                correction_only_invocation: true
+            }
+        });
+        const events: string[] = [];
+        const live = await executeReviewOutputCorrectionWithAdapter({
+            artifact: makeArtifact(),
+            adapter: {
+                id: 'offline-live',
+                capabilities: {
+                    gate_normalization: false,
+                    live_reviewer_continuation: true,
+                    api_conversation_continuation: false,
+                    correction_only_invocation: true
+                },
+                probeLiveReviewerAvailability: async () => 'available',
+                continueReview: async () => 'live-output',
+                recordTelemetry: (event) => { events.push(event.event); }
+            }
+        });
+        assert.equal(live, 'live-output');
+
+        const api = await executeReviewOutputCorrectionWithAdapter({
+            artifact: makeArtifact(),
+            adapter: {
+                id: 'offline-api-after-close',
+                capabilities: {
+                    gate_normalization: false,
+                    live_reviewer_continuation: true,
+                    api_conversation_continuation: true,
+                    correction_only_invocation: true
+                },
+                probeLiveReviewerAvailability: async () => 'closed',
+                continueApiConversation: async () => 'api-output',
+                recordTelemetry: (event) => { events.push(event.event); }
+            }
+        });
+        assert.equal(api, 'api-output');
+
+        let correctionOnlyCalls = 0;
+        let releaseCorrection!: () => void;
+        const correctionWait = new Promise<void>((resolve) => { releaseCorrection = resolve; });
+        const concurrentOptions = {
+            artifact: makeArtifact(),
+            adapter: {
+                id: 'offline-stateless-concurrent',
+                capabilities: {
+                    gate_normalization: false,
+                    live_reviewer_continuation: true,
+                    api_conversation_continuation: false,
+                    correction_only_invocation: true
+                },
+                probeLiveReviewerAvailability: async () => 'stateless' as const,
+                invokeCorrectionOnly: async () => {
+                    correctionOnlyCalls += 1;
+                    await correctionWait;
+                    return 'correction-only-output';
+                },
+                recordTelemetry: (event: { event: string }) => { events.push(event.event); }
+            }
+        };
+        const first = executeReviewOutputCorrectionWithAdapter(concurrentOptions);
+        const second = executeReviewOutputCorrectionWithAdapter(concurrentOptions);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(correctionOnlyCalls, 1);
+        releaseCorrection();
+        assert.deepEqual(await Promise.all([first, second]), [
+            'correction-only-output',
+            'correction-only-output'
+        ]);
+        assert.deepEqual(events, [
+            'live_continuation',
+            'api_continuation',
+            'correction_only_invocation'
+        ]);
+
+        const boundedEvents: string[] = [];
+        await assert.rejects(() => executeReviewOutputCorrectionWithAdapter({
+            artifact: makeArtifact(3),
+            adapter: {
+                id: 'offline-bounded',
+                capabilities: {
+                    gate_normalization: false,
+                    live_reviewer_continuation: true,
+                    api_conversation_continuation: true,
+                    correction_only_invocation: true
+                },
+                probeLiveReviewerAvailability: async () => 'available',
+                continueReview: async () => 'must-not-run',
+                recordTelemetry: (event) => { boundedEvents.push(event.event); }
+            }
+        }), /full_reviewer_relaunch/iu);
+        assert.deepEqual(boundedEvents, ['full_reviewer_relaunch']);
+    });
+
     it('persists bound raw output and rejects tamper, provenance drift, and finding changes', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-correction-'));
         try {
@@ -310,9 +739,7 @@ describe('review output correction contract', () => {
             );
             assert.equal(loaded.artifact!.recovery.handoff?.fork_context, false);
 
-            const valid = verifyCorrectedReviewOutput({
-                artifact: loaded.artifact!,
-                correctedOutput: findingsOutput({
+            const correctedOutput = findingsOutput({
                     schema_version: 2,
                     task_id: 'T-1',
                     review_type: 'code',
@@ -322,7 +749,10 @@ describe('review output correction contract', () => {
                         note: 'Required validation evidence was supplied without changing findings.'
                     }],
                     reviewer_notes: ['Validation-only correction completed.']
-                }),
+                });
+            const valid = verifyCorrectedReviewOutput({
+                artifact: loaded.artifact!,
+                correctedOutput,
                 reviewContextSha256: SHA_A,
                 reviewTreeStateSha256: SHA_B,
                 originalReviewerIdentity: 'agent:/root/code-review',
@@ -342,13 +772,17 @@ describe('review output correction contract', () => {
                     reviewer_identity: 'agent:/root/correction-review',
                     reviewer_attempt_id: 'correction-attempt-1',
                     provider_invocation_id: 'correction-invocation-1',
+                    attestation_source: 'codex_collaboration_spawn_agent',
                     review_context_sha256: SHA_A,
                     launch_input_sha256: fileSha256(persisted.artifactPath)!,
                     delegation_started_event_type: 'REVIEWER_DELEGATION_STARTED',
                     delegation_started_event_sha256: SHA_C,
                     delegation_started_reviewer_identity: 'agent:/root/correction-review',
                     delegation_started_provider_invocation_id: 'correction-invocation-1',
-                    correction_launch_artifact_sha256: SHA_B
+                    correction_launch_artifact_sha256: SHA_B,
+                    provider_response_event_type: 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
+                    provider_response_event_sha256: SHA_C,
+                    provider_response_sha256: computeRawReviewOutputSha256(correctedOutput)
                 }
             });
             assert.equal(valid.valid, true);
@@ -406,6 +840,7 @@ describe('review output correction contract', () => {
                     reviewer_identity: 'agent:/root/correction-review',
                     reviewer_attempt_id: 'correction-attempt-2',
                     provider_invocation_id: 'correction-invocation-2',
+                    attestation_source: 'codex_collaboration_spawn_agent',
                     review_context_sha256: SHA_A,
                     launch_input_sha256: fileSha256(persisted.artifactPath)!,
                     delegation_started_event_type: 'REVIEWER_DELEGATION_STARTED',

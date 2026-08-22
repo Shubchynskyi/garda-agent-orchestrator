@@ -90,6 +90,30 @@ export async function emitReviewOutputCorrectionRequiredEventAsync(
     );
 }
 
+export async function emitReviewOutputCorrectionTransportEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    transport: 'live_reviewer_continuation' | 'api_conversation_continuation' | 'correction_only_invocation',
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    const eventType = {
+        live_reviewer_continuation: LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION,
+        api_conversation_continuation: LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_API_CONTINUATION,
+        correction_only_invocation: LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION
+    }[transport];
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        eventType,
+        'INFO',
+        `Review output correction transport selected: ${reviewType} (${transport}).`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
 export async function emitReviewOutputCorrectionNormalizedEventAsync(
     repoRoot: string,
     taskId: string,
