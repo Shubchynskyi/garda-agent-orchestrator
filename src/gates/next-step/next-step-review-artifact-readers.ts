@@ -102,6 +102,7 @@ export interface ReviewArtifactState {
     contextCurrent: boolean;
     artifactExists: boolean;
     receiptExists: boolean;
+    receiptContractCurrent?: boolean;
     passToken: string;
     failToken: string;
     verdictToken: string | null;
@@ -631,6 +632,7 @@ export function readReviewArtifactState(
     let context: Record<string, unknown> | null = null;
     let receipt: Record<string, unknown> | null = null;
     let receiptCurrent = false;
+    let receiptContractCurrent = false;
     let reviewerIdentity: string | null = null;
     let contextReviewerIdentity: string | null = null;
     let contextReviewTreeStateSha256: string | null = null;
@@ -885,7 +887,7 @@ export function readReviewArtifactState(
         });
         const evidenceFields = evidenceContract.fields;
         violations.push(...evidenceContract.violations);
-        const receiptContractCurrent = contextCurrent && evidenceContract.violations.length === 0;
+        receiptContractCurrent = contextCurrent && evidenceContract.violations.length === 0;
         reviewerIdentity = evidenceFields.reviewerIdentity;
         reusedExistingReview = evidenceFields.reusedExistingReview;
         reusedFromReceiptPath = evidenceFields.reusedFromReceiptPath;
@@ -1274,6 +1276,7 @@ export function readReviewArtifactState(
         contextCurrent,
         artifactExists,
         receiptExists,
+        receiptContractCurrent,
         passToken,
         failToken,
         verdictToken,

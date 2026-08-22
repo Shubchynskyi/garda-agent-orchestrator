@@ -4175,6 +4175,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         : currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
                     launchReviewerIdentity: currentReviewerLaunchArtifactEvidence?.reviewerIdentity || null,
                     receiptReviewerIdentity: state.reviewerIdentity,
+                    receiptIdentityCurrent: state.receiptContractCurrent === true,
                     contextReviewerIdentity: state.contextReviewerIdentity,
                     receivingGateCanResolveCurrentAttempt: false
                 })
