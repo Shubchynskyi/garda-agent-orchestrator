@@ -18,7 +18,6 @@ import {
 import {
     isOrchestratorSourceCheckout
 } from '../protected-control-plane/protected-control-plane';
-
 const PROVIDER_INVOCATION_ID_PLACEHOLDER = '<provider-owned invocation id from delegated reviewer launch result>';
 const PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER = '<provider-owned attestation source from delegated reviewer launch result>';
 
@@ -289,12 +288,24 @@ export function buildRecordReviewOutputCorrectionInvocationCommand(
         attestationSource?: string | null;
     }
 ): string {
-    const producerIdentity = String(persistedLaunch?.producerIdentity || '').trim()
-        || '<agent:resolved-provider-correction-reviewer-id>';
-    const providerInvocationId = String(persistedLaunch?.providerInvocationId || '').trim()
-        || '<provider-owned correction invocation id>';
-    const attestationSource = String(persistedLaunch?.attestationSource || '').trim()
-        || '<provider-owned correction attestation source>';
+    if (persistedLaunch) {
+        return buildReviewPhaseCommand(
+            repoRoot,
+            cliPrefix,
+            taskId,
+            'record-review-output-correction-invocation',
+            [
+                `--review-type ${quoteCommandValue(reviewType)}`,
+                `--correction-artifact-path ${quoteCommandValue(
+                    toRepoDisplayPath(repoRoot, correctionArtifactPath)
+                )}`
+            ],
+            taskModePath
+        );
+    }
+    const producerIdentity = '<agent:resolved-provider-correction-reviewer-id>';
+    const providerInvocationId = '<provider-owned correction invocation id>';
+    const attestationSource = '<provider-owned correction attestation source>';
     return buildReviewPhaseCommand(
         repoRoot,
         cliPrefix,
@@ -314,6 +325,43 @@ export function buildRecordReviewOutputCorrectionInvocationCommand(
             '--fork-context false'
         ],
         taskModePath
+    );
+}
+
+export function buildRecordReviewOutputCorrectionTransportCommand(params: {
+    repoRoot: string;
+    cliPrefix: string;
+    taskId: string;
+    reviewType: string;
+    correctionArtifactPath: string;
+    reviewerIdentity: string;
+    providerInvocationId: string;
+    taskModePath?: string | null;
+    sessionAvailability?: 'closed' | 'stateless' | null;
+    attestationSource?: string | null;
+}): string {
+    const sessionAvailability = params.sessionAvailability
+        || '<provider-controller fail-closed availability: closed|stateless>';
+    const attestationSource = params.attestationSource
+        || (
+            'garda_fail_closed_no_provider_session_receipt'
+        );
+    return buildReviewPhaseCommand(
+        params.repoRoot,
+        params.cliPrefix,
+        params.taskId,
+        'record-review-output-correction-transport',
+        [
+            `--review-type ${quoteCommandValue(params.reviewType)}`,
+            `--correction-artifact-path ${quoteCommandValue(
+                toRepoDisplayPath(params.repoRoot, params.correctionArtifactPath)
+            )}`,
+            `--session-availability ${quoteCommandValue(sessionAvailability)}`,
+            `--reviewer-identity ${quoteCommandValue(params.reviewerIdentity)}`,
+            `--provider-invocation-id ${quoteCommandValue(params.providerInvocationId)}`,
+            `--attestation-source ${quoteCommandValue(attestationSource)}`
+        ],
+        params.taskModePath || null
     );
 }
 

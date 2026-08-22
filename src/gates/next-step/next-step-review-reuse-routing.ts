@@ -6,6 +6,9 @@ import type {
 import type {
     DelegatedReviewLaunchArtifactState
 } from './next-step-review-readiness-routing';
+import type {
+    ReviewOutputCorrectionHandoffEvidence
+} from './next-step-review-artifact-readers';
 
 export interface ReviewReuseRoutingCommand {
     label: string;
@@ -126,44 +129,32 @@ export interface FailedReviewRemediationRouteOptions {
     downstreamReviewTypes: readonly string[];
     reviewerResultRecoveryIdentity: ReviewerResultRecoveryIdentityResolution | null;
     launchArtifactState: DelegatedReviewLaunchArtifactState;
+    correctionHandoff?: ReviewOutputCorrectionHandoffEvidence | null;
     commands: {
         restartReviewCycle: ReviewReuseRoutingCommand;
         rerunNavigator: ReviewReuseRoutingCommand;
         compileGate: ReviewReuseRoutingCommand;
         buildScopedDiff: ReviewReuseRoutingCommand;
         buildReviewContext: ReviewReuseRoutingCommand;
+        recordCorrectionTransport?: ReviewReuseRoutingCommand;
         recordCorrectionInvocation?: ReviewReuseRoutingCommand;
         recordResult: ReviewReuseRoutingCommand;
     };
 }
 
-function readCorrectionHandoffField(failureReason: string | null, field: string): string | null {
-    const match = String(failureReason || '').match(new RegExp(`${field}=([^;]+);`, 'iu'));
-    return match?.[1]?.trim() || null;
-}
-
 function buildAttestedCorrectionRecordResultCommand(options: FailedReviewRemediationRouteOptions): ReviewReuseRoutingCommand {
-    const providerAction = readCorrectionHandoffField(options.failureReason, 'provider_action');
-    const targetIdentity = readCorrectionHandoffField(options.failureReason, 'target_reviewer_identity');
-    const launchInputSha256 = readCorrectionHandoffField(
-        options.failureReason,
-        'ReviewerCorrectionInputArtifactSha256'
-    );
-    const providerInvocationEventSha256 = readCorrectionHandoffField(
-        options.failureReason,
-        providerAction === 'launch_correction_only_reviewer'
-            ? 'CorrectionProducerInvocationEventSha256'
-            : 'ReviewerInvocationEventSha256'
-    );
-    const attestedProducerIdentity = readCorrectionHandoffField(
-        options.failureReason,
-        'CorrectionProducerIdentity'
-    );
-    const attestedProviderInvocationId = readCorrectionHandoffField(
-        options.failureReason,
-        'CorrectionProviderInvocationId'
-    );
-    const attestedSource = readCorrectionHandoffField(options.failureReason, 'CorrectionAttestationSource');
+    const handoff = options.correctionHandoff;
+    const providerAction = handoff?.providerAction || null;
+    const targetIdentity = handoff?.targetReviewerIdentity || null;
+    const launchInputSha256 = handoff?.launchInputSha256 || null;
+    const providerInvocationEventSha256 = providerAction === 'launch_correction_only_reviewer'
+        ? handoff?.correctionProducerInvocationEventSha256 || null
+        : handoff?.reviewerInvocationEventSha256 || null;
+    const attestedProducerIdentity = handoff?.correctionProducerIdentity || null;
+    const attestedProviderInvocationId = providerAction === 'continue_api_conversation'
+        ? handoff?.originalProviderInvocationId || null
+        : handoff?.correctionProviderInvocationId || null;
+    const attestedSource = handoff?.correctionAttestationSource || null;
     const correctionProducerIdentity = targetIdentity && targetIdentity !== 'new_correction_only_reviewer'
         ? targetIdentity
         : attestedProducerIdentity || '<agent:resolved-provider-correction-reviewer-id>';
@@ -208,6 +199,56 @@ export function resolveFailedReviewRemediationRoute(
             commands: [options.commands.restartReviewCycle]
         };
     }
+    if (options.failureKind === 'review-correction-transport-selection-required') {
+        if (!options.correctionHandoff?.originalProviderInvocationId) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Launch a fresh full '${options.reviewType}' reviewer after correction transport fallback.`,
+                reason:
+                    `The '${options.reviewType}' correction package has no authenticated original provider invocation ` +
+                    'binding, so provider session availability cannot be attested safely. Preserve the rejected output ' +
+                    'and restart only this review cycle instead of executing a transport command with placeholder provenance.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
+        if (!options.commands.recordCorrectionTransport) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover '${options.reviewType}' correction transport routing.`,
+                reason:
+                    `The '${options.reviewType}' correction package requires provider-controller session evidence, but ` +
+                    'the navigator did not materialize its transport-selection command. Restart only this review cycle ' +
+                    'instead of accepting an unattested correction.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
+        if (!options.reviewerResultRecoveryIdentity?.ready) {
+            const identityReason = options.reviewerResultRecoveryIdentity?.reason || 'resolved_identity_missing';
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover '${options.reviewType}' reviewer identity before transport selection.`,
+                reason:
+                    `The '${options.reviewType}' correction package requires a provider-controller session probe, but the ` +
+                    `current reviewer attempt is not authenticated (${identityReason}). Preserve the rejected output and ` +
+                    'restart only this review cycle so a fresh delegated launch re-establishes identity and provenance.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
+        return {
+            status: 'BLOCKED',
+            nextGate: 'record-review-output-correction-transport',
+            title: `Record authenticated '${options.reviewType}' correction transport.`,
+            reason:
+                `The '${options.reviewType}' correction package cannot use an authenticated live continuation response. ` +
+                'Record `closed`/`stateless` with canonical fail-closed evidence so Garda can choose the API or ' +
+                'correction-only fallback. A caller-provided source string can never authorize live continuation; live ' +
+                'selection is frozen only when record-review-result accepts a corrected response bound to the original invocation.',
+            commands: [options.commands.recordCorrectionTransport]
+        };
+    }
     if (options.failureKind === 'review-validation-rejected') {
         if (!options.reviewerResultRecoveryIdentity?.ready) {
             const identityReason = options.reviewerResultRecoveryIdentity?.reason || 'resolved_identity_missing';
@@ -223,15 +264,10 @@ export function resolveFailedReviewRemediationRoute(
                 commands: [options.commands.restartReviewCycle]
             };
         }
-        const providerAction = readCorrectionHandoffField(options.failureReason, 'provider_action');
-        const correctionProducerInvocationEventSha256 = readCorrectionHandoffField(
-            options.failureReason,
-            'CorrectionProducerInvocationEventSha256'
-        );
-        const correctionLaunchState = readCorrectionHandoffField(
-            options.failureReason,
-            'CorrectionLaunchState'
-        );
+        const providerAction = options.correctionHandoff?.providerAction || null;
+        const correctionProducerInvocationEventSha256 =
+            options.correctionHandoff?.correctionProducerInvocationEventSha256 || null;
+        const correctionLaunchState = options.correctionHandoff?.launchState || null;
         if (
             providerAction === 'launch_correction_only_reviewer'
             && !/^[0-9a-f]{64}$/u.test(correctionProducerInvocationEventSha256 || '')

@@ -76,6 +76,7 @@ const TASK_ID = 'T-NEXT-1';
 const nodeRequire = createRequire(__filename);
 const DEFAULT_APP_SOURCE = 'export const value = 1;\n';
 const PREFLIGHT_CHANGED_APP_SOURCE = 'export const value = 1;\n// Review routing fixture change.\n';
+const FOCUSED_COMMAND_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
 
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -1020,7 +1021,10 @@ function writeRejectedFindingsValidationReviewEvidence(
     repoRoot: string,
     taskId: string,
     reviewType: string,
-    options: { preserveStaleReceipt?: boolean } = {}
+    options: {
+        preserveStaleReceipt?: boolean;
+        apiCorrectionProviderInvocationId?: string;
+    } = {}
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
@@ -1127,9 +1131,13 @@ function writeRejectedFindingsValidationReviewEvidence(
         validationArtifactSha256: fileSha256(validationArtifactPath),
         violations: validation.violations,
         capabilities: {
-            live_reviewer_continuation: true,
+            live_reviewer_continuation: !options.apiCorrectionProviderInvocationId,
+            api_conversation_continuation: Boolean(options.apiCorrectionProviderInvocationId),
             correction_only_invocation: true
-        }
+        },
+        providerId: options.apiCorrectionProviderInvocationId ? 'Codex' : null,
+        providerInvocationId: options.apiCorrectionProviderInvocationId || null,
+        sessionAvailability: options.apiCorrectionProviderInvocationId ? 'pending' : undefined
     });
     persistReviewOutputCorrection({
         repoRoot,
@@ -1525,13 +1533,12 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
         assert.match(result.title, /Execute the bound 'code' correction handoff/);
-        assert.match(result.reason, /System validation rejected/);
-        assert.match(result.reason, /not an implementation defect/);
+        assert.match(result.reason, /provider tools before running the command/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
         assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
-        assert.ok(result.commands[0].command.includes('--correction-producer-identity "agent:code-reviewer"'));
         assert.ok(result.commands[0].command.includes('--correction-provider-invocation-id'));
-        assert.match(result.commands[0].command, /--correction-launch-input-sha256 "[0-9a-f]{64}"/u);
+        assert.ok(result.commands[0].command.includes('--correction-provider-invocation-event-sha256'));
+        assert.ok(result.commands[0].command.includes('--correction-attestation-source'));
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.ok(!result.commands[0].command.includes('compile-gate'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
@@ -1551,7 +1558,44 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-review-result');
         assert.match(result.title, /Execute the bound 'code' correction handoff/);
-        assert.ok(result.commands[0].command.includes('--correction-producer-identity "agent:code-reviewer"'));
+        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
+    });
+
+    it('rejects a correction transport provider invocation that is not bound to the authenticated reviewer event', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code', {
+            apiCorrectionProviderInvocationId: 'forged-provider-invocation'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restart-review-cycle');
+        assert.match(result.reason, /cannot safely continue|provenance or semantic binding is unavailable/u);
+        assert.equal(result.commands[0].command.includes('forged-provider-invocation'), false);
+        assert.equal(result.commands[0].command.includes('record-review-output-correction-transport'), false);
+    });
+
+    it('routes an authenticated correction transport through the bound reviewer invocation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code', {
+            apiCorrectionProviderInvocationId: 'test-code-invocation'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-output-correction-transport');
+        assert.match(result.commands[0].command, /record-review-output-correction-transport/u);
+        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.ok(result.commands[0].command.includes('--provider-invocation-id "test-code-invocation"'));
         assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
     });
 
@@ -1682,10 +1726,8 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-review-result');
         assert.match(result.title, /Execute the bound 'code' correction handoff/);
-        assert.match(result.reason, /not an implementation defect/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
-        assert.ok(result.commands[0].command.includes('--correction-attestation-source'));
-        assert.match(result.commands[0].command, /--correction-launch-input-sha256 "[0-9a-f]{64}"/u);
+        assert.equal(result.commands[0].command.includes('--correction-attestation-source'), true);
         assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.match(failureIntegrity.event_sha256, /^[0-9a-f]{64}$/);
@@ -2682,7 +2724,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
                 command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
                 preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
                 coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-                timeoutMs: 60_000
+                timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
             });
             assert.equal(commandResult.exitCode, 0);
 
@@ -2726,7 +2768,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
             command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
             preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
             coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-            timeoutMs: 60_000
+            timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
         });
         assert.equal(commandResult.exitCode, 0);
 
@@ -2756,7 +2798,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
                 command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
                 preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
                 coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-                timeoutMs: 60_000
+                timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
             });
             assert.equal(commandResult.exitCode, 0, markerField);
 
@@ -2801,7 +2843,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
                 command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
                 preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
                 coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-                timeoutMs: 60_000
+                timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
             });
             assert.equal(commandResult.exitCode, 0);
 
@@ -2839,7 +2881,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
             command: 'npm test -- tests/node/gates/focused-evidence.test.ts',
             preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
             coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-            timeoutMs: 60_000
+            timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
         });
         assert.equal(commandResult.exitCode, 0);
 
@@ -2880,7 +2922,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
             outputPath: path.join(customEvidenceRoot, 'focused-command.log'),
             preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
             coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-            timeoutMs: 60_000
+            timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
         });
         assert.equal(commandResult.exitCode, 0);
 

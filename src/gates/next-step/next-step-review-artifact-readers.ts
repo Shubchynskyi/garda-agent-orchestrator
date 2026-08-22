@@ -113,6 +113,7 @@ export interface ReviewArtifactState {
         | 'missing-validation-evidence'
         | 'stale-validation-evidence'
         | 'review-validation-rejected'
+        | 'review-correction-transport-selection-required'
         | 'review-correction-full-review-required'
         | null;
     failureReason: string | null;
@@ -126,6 +127,10 @@ export interface ReviewArtifactState {
     reviewOutputCorrectionProducerIdentity?: string | null;
     reviewOutputCorrectionProviderInvocationId?: string | null;
     reviewOutputCorrectionAttestationSource?: string | null;
+    reviewOutputCorrectionSessionAvailability?: string | null;
+    reviewOutputCorrectionOriginalProviderInvocationId?: string | null;
+    reviewOutputCorrectionReviewerIdentity?: string | null;
+    reviewOutputCorrectionHandoff?: ReviewOutputCorrectionHandoffEvidence | null;
     reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null;
     frozenReviewFindingsDisposition?: ReviewFindingsDispositionEvaluation | null;
     reviewFindingsDispositionArtifactPath: string | null;
@@ -173,6 +178,19 @@ export interface ReviewArtifactState {
     reviewResultRecordedAtUtc: string | null;
     recordedAtUtc: string | null;
     reviewOutputSourceMtimeUtc: string | null;
+}
+
+export interface ReviewOutputCorrectionHandoffEvidence {
+    providerAction: string | null;
+    launchState: string | null;
+    targetReviewerIdentity: string | null;
+    launchInputSha256: string | null;
+    reviewerInvocationEventSha256: string | null;
+    correctionProducerInvocationEventSha256: string | null;
+    correctionProducerIdentity: string | null;
+    correctionProviderInvocationId: string | null;
+    originalProviderInvocationId: string | null;
+    correctionAttestationSource: string | null;
 }
 
 function fileExists(filePath: string): boolean {
@@ -664,6 +682,10 @@ export function readReviewArtifactState(
     let reviewOutputCorrectionProducerIdentity: string | null = null;
     let reviewOutputCorrectionProviderInvocationId: string | null = null;
     let reviewOutputCorrectionAttestationSource: string | null = null;
+    let reviewOutputCorrectionSessionAvailability: string | null = null;
+    let reviewOutputCorrectionOriginalProviderInvocationId: string | null = null;
+    let reviewOutputCorrectionReviewerIdentity: string | null = null;
+    let reviewOutputCorrectionHandoff: ReviewOutputCorrectionHandoffEvidence | null = null;
     let reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     let frozenReviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     let reviewFindingsDispositionArtifactPath: string | null = null;
@@ -1155,6 +1177,34 @@ export function readReviewArtifactState(
                     failureReason = correction.artifact.recovery.reason;
                 } else if (correction.artifact.state === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
                     const handoff = correction.artifact.recovery.handoff;
+                    const transportBinding = correction.artifact.transport_binding;
+                    const originalProviderInvocationId = String(
+                        transportBinding?.provider_invocation_id || ''
+                    ).trim() || null;
+                    reviewOutputCorrectionSessionAvailability =
+                        transportBinding?.session_availability || null;
+                    reviewOutputCorrectionOriginalProviderInvocationId =
+                        originalProviderInvocationId;
+                    reviewOutputCorrectionReviewerIdentity =
+                        correction.artifact.binding.reviewer_identity || null;
+                    if (
+                        (
+                            correction.artifact.recovery.selected_transport === 'api_conversation_continuation'
+                            || correction.artifact.recovery.selected_transport === 'correction_only_invocation'
+                        )
+                        && transportBinding?.session_availability === 'pending'
+                    ) {
+                        failureKind = originalProviderInvocationId
+                            ? 'review-correction-transport-selection-required'
+                            : 'review-correction-full-review-required';
+                        if (!originalProviderInvocationId) {
+                            failureReason = [
+                                failureReason,
+                                'Review output correction transport is not bound to an authenticated original provider invocation; ' +
+                                'a controller-only invocation cannot attest provider session availability.'
+                            ].filter(Boolean).join(' ');
+                        }
+                    }
                     const correctionInputSha256 = fileSha256(correctionPath);
                     const correctionLaunchPath = getReviewOutputCorrectionLaunchArtifactPath(artifactPath);
                     const correctionLaunch = fileExists(correctionLaunchPath)
@@ -1185,6 +1235,28 @@ export function readReviewArtifactState(
                             && String(integrity?.event_sha256 || '').trim().toLowerCase()
                                 === reviewerInvocationEventSha256;
                     });
+                    const originalInvocationDetails = originalInvocation
+                        && isPlainRecord(originalInvocation.details)
+                        ? originalInvocation.details
+                        : null;
+                    const originalInvocationProviderInvocationId = String(
+                        originalInvocationDetails?.provider_invocation_id || ''
+                    ).trim();
+                    const originalInvocationReviewerIdentity = String(
+                        originalInvocationDetails?.reviewer_identity
+                        || originalInvocationDetails?.reviewer_session_id
+                        || ''
+                    ).trim();
+                    const originalInvocationBindingValid = Boolean(
+                        originalProviderInvocationId
+                        && originalInvocationProviderInvocationId === originalProviderInvocationId
+                        && originalInvocationReviewerIdentity === correction.artifact.binding.reviewer_identity
+                    );
+                    const authenticatedOriginalProviderInvocationId = originalInvocationBindingValid
+                        ? originalProviderInvocationId
+                        : null;
+                    reviewOutputCorrectionOriginalProviderInvocationId =
+                        authenticatedOriginalProviderInvocationId;
                     const correctionProducerInvocation = correction.artifact.recovery.selected_transport
                         === 'correction_only_invocation'
                         ? [...timelineEvents].reverse().find((event) => {
@@ -1221,12 +1293,30 @@ export function readReviewArtifactState(
                     ).trim();
                     if (
                         !handoff
+                        || !transportBinding
                         || !correctionInputSha256
                         || !/^[0-9a-f]{64}$/u.test(reviewerInvocationEventSha256)
                         || !originalInvocation
+                        || (
+                            failureKind === 'review-correction-transport-selection-required'
+                            && !originalInvocationBindingValid
+                        )
                     ) {
                         failureKind = 'review-correction-full-review-required';
                     }
+                    reviewOutputCorrectionHandoff = {
+                        providerAction: String(handoff?.provider_action || '').trim() || null,
+                        launchState: reviewOutputCorrectionLaunchState,
+                        targetReviewerIdentity: String(handoff?.target_reviewer_identity || '').trim() || null,
+                        launchInputSha256: correctionInputSha256 || null,
+                        reviewerInvocationEventSha256: reviewerInvocationEventSha256 || null,
+                        correctionProducerInvocationEventSha256:
+                            correctionProducerInvocationEventSha256 || null,
+                        correctionProducerIdentity: correctionProducerIdentity || null,
+                        correctionProviderInvocationId: correctionProviderInvocationId || null,
+                        originalProviderInvocationId: authenticatedOriginalProviderInvocationId,
+                        correctionAttestationSource: correctionAttestationSource || null
+                    };
                     failureReason = [
                         failureReason,
                         `Correction package: ${normalizePath(correctionPath)}.`,
@@ -1242,6 +1332,9 @@ export function readReviewArtifactState(
                                 `CorrectionProducerIdentity=${correctionProducerIdentity || 'unavailable'};`,
                                 `CorrectionProviderInvocationId=${correctionProviderInvocationId || 'unavailable'};`,
                                 `CorrectionAttestationSource=${correctionAttestationSource || 'unavailable'};`,
+                                `CorrectionSessionAvailability=${transportBinding?.session_availability || 'unavailable'};`,
+                                `OriginalProviderInvocationId=${authenticatedOriginalProviderInvocationId || 'unavailable'};`,
+                                `ProviderCapabilitiesSha256=${transportBinding?.provider_capabilities_sha256 || 'unavailable'};`,
                                 `target_reviewer_identity=${handoff.target_reviewer_identity || 'new_correction_only_reviewer'};`,
                                 `fork_context=${handoff.fork_context === false ? 'false' : 'preserve_current_conversation'}.`,
                                 handoff.instruction
@@ -1293,6 +1386,10 @@ export function readReviewArtifactState(
         reviewOutputCorrectionProducerIdentity,
         reviewOutputCorrectionProviderInvocationId,
         reviewOutputCorrectionAttestationSource,
+        reviewOutputCorrectionSessionAvailability,
+        reviewOutputCorrectionOriginalProviderInvocationId,
+        reviewOutputCorrectionReviewerIdentity,
+        reviewOutputCorrectionHandoff,
         reviewFindingsDisposition,
         frozenReviewFindingsDisposition,
         reviewFindingsDispositionArtifactPath,

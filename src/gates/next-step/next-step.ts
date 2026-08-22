@@ -346,6 +346,7 @@ import {
     buildCompleteReviewerLaunchCommand,
     buildPrepareReviewerLaunchCommand,
     buildRecordReviewOutputCorrectionInvocationCommand,
+    buildRecordReviewOutputCorrectionTransportCommand,
     buildRecordReviewerDelegationStartedCommand,
     buildRecordReviewResultCommand,
     buildRecordReviewerInvocationCommand,
@@ -4168,7 +4169,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     expectedCoverageContractSha256: focusedRecoveryCoverageContractSha256
                 })
                 : { available: false, reason: null };
-            const reviewerResultRecoveryIdentity = state.failureKind === 'review-validation-rejected'
+            const reviewerResultRecoveryIdentity = [
+                'review-validation-rejected',
+                'review-correction-transport-selection-required'
+            ].includes(state.failureKind || '')
                 ? resolveReviewerResultRecoveryIdentity({
                     launchState: currentReviewerLaunchArtifactEvidence?.state === 'provider_failed'
                         ? 'launched'
@@ -4195,6 +4199,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 downstreamReviewTypes,
                 reviewerResultRecoveryIdentity,
                 launchArtifactState: currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
+                correctionHandoff: state.reviewOutputCorrectionHandoff,
                 commands: {
                     restartReviewCycle: buildCommand(
                         state.failureKind === 'missing-focused-validation-evidence'
@@ -4279,6 +4284,30 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                                 }
                                 : undefined
                         )
+                    ),
+                    recordCorrectionTransport: buildCommand(
+                        'Record fail-closed provider-controller session unavailability',
+                        buildRecordReviewOutputCorrectionTransportCommand({
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            correctionArtifactPath:
+                                state.reviewOutputCorrectionArtifactPath || state.artifactPath,
+                            reviewerIdentity:
+                                state.reviewOutputCorrectionReviewerIdentity
+                                || (
+                                    reviewerResultRecoveryIdentity?.ready
+                                        ? reviewerResultRecoveryIdentity.reviewerIdentity
+                                        : null
+                                )
+                                || state.contextReviewerIdentity
+                                || '<agent:original-reviewer-id>',
+                            providerInvocationId:
+                                state.reviewOutputCorrectionOriginalProviderInvocationId
+                                || '<original-provider-invocation-id>',
+                            taskModePath
+                        })
                     ),
                     recordResult: buildCommand(
                         'Record corrected delegated review result',
