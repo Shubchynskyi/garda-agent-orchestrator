@@ -1055,7 +1055,7 @@ describe('gates/task-audit-summary review correction transport', () => {
         assert.equal(forgedLiveArtifactHash?.status, 'BLOCKED');
         assert.match(
             forgedLiveArtifactHash?.correction_transports?.[1]?.violations.join(' ') || '',
-            /content hash does not match transport telemetry/iu
+            /not bound to its selected package snapshot/iu
         );
 
         const orphanLiveAcceptance = buildReviewFindingsAuditSummary({
@@ -1227,7 +1227,7 @@ describe('gates/task-audit-summary review correction transport', () => {
         assert.match(violations, /capability hash is unverifiable/iu);
     });
 
-    it('reconstructs historical accepted correction attempts without comparing them to the latest artifact', () => {
+    it('reconstructs historical attempts from snapshots and rejects forged artifact evidence', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-correction-audit-history-'));
         const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -1363,6 +1363,65 @@ describe('gates/task-audit-summary review correction transport', () => {
         );
         assert.equal(summary?.correction_transports?.every((entry) => entry.evidence_valid), true);
 
+        for (const historicalArtifactMutation of [
+            {
+                label: 'non-canonical current artifact path',
+                details: { correction_artifact_path: path.join(repoRoot, 'outside.json') },
+                violation: /does not reference its canonical artifact path/iu
+            },
+            {
+                label: 'non-canonical content-addressed snapshot path',
+                details: { correction_artifact_snapshot_path: path.join(repoRoot, 'outside-snapshot.json') },
+                violation: /lacks its content-addressed artifact snapshot/iu
+            },
+            {
+                label: 'mismatched content-addressed snapshot hash',
+                details: { correction_artifact_snapshot_sha256: 'f'.repeat(64) },
+                violation: /lacks its content-addressed artifact snapshot/iu
+            },
+            {
+                label: 'path traversal in historical package hash',
+                details: { correction_package_sha256: 'not-a-sha/../../outside' },
+                violation: /lacks a canonical content-addressed package hash/iu
+            },
+            {
+                label: 'forged historical availability attestation',
+                details: { availability_evidence_type: 'caller_claim' },
+                violation: /snapshot does not match transport telemetry/iu
+            }
+        ]) {
+            const mutatedHistoricalSelection = correctionEvent(firstAttempt[1].event_type, {
+                ...firstAttempt[1].details,
+                ...historicalArtifactMutation.details
+            });
+            const historicalArtifactSummary = buildReviewFindingsAuditSummary({
+                repoRoot,
+                reviewsRoot,
+                taskId,
+                requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+                currentPreflight: null,
+                timelineEvents: [
+                    originalReviewerInvocation,
+                    firstAttempt[0],
+                    mutatedHistoricalSelection,
+                    ...firstAttempt.slice(2),
+                    ...secondAttempt
+                ],
+                reviewAttemptSummary: null
+            });
+            const historicalTransport = historicalArtifactSummary?.correction_transports?.find(
+                (entry) => entry.transport === 'live_reviewer_continuation'
+                    && entry.correction_attempt === 1
+            );
+            assert.equal(historicalArtifactSummary?.status, 'BLOCKED', historicalArtifactMutation.label);
+            assert.equal(historicalTransport?.evidence_valid, false, historicalArtifactMutation.label);
+            assert.match(
+                historicalTransport?.violations.join(' ') || '',
+                historicalArtifactMutation.violation,
+                historicalArtifactMutation.label
+            );
+        }
+
         const forgedHistoricalPredecessorPackageSha256 = 'b'.repeat(64);
         const forgedHistoricalPredecessor = buildReviewFindingsAuditSummary({
             repoRoot,
@@ -1393,6 +1452,17 @@ describe('gates/task-audit-summary review correction transport', () => {
         assert.match(
             forgedHistoricalPredecessorViolations,
             /not derived from its validation-rejection predecessor package/iu
+        );
+        const forgedHistoricalPredecessorResponses = forgedHistoricalPredecessor
+            ?.correction_transports
+            ?.filter((entry) => (
+                entry.correction_package_sha256 === firstAttempt[1].details.correction_package_sha256
+                && (entry.transport === 'invocation_attestation' || entry.transport === 'acceptance')
+            )) || [];
+        assert.equal(forgedHistoricalPredecessorResponses.length, 2);
+        assert.equal(
+            forgedHistoricalPredecessorResponses.every((entry) => !entry.evidence_valid),
+            true
         );
 
         for (const eventIndex of [0, 1, 2, 3]) {
@@ -2124,6 +2194,113 @@ describe('gates/task-audit-summary review correction transport', () => {
         );
         assert.equal(summary?.correction_transports?.[4]?.evidence_valid, true);
         assert.equal(summary?.correction_transports?.at(-1)?.evidence_valid, true);
+
+        const forgedAcceptedApiSelectionAttestation = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                apiReviewerInvocation,
+                ...events.map((event, index) => index === 1
+                    ? correctionEvent(event.event_type, {
+                        ...event.details,
+                        availability_attestation_source: 'codex_collaboration_followup_task',
+                        availability_evidence_type: 'provider_native_session_receipt',
+                        availability_provider_invocation_event_sha256: '2'.repeat(64),
+                        availability_provider_response_sha256: '7'.repeat(64)
+                    })
+                    : event)
+            ],
+            reviewAttemptSummary: null
+        });
+        const forgedAcceptedApiTransport = forgedAcceptedApiSelectionAttestation
+            ?.correction_transports
+            ?.find((entry) => entry.transport === 'api_conversation_continuation');
+        assert.equal(forgedAcceptedApiSelectionAttestation?.status, 'BLOCKED');
+        assert.equal(forgedAcceptedApiTransport?.evidence_valid, false);
+        assert.match(
+            forgedAcceptedApiTransport?.violations.join(' ') || '',
+            /not bound to its selected package snapshot/iu
+        );
+
+        const forgedAcceptedApiPackageSha256 = 'f'.repeat(64);
+        const forgedAcceptedApiPackageSummary = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                apiReviewerInvocation,
+                ...events.slice(0, 4).map((event, index) => correctionEvent(event.event_type, {
+                    ...event.details,
+                    ...(index > 0 ? { correction_package_sha256: forgedAcceptedApiPackageSha256 } : {}),
+                    ...(index === 1 ? { correction_artifact_sha256: acceptedApi.artifact_sha256 } : {})
+                }))
+            ],
+            reviewAttemptSummary: null
+        });
+        const forgedAcceptedApiPackageTransport = forgedAcceptedApiPackageSummary
+            ?.correction_transports
+            ?.find((entry) => entry.transport === 'api_conversation_continuation');
+        assert.equal(forgedAcceptedApiPackageSummary?.status, 'BLOCKED');
+        assert.equal(forgedAcceptedApiPackageTransport?.evidence_valid, false);
+        assert.match(
+            forgedAcceptedApiPackageTransport?.violations.join(' ') || '',
+            /not bound to its selected package snapshot/iu
+        );
+
+        const fullRelaunchEvent = events.at(-1)!;
+        for (const fullRelaunchMutation of [
+            {
+                label: 'predecessor package instead of direct current package binding',
+                details: { previous_correction_package_sha256: persistedFull.previousFileSha256 },
+                violation: /must bind directly to its current correction package/iu
+            },
+            {
+                label: 'mismatched current correction package hash',
+                details: { correction_package_sha256: 'f'.repeat(64) },
+                violation: /file hash does not match transport telemetry/iu
+            },
+            {
+                label: 'non-canonical current artifact path',
+                details: { correction_artifact_path: path.join(repoRoot, 'outside-full.json') },
+                violation: /does not reference its canonical correction artifact/iu
+            },
+            {
+                label: 'forged fail-closed availability attestation',
+                details: { availability_evidence_type: 'caller_claim' },
+                violation: /canonical fail-closed availability evidence|transport event provenance/iu
+            }
+        ]) {
+            const forgedFullRelaunch = buildReviewFindingsAuditSummary({
+                repoRoot,
+                reviewsRoot,
+                taskId,
+                requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+                currentPreflight: null,
+                timelineEvents: [
+                    testReviewerInvocation,
+                    correctionEvent(fullRelaunchEvent.event_type, {
+                        ...fullRelaunchEvent.details,
+                        ...fullRelaunchMutation.details
+                    })
+                ],
+                reviewAttemptSummary: null
+            });
+            const fullRelaunchTransport = forgedFullRelaunch?.correction_transports?.find(
+                (entry) => entry.transport === 'full_reviewer_relaunch'
+            );
+            assert.equal(forgedFullRelaunch?.status, 'BLOCKED', fullRelaunchMutation.label);
+            assert.equal(fullRelaunchTransport?.evidence_valid, false, fullRelaunchMutation.label);
+            assert.match(
+                fullRelaunchTransport?.violations.join(' ') || '',
+                fullRelaunchMutation.violation,
+                fullRelaunchMutation.label
+            );
+        }
 
         for (const forgedCurrentAcceptance of [
             {

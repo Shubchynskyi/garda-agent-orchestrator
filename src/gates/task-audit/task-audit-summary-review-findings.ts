@@ -720,6 +720,7 @@ function selectionArtifactSnapshotMatches(options: {
     const snapshotRead = readCachedCorrectionArtifact(snapshotPath, options.artifactCache);
     const snapshot = snapshotRead.artifact;
     const binding = snapshot?.transport_binding;
+    const attestation = binding?.availability_attestation;
     return snapshotRead.violations.length === 0
         && !!snapshot
         && snapshot.task_id === options.taskId
@@ -735,10 +736,18 @@ function selectionArtifactSnapshotMatches(options: {
         && binding?.provider_invocation_id === stringValue(options.details.provider_invocation_id)
         && binding?.provider_capabilities_sha256
             === stringValue(options.details.provider_capabilities_sha256)
-        && binding?.session_availability === stringValue(options.details.session_availability);
+        && binding?.session_availability === stringValue(options.details.session_availability)
+        && (attestation?.attestation_source || null)
+            === stringValue(options.details.availability_attestation_source)
+        && (attestation?.evidence_type || null)
+            === stringValue(options.details.availability_evidence_type)
+        && (attestation?.provider_invocation_event_sha256 || null)
+            === stringValue(options.details.availability_provider_invocation_event_sha256)
+        && (attestation?.provider_response_sha256 || null)
+            === stringValue(options.details.availability_provider_response_sha256);
 }
 
-function validateHistoricalCorrectionTransport(options: {
+interface CorrectionArtifactChainValidationOptions {
     repoRoot: string;
     reviewsRoot: string;
     taskId: string;
@@ -747,20 +756,22 @@ function validateHistoricalCorrectionTransport(options: {
     correctionAttempt: number | null;
     correctionPackageSha256: string | null;
     details: Record<string, unknown>;
-    acceptedResponses: readonly IndexedCorrectionEvent[];
-    invocationAttestations: readonly IndexedCorrectionEvent[];
-    retryRejections: readonly IndexedCorrectionEvent[];
-    selectedEventIndex: number;
-    nextSelectedEventIndex: number;
-    nextSelectionPreviousPackageSha256: string | null;
-    consumedAcceptedResponseIndexes: Set<number>;
-    consumedInvocationAttestationIndexes: Set<number>;
     artifactCache: Map<string, CorrectionArtifactCacheEntry>;
-}): string[] {
+}
+
+interface CorrectionArtifactChainValidationResult {
+    artifact: ReviewOutputCorrectionArtifact | null;
+    eventArtifactPath: string | null;
+    violations: string[];
+}
+
+function validateHistoricalCorrectionArtifactChain(
+    options: CorrectionArtifactChainValidationOptions
+): CorrectionArtifactChainValidationResult {
     const violations: string[] = [];
     if (!isCanonicalCorrectionReviewType(options.reviewType)) {
         violations.push('Historical correction transport lacks a canonical review type.');
-        return violations;
+        return { artifact: null, eventArtifactPath: null, violations };
     }
     const expectedArtifactPath = getReviewOutputCorrectionArtifactPath(
         path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`)
@@ -775,7 +786,11 @@ function validateHistoricalCorrectionTransport(options: {
             !== normalizePath(path.resolve(expectedArtifactPath)).toLowerCase()
     ) {
         violations.push('Historical correction transport selection does not reference its canonical artifact path.');
-        return violations;
+        return { artifact: null, eventArtifactPath, violations };
+    }
+    if (!isSha256(options.correctionPackageSha256)) {
+        violations.push('Historical correction transport lacks a canonical content-addressed package hash.');
+        return { artifact: null, eventArtifactPath, violations };
     }
     const expectedSnapshotPath = path.join(
         options.reviewsRoot,
@@ -793,7 +808,7 @@ function validateHistoricalCorrectionTransport(options: {
         || readCachedCorrectionArtifactSha256(expectedSnapshotPath, options.artifactCache) !== snapshotSha256
     ) {
         violations.push('Historical correction transport lacks its content-addressed artifact snapshot.');
-        return violations;
+        return { artifact: null, eventArtifactPath, violations };
     }
     const snapshotRead = readCachedCorrectionArtifact(expectedSnapshotPath, options.artifactCache);
     const snapshot = snapshotRead.artifact;
@@ -826,7 +841,7 @@ function validateHistoricalCorrectionTransport(options: {
             !== stringValue(options.details.availability_provider_response_sha256)
     ) {
         violations.push('Historical correction artifact snapshot does not match transport telemetry.');
-        return violations;
+        return { artifact: null, eventArtifactPath, violations };
     }
     if (
         options.transport !== 'full_reviewer_relaunch'
@@ -840,6 +855,36 @@ function validateHistoricalCorrectionTransport(options: {
         violations.push(
             'Historical correction artifact is not derived from its validation-rejection predecessor package.'
         );
+        return { artifact: null, eventArtifactPath, violations };
+    }
+    return { artifact: snapshot, eventArtifactPath, violations };
+}
+
+function validateHistoricalCorrectionTransport(options: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
+    correctionAttempt: number | null;
+    correctionPackageSha256: string | null;
+    details: Record<string, unknown>;
+    acceptedResponses: readonly IndexedCorrectionEvent[];
+    invocationAttestations: readonly IndexedCorrectionEvent[];
+    retryRejections: readonly IndexedCorrectionEvent[];
+    selectedEventIndex: number;
+    nextSelectedEventIndex: number;
+    nextSelectionPreviousPackageSha256: string | null;
+    consumedAcceptedResponseIndexes: Set<number>;
+    consumedInvocationAttestationIndexes: Set<number>;
+    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+}): string[] {
+    const artifactValidation = validateHistoricalCorrectionArtifactChain(options);
+    const violations = artifactValidation.violations;
+    const snapshot = artifactValidation.artifact;
+    const eventArtifactPath = artifactValidation.eventArtifactPath;
+    if (!snapshot || !eventArtifactPath) {
+        return violations;
     }
     if (options.transport === 'full_reviewer_relaunch') {
         return violations;
@@ -973,26 +1018,13 @@ function validateHistoricalCorrectionTransport(options: {
     return violations;
 }
 
-function validatePersistedCorrectionTransport(options: {
-    repoRoot: string;
-    reviewsRoot: string;
-    taskId: string;
-    reviewType: string;
-    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
-    correctionAttempt: number | null;
-    correctionPackageSha256: string | null;
-    details: Record<string, unknown>;
-    acceptedResponses: readonly IndexedCorrectionEvent[];
-    invocationAttestations: readonly IndexedCorrectionEvent[];
-    selectedEventIndex: number;
-    consumedAcceptedResponseIndexes: Set<number>;
-    consumedInvocationAttestationIndexes: Set<number>;
-    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
-}): string[] {
+function validateCurrentCorrectionArtifactChain(
+    options: CorrectionArtifactChainValidationOptions
+): CorrectionArtifactChainValidationResult {
     const violations: string[] = [];
     if (!isCanonicalCorrectionReviewType(options.reviewType)) {
         violations.push('Correction transport selection lacks a canonical review type.');
-        return violations;
+        return { artifact: null, eventArtifactPath: null, violations };
     }
     const expectedArtifactPath = getReviewOutputCorrectionArtifactPath(
         path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`)
@@ -1007,12 +1039,12 @@ function validatePersistedCorrectionTransport(options: {
             !== normalizePath(path.resolve(expectedArtifactPath)).toLowerCase()
     ) {
         violations.push('Correction transport selection does not reference its canonical correction artifact.');
-        return violations;
+        return { artifact: null, eventArtifactPath, violations };
     }
     const persistedRead = readCachedCorrectionArtifact(expectedArtifactPath, options.artifactCache);
     if (persistedRead.violations.length > 0 || !persistedRead.artifact) {
         violations.push('Correction transport selection lacks an intact persisted correction artifact.');
-        return violations;
+        return { artifact: null, eventArtifactPath, violations };
     }
     const persisted = persistedRead.artifact;
     if (
@@ -1070,6 +1102,48 @@ function validatePersistedCorrectionTransport(options: {
     ) {
         violations.push('Persisted correction artifact does not match transport event provenance.');
     }
+    if (persisted.state !== 'CORRECTION_ACCEPTED') {
+        const persistedFileSha256 = readCachedCorrectionArtifactSha256(
+            expectedArtifactPath,
+            options.artifactCache
+        );
+        if (persistedFileSha256 !== options.correctionPackageSha256) {
+            violations.push('Persisted correction artifact file hash does not match transport telemetry.');
+        }
+        if (persisted.artifact_sha256 !== stringValue(options.details.correction_artifact_sha256)) {
+            violations.push('Persisted correction artifact content hash does not match transport telemetry.');
+        }
+    } else if (!selectionArtifactSnapshotMatches(options)) {
+        violations.push('Persisted accepted correction artifact is not bound to its selected package snapshot.');
+    }
+    return { artifact: persisted, eventArtifactPath, violations };
+}
+
+function validatePersistedCorrectionTransport(options: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
+    correctionAttempt: number | null;
+    correctionPackageSha256: string | null;
+    details: Record<string, unknown>;
+    acceptedResponses: readonly IndexedCorrectionEvent[];
+    invocationAttestations: readonly IndexedCorrectionEvent[];
+    selectedEventIndex: number;
+    consumedAcceptedResponseIndexes: Set<number>;
+    consumedInvocationAttestationIndexes: Set<number>;
+    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+}): string[] {
+    const artifactValidation = validateCurrentCorrectionArtifactChain(options);
+    const violations = artifactValidation.violations;
+    const persisted = artifactValidation.artifact;
+    const eventArtifactPath = artifactValidation.eventArtifactPath;
+    if (!persisted || !eventArtifactPath) {
+        return violations;
+    }
+    const binding = persisted.transport_binding;
+    const attestation = binding?.availability_attestation;
     if (
         persisted.state === 'CORRECTION_ACCEPTED'
         && options.transport !== 'full_reviewer_relaunch'
@@ -1162,21 +1236,6 @@ function validatePersistedCorrectionTransport(options: {
         && options.transport !== 'full_reviewer_relaunch'
     ) {
         violations.push('Correction transport selection lacks accepted provider response provenance.');
-    }
-    if (persisted.state !== 'CORRECTION_ACCEPTED') {
-        const persistedFileSha256 = readCachedCorrectionArtifactSha256(
-            expectedArtifactPath,
-            options.artifactCache
-        );
-        if (persistedFileSha256 !== options.correctionPackageSha256) {
-            violations.push('Persisted correction artifact file hash does not match transport telemetry.');
-        }
-    }
-    if (
-        persisted.artifact_sha256 !== stringValue(options.details.correction_artifact_sha256)
-        && !selectionArtifactSnapshotMatches(options)
-    ) {
-        violations.push('Persisted correction artifact content hash does not match transport telemetry.');
     }
     return violations;
 }
