@@ -562,28 +562,21 @@ export function getLoadedRuleFileBasenames(command: string): string[] {
         .sort();
 }
 
-export function writePreflight(
+function buildPreflightReviewPolicyEvidence(
     repoRoot: string,
     taskId: string,
     requiredReviews: Record<string, boolean>,
-    options: {
-        seedPostPreflight?: boolean;
-        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
-        changedFiles?: string[];
-        includeDomainScopeFingerprints?: boolean;
-    } = {}
-): string {
-    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const changedFiles = options.changedFiles || ['src/app.ts'];
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
-    const domainScopeFingerprints = options.includeDomainScopeFingerprints
-        ? buildDomainScopeFingerprints({
-            repoRoot,
-            detectionSource: snapshot.detection_source,
-            includeUntracked: snapshot.include_untracked,
-            changedFiles
-        })
-        : null;
+    changedFiles: string[],
+    requestedReviewPolicyMode?: EffectiveReviewExecutionPolicyMode
+): {
+    profilePolicySnapshot: { snapshot_hash: string };
+    reviewExecutionPolicy: {
+        mode: EffectiveReviewExecutionPolicyMode;
+        visible_summary_line: string;
+        dependency_graph: ReturnType<typeof buildEffectiveReviewSnapshot>['review_dependency_graph'];
+    };
+    effectiveReviewSnapshot: ReturnType<typeof buildEffectiveReviewSnapshot>;
+} {
     const catalog = normalizeReviewCatalog(
         { version: 1, custom_review_types: [] },
         { knownSkillIds: [] }
@@ -591,7 +584,7 @@ export function writePreflight(
     const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
     const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
     const frozenProfileSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
-    const reviewPolicyMode = options.reviewPolicyMode
+    const reviewPolicyMode = requestedReviewPolicyMode
         || frozenProfileSnapshot.review_execution_policy.mode;
     const profilePolicy = resolveProfileReviewCatalogPolicy(
         frozenProfileSnapshot.source.effective_profile,
@@ -627,6 +620,49 @@ export function writePreflight(
         },
         includeDependencyGraph: true
     });
+    return {
+        profilePolicySnapshot: {
+            snapshot_hash: frozenProfileSnapshot.snapshot_hash
+        },
+        reviewExecutionPolicy: {
+            mode: reviewPolicyMode,
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effectiveReviewSnapshot
+    };
+}
+
+export function writePreflight(
+    repoRoot: string,
+    taskId: string,
+    requiredReviews: Record<string, boolean>,
+    options: {
+        seedPostPreflight?: boolean;
+        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
+        changedFiles?: string[];
+        includeDomainScopeFingerprints?: boolean;
+    } = {}
+): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const changedFiles = options.changedFiles || ['src/app.ts'];
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+    const domainScopeFingerprints = options.includeDomainScopeFingerprints
+        ? buildDomainScopeFingerprints({
+            repoRoot,
+            detectionSource: snapshot.detection_source,
+            includeUntracked: snapshot.include_untracked,
+            changedFiles
+        })
+        : null;
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const reviewPolicyEvidence = buildPreflightReviewPolicyEvidence(
+        repoRoot,
+        taskId,
+        requiredReviews,
+        changedFiles,
+        options.reviewPolicyMode
+    );
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -641,19 +677,13 @@ export function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
-        profile_policy_snapshot: {
-            snapshot_hash: frozenProfileSnapshot.snapshot_hash
-        },
-        review_execution_policy: {
-            mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
-            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
-        },
-        effective_review_snapshot: effectiveReviewSnapshot
+        profile_policy_snapshot: reviewPolicyEvidence.profilePolicySnapshot,
+        review_execution_policy: reviewPolicyEvidence.reviewExecutionPolicy,
+        effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
         output_path: normalizeForTimeline(preflightPath),
-        effective_review_snapshot: effectiveReviewSnapshot
+        effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
     });
     if (options.seedPostPreflight !== false) {
         seedPostPreflightRulePack(repoRoot, taskId, preflightPath, taskModePath);
@@ -702,6 +732,12 @@ export function writeGitAutoPreflight(
         includeUntracked: snapshot.include_untracked,
         changedFiles: snapshot.changed_files
     });
+    const reviewPolicyEvidence = buildPreflightReviewPolicyEvidence(
+        repoRoot,
+        taskId,
+        requiredReviews,
+        snapshot.changed_files
+    );
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -716,13 +752,13 @@ export function writeGitAutoPreflight(
         },
         required_reviews: requiredReviews,
         changed_files: snapshot.changed_files,
-        review_execution_policy: {
-            mode: 'code_first_optional',
-            visible_summary_line: 'Review execution policy: code_first_optional'
-        }
+        profile_policy_snapshot: reviewPolicyEvidence.profilePolicySnapshot,
+        review_execution_policy: reviewPolicyEvidence.reviewExecutionPolicy,
+        effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
     });
     seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
     return preflightPath;
@@ -764,6 +800,12 @@ export function writeStagedPreflight(
         includeUntracked: snapshot.include_untracked,
         changedFiles: snapshot.changed_files
     });
+    const reviewPolicyEvidence = buildPreflightReviewPolicyEvidence(
+        repoRoot,
+        taskId,
+        requiredReviews,
+        snapshot.changed_files
+    );
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -780,13 +822,13 @@ export function writeStagedPreflight(
         },
         required_reviews: requiredReviews,
         changed_files: snapshot.changed_files,
-        review_execution_policy: {
-            mode: 'code_first_optional',
-            visible_summary_line: 'Review execution policy: code_first_optional'
-        }
+        profile_policy_snapshot: reviewPolicyEvidence.profilePolicySnapshot,
+        review_execution_policy: reviewPolicyEvidence.reviewExecutionPolicy,
+        effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
     });
     seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
     return preflightPath;
