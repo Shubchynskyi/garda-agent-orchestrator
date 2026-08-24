@@ -1513,6 +1513,101 @@ describe('gates/task-audit-summary review correction transport', () => {
             /lacks a consecutive rejected-output retry/iu
         );
 
+        for (const retryContinuityMutation of [
+            {
+                label: 'non-consecutive correction attempt',
+                details: { correction_attempt: 3 }
+            },
+            {
+                label: 'cross-attempt rejection replay',
+                details: { reviewer_attempt_id: 'attempt-2' }
+            },
+            {
+                label: 'cross-provider-invocation rejection replay',
+                details: { provider_invocation_id: '/root/foreign-review' }
+            },
+            {
+                label: 'non-canonical rejection artifact path',
+                details: {
+                    correction_artifact_path: path.join(
+                        reviewsRoot,
+                        `${taskId}-security-output-correction.json`
+                    )
+                }
+            }
+        ]) {
+            const mutatedRetryRejection = correctionEvent(
+                'REVIEW_OUTPUT_CORRECTION_REQUIRED',
+                {
+                    ...secondAttempt[0].details,
+                    ...retryContinuityMutation.details
+                }
+            );
+            const mutatedRetrySummary = buildReviewFindingsAuditSummary({
+                repoRoot,
+                reviewsRoot,
+                taskId,
+                requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+                currentPreflight: null,
+                timelineEvents: [
+                    originalReviewerInvocation,
+                    ...firstAttempt.slice(0, 3),
+                    mutatedRetryRejection,
+                    ...secondAttempt.slice(1)
+                ],
+                reviewAttemptSummary: null
+            });
+            const mutatedHistoricalTransport = mutatedRetrySummary?.correction_transports?.find(
+                (entry) => entry.transport === 'live_reviewer_continuation'
+                    && entry.correction_attempt === 1
+            );
+            assert.equal(mutatedRetrySummary?.status, 'BLOCKED', retryContinuityMutation.label);
+            assert.equal(
+                mutatedHistoricalTransport?.evidence_valid,
+                false,
+                retryContinuityMutation.label
+            );
+            assert.match(
+                mutatedHistoricalTransport?.violations.join(' ') || '',
+                /lacks a consecutive rejected-output retry/iu,
+                retryContinuityMutation.label
+            );
+        }
+
+        const forgedNextSelectionPredecessor = correctionEvent(
+            'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION',
+            {
+                ...secondAttempt[1].details,
+                previous_correction_package_sha256: 'b'.repeat(64)
+            }
+        );
+        const forgedNextSelectionPredecessorSummary = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                originalReviewerInvocation,
+                ...firstAttempt.slice(0, 3),
+                secondAttempt[0],
+                forgedNextSelectionPredecessor,
+                ...secondAttempt.slice(2)
+            ],
+            reviewAttemptSummary: null
+        });
+        const predecessorBoundHistoricalTransport = forgedNextSelectionPredecessorSummary
+            ?.correction_transports?.find(
+                (entry) => entry.transport === 'live_reviewer_continuation'
+                    && entry.correction_attempt === 1
+            );
+        assert.equal(forgedNextSelectionPredecessorSummary?.status, 'BLOCKED');
+        assert.equal(predecessorBoundHistoricalTransport?.evidence_valid, false);
+        assert.match(
+            predecessorBoundHistoricalTransport?.violations.join(' ') || '',
+            /lacks a consecutive rejected-output retry/iu
+        );
+
         const untrustedHistoricalInvocation = correctionEvent(
             'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
             {
