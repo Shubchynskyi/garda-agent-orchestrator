@@ -43,6 +43,32 @@ describe('next-step baseline-only pre-implementation routing', () => {
         assert.match(result?.reason || '', /task has implementation intent/u);
     });
 
+    it('routes a close-retry-continuity implementation task before audited no-op', () => {
+        const taskId = 'T-1013-2-3-1-1-3';
+        const taskSummary =
+            '[security] Close historical retry continuity through the next rejection package and transport selection';
+        const result = buildBaselineOnlyPreImplementationRoute({
+            repoRoot: process.cwd(),
+            taskEntry: {
+                taskId,
+                status: 'IN_PROGRESS',
+                area: 'workflow/review-output-correction-retry-provenance',
+                title: taskSummary,
+                profile: 'strict',
+                notes: 'Bind retry rejection to the next selection predecessor package and exact next attempt.'
+            },
+            taskMode: {
+                task_id: taskId,
+                task_summary: taskSummary
+            },
+            preflight: buildBaselineOnlyPreflight(),
+            auditedNoOpPassed: false
+        });
+
+        assert.equal(result?.nextGate, 'implementation');
+        assert.match(result?.reason || '', /task has implementation intent/u);
+    });
+
     it('preserves explicit audit-only metadata as a no-op candidate', () => {
         const result = buildBaselineOnlyPreImplementationRoute({
             repoRoot: process.cwd(),
