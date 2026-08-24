@@ -2687,6 +2687,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.match(result.reason, /Do not add task-scoped runtime\/manual-validation files to preflight --changed-file scope/);
         assert.equal(result.commands[0].label, 'Restart review cycle after manual-validation evidence refresh');
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('runtime/manual-validation'));
         assert.ok(!result.commands[0].command.includes('--changed-file'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));
@@ -3536,6 +3537,7 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.match(result.reason, /cheapest valid recovery path/);
         assert.match(result.reason, /before refreshing preflight/);
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(result.commands[0].command.includes(`--preflight-path "garda-agent-orchestrator/runtime/reviews/${TASK_ID}-preflight.json"`));
         assert.ok(result.commands[0].command.includes('--impact-analysis'));
         assert.ok(!result.commands[0].command.includes('gate classify-change'));

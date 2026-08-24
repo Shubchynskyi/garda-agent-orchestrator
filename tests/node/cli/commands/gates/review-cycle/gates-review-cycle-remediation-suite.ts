@@ -2807,6 +2807,23 @@ describe('cli/commands/gates – review-cycle remediation reuse policy', {
                 expectedPreservedReviewTypes: []
             },
             {
+                suffix: 'source-fallback-runtime',
+                impactAnalysis: [
+                    'Reviewer finding: the final human report can grow with every non-blocking finding in src/app.ts.',
+                    'Intended fix: cap the human preview at ten entries and append the exact remaining count.',
+                    'Affected files/contracts: src/app.ts changes while complete machine-readable evidence remains available.',
+                    'API/runtime/artifact/test impact: human presentation becomes bounded; schemas and gate APIs remain unchanged.',
+                    'Possible side effects: only the first ten entries appear in the concise report.',
+                    'Required targeted checks: a high-cardinality bounded-size regression covers the fix.',
+                    'Scope or review-type changes: the source and test scope remain unchanged.',
+                    'Related blockers/follow-up: the finding is fixed now without a follow-up.'
+                ].join(' '),
+                expectedCategory: 'runtime_behavior',
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
+            },
+            {
                 suffix: 'structure-only',
                 impactAnalysis: [
                     'Reviewer finding: failed review blocker requires refactor structure cleanup in src/app.ts.',

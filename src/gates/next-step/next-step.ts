@@ -3498,7 +3498,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     getStringField(taskMode, 'task_summary', taskEntry?.title || taskId),
                     preflightCommandPath,
                     taskModePath,
-                    failedReviewIgnoredRemediationChangedFiles
+                    failedReviewIgnoredRemediationChangedFiles,
+                    {
+                        reviewType: failedCurrentReviewStateForPreflight.reviewType
+                    }
                 )
             }
             : null,
@@ -4223,7 +4226,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             {
                                 includeChangedFileScope:
                                     state.failureKind !== 'missing-focused-validation-evidence'
-                                    && state.failureKind !== 'missing-validation-evidence'
+                                    && state.failureKind !== 'missing-validation-evidence',
+                                reviewType
                             }
                         )
                     ),

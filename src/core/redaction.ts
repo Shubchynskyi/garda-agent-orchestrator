@@ -269,6 +269,15 @@ export function redactSensitiveData(value: unknown, keyHint?: string): unknown {
     }
     if (Array.isArray(value)) {
         if (value.every((entry) => typeof entry === 'string')) {
+            if (keyHint === 'redacted_lines') {
+                const lines = value as string[];
+                const joined = lines.join('');
+                const alreadyRedacted = redactSecretText(joined) === joined
+                    && lines.every((line) => redactSecretText(line) === line);
+                return alreadyRedacted
+                    ? [...lines]
+                    : lines.map(() => '<redacted>');
+            }
             return splitRedactedTextLines(redactSecretText(value.join('\n')));
         }
         return value.map((entry) => redactSensitiveData(entry));

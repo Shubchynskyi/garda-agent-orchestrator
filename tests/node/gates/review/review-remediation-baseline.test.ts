@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
-import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
+import { serializeRedactedJson, sha256RedactedJsonPayload } from '../../../../src/core/redaction';
 import type { ReviewFindingsDispositionArtifact } from '../../../../src/gates/review/review-findings-disposition-artifact';
 import type { ReviewFindingsValidationArtifact } from '../../../../src/gates/review/review-findings-validation-artifact';
 import {
@@ -539,6 +539,19 @@ describe('review remediation delta classification', () => {
             structuralTestChangedLinesThreshold: threshold
         });
     }
+
+    it('keeps delta line evidence valid after durable redacted JSON serialization', () => {
+        const fixture = buildFixture(createTempRoot());
+        const serialized = serializeRedactedJson(fixture.baseline);
+        fs.writeFileSync(fixture.baselinePath, serialized, 'utf8');
+        fixture.baselineSha256 = hash(serialized);
+        fs.appendFileSync(path.join(fixture.root, 'src', 'example.ts'), 'export const fixed = true;\n', 'utf8');
+
+        const result = classifyFixture(fixture);
+
+        assert.equal(result.full_review_required, false);
+        assert.equal(result.changed_lines_total, 1);
+    });
 
     it('excludes unchanged task files and reports exact post-baseline line counts', () => {
         const fixture = buildFixture(createTempRoot());

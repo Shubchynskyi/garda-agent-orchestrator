@@ -196,6 +196,20 @@ test('redactSensitiveData masks multiline secrets split across output line array
     });
 });
 
+test('redactSensitiveData preserves authenticated redacted line-array boundaries', () => {
+    const redactedLines = [
+        'export const first = true;\r\n',
+        'export const second = true;\n'
+    ];
+    const result = redactSensitiveData({ redacted_lines: redactedLines });
+
+    assert.deepEqual(result, { redacted_lines: redactedLines });
+    assert.deepEqual(
+        JSON.parse(serializeRedactedJson({ redacted_lines: redactedLines })),
+        { redacted_lines: redactedLines }
+    );
+});
+
 test('redactSensitiveData preserves token telemetry keys while masking real token secrets', () => {
     const result = redactSensitiveData({
         token: 'bare-token-secret',
