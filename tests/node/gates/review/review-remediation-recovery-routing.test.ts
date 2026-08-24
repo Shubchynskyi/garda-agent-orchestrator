@@ -9,6 +9,7 @@ import { compileReviewDependencyGraph } from '../../../../src/core/review-depend
 import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import {
+    buildAuthenticatedRemediationReviewExecution,
     resolvePersistedRemediationReusePolicy,
     shouldAcceptCurrentPassReviewEvidence
 } from '../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
@@ -413,6 +414,52 @@ describe('review remediation selective recovery routing', () => {
             accepted: false,
             reusedExistingReview: false
         }, blockedReason), false);
+    });
+
+    it('authenticates a task-wide FULL lane when remediation originated in another failed lane', () => {
+        const profilePolicySnapshot = makeSnapshot();
+        const delta = makeDelta('ambiguous', 'test');
+        const classification = {
+            source: 'delta' as const,
+            delta,
+            profilePolicySnapshot,
+            baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+        };
+        const unboundDecision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'test',
+            classification,
+            requiredReviews: { code: true, test: true },
+            reviewExecutionPolicyMode: 'strict_sequential'
+        });
+        assert.deepEqual(
+            unboundDecision.lane_decisions.map((entry) => [entry.review_type, entry.mode]),
+            [['code', 'FULL'], ['test', 'FULL']]
+        );
+        const preflightSha256 = hash('preflight');
+        const { decision_sha256: _, ...decisionCore } = {
+            ...unboundDecision,
+            preflight_sha256: preflightSha256
+        };
+        const authoritativeDecision = {
+            ...decisionCore,
+            decision_sha256: sha256RedactedJsonPayload(decisionCore)
+        };
+
+        const execution = buildAuthenticatedRemediationReviewExecution({
+            taskId: TASK_ID,
+            reviewType: 'code',
+            preflightSha256,
+            fullReviewScope: ['tests/node/example.test.ts'],
+            authoritativeDecision,
+            authoritativeClassification: classification,
+            persistedDecisionSha256: authoritativeDecision.decision_sha256
+        });
+
+        assert.equal(execution.contract.review_type, 'code');
+        assert.equal(execution.contract.mode, 'FULL');
+        assert.equal(execution.contract.source, 'remediation_full');
+        assert.equal(execution.contract.delta, null);
     });
 
     it('applies a valid persisted authoritative REUSE decision from the task-event timeline', () => {

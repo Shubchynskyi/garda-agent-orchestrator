@@ -407,7 +407,10 @@ export function getRemediationContractClassificationBindingViolations(
         if (delta.classification_sha256 !== decision.classification_sha256) {
             violations.push('persisted DELTA classification hash does not match the authoritative decision.');
         }
-        if (delta.task_id !== decision.task_id || delta.review_type !== contract.review_type) {
+        if (
+            delta.task_id !== decision.task_id
+            || (contract.mode === 'DELTA' && delta.review_type !== contract.review_type)
+        ) {
             violations.push(
                 'persisted DELTA classification does not match the authoritative task and review lane.'
             );
@@ -531,7 +534,7 @@ export function buildReviewRemediationReviewContract(options: {
         delta
         && (
             delta.task_id !== taskId
-            || delta.review_type !== reviewType
+            || (mode === 'DELTA' && delta.review_type !== reviewType)
             || !decision
             || decision.classification_sha256 !== delta.classification_sha256
         )
