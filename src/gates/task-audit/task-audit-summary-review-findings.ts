@@ -425,13 +425,28 @@ interface CorrectionTransportEventCollection {
     transportEvents: readonly IndexedCorrectionTransportEvent[];
     acceptedCorrectionResponses: readonly IndexedCorrectionEvent[];
     correctionInvocationAttestations: readonly IndexedCorrectionEvent[];
-    acceptedResponsesByReviewType: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
-    invocationAttestationsByReviewType: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
-    retryRejectionsByReviewType: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    evidenceWindowsBySelectionIndex: ReadonlyMap<number, CorrectionTransportEvidenceWindow>;
     reviewerInvocationsBySha256: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
     selectionsByPreviousPackage: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
     selectionEventsByIndex: ReadonlyMap<number, IndexedCorrectionTransportEvent>;
     nextSelectionIndexByEventIndex: ReadonlyMap<number, number>;
+}
+
+interface CorrectionTransportEvidenceWindow {
+    acceptedResponses: IndexedCorrectionEvent[];
+    invocationAttestations: IndexedCorrectionEvent[];
+    retryRejections: IndexedCorrectionEvent[];
+}
+
+interface CorrectionTransportWorkMetrics {
+    timeline_events_indexed: number;
+    evidence_events_windowed: number;
+    evidence_candidates_examined: number;
+    selection_candidates_examined: number;
+    artifact_reads: number;
+    artifact_read_cache_hits: number;
+    artifact_hash_reads: number;
+    artifact_hash_cache_hits: number;
 }
 
 const CORRECTION_TRANSPORT_BY_EVENT_TYPE = new Map<string, CorrectionTransportSelection>([
@@ -454,6 +469,11 @@ interface CorrectionArtifactCacheEntry {
     artifactRead?: ReturnType<typeof readReviewOutputCorrectionArtifact>;
 }
 
+interface CorrectionArtifactCache {
+    entries: Map<string, CorrectionArtifactCacheEntry>;
+    workMetrics: CorrectionTransportWorkMetrics;
+}
+
 function appendCorrectionEvent(
     index: Map<string, IndexedCorrectionEvent[]>,
     reviewType: string | null,
@@ -470,31 +490,47 @@ function appendCorrectionEvent(
     index.set(reviewType, [event]);
 }
 
-function firstCorrectionEventAfter(
+function filterCorrectionEvents(
     events: readonly IndexedCorrectionEvent[],
-    eventIndex: number
-): number {
-    let lower = 0;
-    let upper = events.length;
-    while (lower < upper) {
-        const middle = Math.floor((lower + upper) / 2);
-        if (events[middle].eventIndex <= eventIndex) {
-            lower = middle + 1;
-        } else {
-            upper = middle;
+    workMetrics: CorrectionTransportWorkMetrics,
+    predicate: (event: IndexedCorrectionEvent) => boolean
+): IndexedCorrectionEvent[] {
+    const matches: IndexedCorrectionEvent[] = [];
+    for (const event of events) {
+        workMetrics.evidence_candidates_examined += 1;
+        if (predicate(event)) {
+            matches.push(event);
         }
     }
-    return lower;
+    return matches;
 }
 
-function correctionEventsInWindow(
+function findCorrectionEvent(
     events: readonly IndexedCorrectionEvent[],
-    selectedEventIndex: number,
-    nextSelectedEventIndex: number
-): readonly IndexedCorrectionEvent[] {
-    const start = firstCorrectionEventAfter(events, selectedEventIndex);
-    const end = firstCorrectionEventAfter(events, nextSelectedEventIndex - 1);
-    return events.slice(start, end);
+    workMetrics: CorrectionTransportWorkMetrics,
+    predicate: (event: IndexedCorrectionEvent) => boolean
+): IndexedCorrectionEvent | undefined {
+    for (const event of events) {
+        workMetrics.evidence_candidates_examined += 1;
+        if (predicate(event)) {
+            return event;
+        }
+    }
+    return undefined;
+}
+
+function hasCorrectionSelection(
+    events: readonly IndexedCorrectionEvent[],
+    workMetrics: CorrectionTransportWorkMetrics,
+    predicate: (event: IndexedCorrectionEvent) => boolean
+): boolean {
+    for (const event of events) {
+        workMetrics.selection_candidates_examined += 1;
+        if (predicate(event)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function collectCorrectionTransportEvents(
@@ -502,14 +538,13 @@ function collectCorrectionTransportEvents(
     options: {
         taskId: string;
         authorizedReviewTypes: ReadonlySet<string>;
+        workMetrics: CorrectionTransportWorkMetrics;
     }
 ): CorrectionTransportEventCollection {
     const transportEvents: IndexedCorrectionTransportEvent[] = [];
     const acceptedCorrectionResponses: IndexedCorrectionEvent[] = [];
     const correctionInvocationAttestations: IndexedCorrectionEvent[] = [];
-    const acceptedResponsesByReviewType = new Map<string, IndexedCorrectionEvent[]>();
-    const invocationAttestationsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
-    const retryRejectionsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const evidenceWindowsBySelectionIndex = new Map<number, CorrectionTransportEvidenceWindow>();
     const reviewerInvocationsBySha256 = new Map<string, IndexedCorrectionEvent[]>();
     const selectionsByPreviousPackage = new Map<string, IndexedCorrectionEvent[]>();
     const selectionEventsByIndex = new Map<number, IndexedCorrectionTransportEvent>();
@@ -517,6 +552,7 @@ function collectCorrectionTransportEvents(
     const latestSelectionIndexByReviewType = new Map<string, number>();
 
     for (const [eventIndex, event] of events.entries()) {
+        options.workMetrics.timeline_events_indexed += 1;
         const eventType = String(event.event_type || '').trim().toUpperCase();
         const details = isPlainRecord(event.details) ? event.details : {};
         const eventRecord = event as unknown as Record<string, unknown>;
@@ -536,6 +572,12 @@ function collectCorrectionTransportEvents(
             : null;
         const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
         const reviewerInvocationEventSha256 = stringValue(integrity.event_sha256);
+        const activeSelectionIndex = indexedReviewType
+            ? latestSelectionIndexByReviewType.get(indexedReviewType)
+            : undefined;
+        const activeEvidenceWindow = activeSelectionIndex === undefined
+            ? undefined
+            : evidenceWindowsBySelectionIndex.get(activeSelectionIndex);
         if (
             eventType === 'REVIEWER_INVOCATION_ATTESTED'
             && isSha256(reviewerInvocationEventSha256)
@@ -547,12 +589,21 @@ function collectCorrectionTransportEvents(
             );
         } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED') {
             acceptedCorrectionResponses.push(indexedEvent);
-            appendCorrectionEvent(acceptedResponsesByReviewType, indexedReviewType, indexedEvent);
+            if (activeEvidenceWindow) {
+                activeEvidenceWindow.acceptedResponses.push(indexedEvent);
+                options.workMetrics.evidence_events_windowed += 1;
+            }
         } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED') {
             correctionInvocationAttestations.push(indexedEvent);
-            appendCorrectionEvent(invocationAttestationsByReviewType, indexedReviewType, indexedEvent);
+            if (activeEvidenceWindow) {
+                activeEvidenceWindow.invocationAttestations.push(indexedEvent);
+                options.workMetrics.evidence_events_windowed += 1;
+            }
         } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
-            appendCorrectionEvent(retryRejectionsByReviewType, indexedReviewType, indexedEvent);
+            if (activeEvidenceWindow) {
+                activeEvidenceWindow.retryRejections.push(indexedEvent);
+                options.workMetrics.evidence_events_windowed += 1;
+            }
         }
         if (
             !CORRECTION_SELECTION_EVENT_TYPES.has(eventType)
@@ -564,6 +615,11 @@ function collectCorrectionTransportEvents(
         }
         const selectionEvent = { ...indexedEvent, eventType, transport };
         selectionEventsByIndex.set(eventIndex, selectionEvent);
+        evidenceWindowsBySelectionIndex.set(eventIndex, {
+            acceptedResponses: [],
+            invocationAttestations: [],
+            retryRejections: []
+        });
         const previousPackageSha256 = stringValue(details.previous_correction_package_sha256);
         if (isSha256(previousPackageSha256)) {
             appendCorrectionEvent(
@@ -583,9 +639,7 @@ function collectCorrectionTransportEvents(
         transportEvents,
         acceptedCorrectionResponses,
         correctionInvocationAttestations,
-        acceptedResponsesByReviewType,
-        invocationAttestationsByReviewType,
-        retryRejectionsByReviewType,
+        evidenceWindowsBySelectionIndex,
         reviewerInvocationsBySha256,
         selectionsByPreviousPackage,
         selectionEventsByIndex,
@@ -644,24 +698,30 @@ function hasTrustedOriginalReviewerInvocation(options: {
 
 function readCachedCorrectionArtifact(
     artifactPath: string,
-    cache: Map<string, CorrectionArtifactCacheEntry>
+    cache: CorrectionArtifactCache
 ): ReturnType<typeof readReviewOutputCorrectionArtifact> {
-    const cached = cache.get(artifactPath) || {};
+    const cached = cache.entries.get(artifactPath) || {};
     if (!cached.artifactRead) {
+        cache.workMetrics.artifact_reads += 1;
         cached.artifactRead = readReviewOutputCorrectionArtifact(artifactPath);
-        cache.set(artifactPath, cached);
+        cache.entries.set(artifactPath, cached);
+    } else {
+        cache.workMetrics.artifact_read_cache_hits += 1;
     }
     return cached.artifactRead;
 }
 
 function readCachedCorrectionArtifactSha256(
     artifactPath: string,
-    cache: Map<string, CorrectionArtifactCacheEntry>
+    cache: CorrectionArtifactCache
 ): string | null {
-    const cached = cache.get(artifactPath) || {};
+    const cached = cache.entries.get(artifactPath) || {};
     if (cached.fileSha256 === undefined) {
+        cache.workMetrics.artifact_hash_reads += 1;
         cached.fileSha256 = fileSha256(artifactPath);
-        cache.set(artifactPath, cached);
+        cache.entries.set(artifactPath, cached);
+    } else {
+        cache.workMetrics.artifact_hash_cache_hits += 1;
     }
     return cached.fileSha256;
 }
@@ -704,7 +764,7 @@ function validateTerminalCorrectionRejectionArtifact(options: {
     providerInvocationId: string | null;
     reviewerInvocationEventSha256: string;
     details: Record<string, unknown>;
-    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+    artifactCache: CorrectionArtifactCache;
 }): string[] {
     if (!isCanonicalCorrectionReviewType(options.reviewType)) {
         return [];
@@ -837,7 +897,7 @@ function selectionArtifactSnapshotMatches(options: {
     correctionAttempt: number | null;
     correctionPackageSha256: string | null;
     details: Record<string, unknown>;
-    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+    artifactCache: CorrectionArtifactCache;
 }): boolean {
     if (
         !isCanonicalCorrectionReviewType(options.reviewType)
@@ -896,7 +956,7 @@ interface CorrectionArtifactChainValidationOptions {
     correctionAttempt: number | null;
     correctionPackageSha256: string | null;
     details: Record<string, unknown>;
-    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+    artifactCache: CorrectionArtifactCache;
 }
 
 interface CorrectionArtifactChainValidationResult {
@@ -917,7 +977,6 @@ interface CurrentCorrectionTransportValidationOptions
 interface HistoricalCorrectionTransportValidationOptions
     extends CurrentCorrectionTransportValidationOptions {
     retryRejections: readonly IndexedCorrectionEvent[];
-    nextSelectedEventIndex: number;
     nextSelectionPreviousPackageSha256: string | null;
 }
 
@@ -1030,22 +1089,21 @@ function validateHistoricalCorrectionTransport(
         return violations;
     }
 
-    const acceptedResponses = correctionEventsInWindow(
+    const acceptedResponses = filterCorrectionEvents(
         options.acceptedResponses,
-        options.selectedEventIndex,
-        options.nextSelectedEventIndex
-    ).filter(({ details }) => stringValue(details.task_id) === options.taskId);
-    const invocationAttestations = correctionEventsInWindow(
+        options.artifactCache.workMetrics,
+        ({ details }) => stringValue(details.task_id) === options.taskId
+    );
+    const invocationAttestations = filterCorrectionEvents(
         options.invocationAttestations,
-        options.selectedEventIndex,
-        options.nextSelectedEventIndex
-    ).filter(({ details }) => stringValue(details.task_id) === options.taskId);
-    const retryRejection = correctionEventsInWindow(
+        options.artifactCache.workMetrics,
+        ({ details }) => stringValue(details.task_id) === options.taskId
+    );
+    const retryRejection = findCorrectionEvent(
         options.retryRejections,
-        options.selectedEventIndex,
-        options.nextSelectedEventIndex
-    ).find(({ details }) => (
-        stringValue(details.task_id) === options.taskId
+        options.artifactCache.workMetrics,
+        ({ details }) => (
+            stringValue(details.task_id) === options.taskId
             && stringValue(details.review_type) === options.reviewType
             && typeof details.correction_attempt === 'number'
             && Number.isInteger(details.correction_attempt)
@@ -1065,7 +1123,8 @@ function validateHistoricalCorrectionTransport(
             && stringValue(details.provider_capabilities_sha256)
                 === stringValue(options.details.provider_capabilities_sha256)
             && stringValue(details.correction_artifact_path) === eventArtifactPath
-    ));
+        )
+    );
     if (acceptedResponses.length === 0 && invocationAttestations.length === 0) {
         violations.push('Historical correction transport lacks a package-bound invocation or accepted response.');
         return violations;
@@ -1278,53 +1337,72 @@ function validatePersistedCorrectionTransport(
         const responseAttestation = options.transport === 'correction_only_invocation'
             ? persisted.producer_response_attestation
             : attestation;
-        const matchingAcceptedResponses = responseAttestation ? options.acceptedResponses.filter(({ details: accepted }) => (
-            stringValue(accepted.task_id) === options.taskId
-            && stringValue(accepted.review_type) === options.reviewType
-            && stringValue(accepted.selected_transport) === options.transport
-            && stringValue(accepted.reviewer_identity) === persisted.binding.reviewer_identity
-            && stringValue(accepted.reviewer_attempt_id) === persisted.binding.reviewer_attempt_id
-            && stringValue(accepted.correction_producer_identity) === responseAttestation.reviewer_identity
-            && stringValue(accepted.provider_invocation_id) === responseAttestation.provider_invocation_id
-            && stringValue(accepted.attestation_source) === responseAttestation.attestation_source
-            && stringValue(accepted.provider_response_event_sha256)
-                === responseAttestation.provider_response_event_sha256
-            && stringValue(accepted.corrected_output_sha256) === responseAttestation.provider_response_sha256
-            && stringValue(accepted.correction_artifact_path) === eventArtifactPath
-            && stringValue(accepted.correction_artifact_sha256) === persisted.artifact_sha256
-            && stringValue(accepted.correction_package_sha256) === options.correctionPackageSha256
-            && stringValue(accepted.original_output_sha256) === persisted.binding.original_output_sha256
-            && stringValue(accepted.findings_semantic_fingerprint)
-                === persisted.binding.findings_semantic_fingerprint
-            && stringValue(accepted.provider_id) === binding?.provider_id
-            && stringValue(accepted.provider_capabilities_sha256) === binding?.provider_capabilities_sha256
-            && stringValue(accepted.session_availability) === binding?.session_availability
-        )) : [];
+        const matchingAcceptedResponses = responseAttestation
+            ? filterCorrectionEvents(
+                options.acceptedResponses,
+                options.artifactCache.workMetrics,
+                ({ details: accepted }) => (
+                    stringValue(accepted.task_id) === options.taskId
+                    && stringValue(accepted.review_type) === options.reviewType
+                    && stringValue(accepted.selected_transport) === options.transport
+                    && stringValue(accepted.reviewer_identity) === persisted.binding.reviewer_identity
+                    && stringValue(accepted.reviewer_attempt_id) === persisted.binding.reviewer_attempt_id
+                    && stringValue(accepted.correction_producer_identity) === responseAttestation.reviewer_identity
+                    && stringValue(accepted.provider_invocation_id) === responseAttestation.provider_invocation_id
+                    && stringValue(accepted.attestation_source) === responseAttestation.attestation_source
+                    && stringValue(accepted.provider_response_event_sha256)
+                        === responseAttestation.provider_response_event_sha256
+                    && stringValue(accepted.corrected_output_sha256) === responseAttestation.provider_response_sha256
+                    && stringValue(accepted.correction_artifact_path) === eventArtifactPath
+                    && stringValue(accepted.correction_artifact_sha256) === persisted.artifact_sha256
+                    && stringValue(accepted.correction_package_sha256) === options.correctionPackageSha256
+                    && stringValue(accepted.original_output_sha256) === persisted.binding.original_output_sha256
+                    && stringValue(accepted.findings_semantic_fingerprint)
+                        === persisted.binding.findings_semantic_fingerprint
+                    && stringValue(accepted.provider_id) === binding?.provider_id
+                    && stringValue(accepted.provider_capabilities_sha256)
+                        === binding?.provider_capabilities_sha256
+                    && stringValue(accepted.session_availability) === binding?.session_availability
+                )
+            )
+            : [];
         const acceptedResponse = matchingAcceptedResponses.length === 1
             ? matchingAcceptedResponses[0]
             : null;
         const matchingInvocationAttestations = responseAttestation
-            ? options.invocationAttestations.filter(({ details: invocation }) => (
-                stringValue(invocation.task_id) === options.taskId
-                && stringValue(invocation.review_type) === options.reviewType
-                && stringValue(invocation.original_reviewer_identity) === persisted.binding.reviewer_identity
-                && stringValue(invocation.reviewer_attempt_id) === persisted.binding.reviewer_attempt_id
-                && stringValue(invocation.correction_producer_identity) === responseAttestation.reviewer_identity
-                && stringValue(invocation.provider_invocation_id) === responseAttestation.provider_invocation_id
-                && stringValue(invocation.attestation_source) === responseAttestation.attestation_source
-                && stringValue(invocation.corrected_output_sha256) === responseAttestation.provider_response_sha256
-                && stringValue(invocation.provider_response_event_sha256)
-                    === responseAttestation.provider_response_event_sha256
-                && typeof invocation.correction_attempt === 'number'
-                && invocation.correction_attempt === options.correctionAttempt
-                && stringValue(invocation.reviewer_invocation_event_sha256)
-                    === stringValue(options.details.reviewer_invocation_event_sha256)
-                && stringValue(invocation.selected_transport) === options.transport
-                && stringValue(invocation.correction_package_sha256) === options.correctionPackageSha256
-                && stringValue(invocation.provider_id) === binding?.provider_id
-                && stringValue(invocation.provider_capabilities_sha256) === binding?.provider_capabilities_sha256
-                && stringValue(invocation.session_availability) === binding?.session_availability
-            ))
+            ? filterCorrectionEvents(
+                options.invocationAttestations,
+                options.artifactCache.workMetrics,
+                ({ details: invocation }) => (
+                    stringValue(invocation.task_id) === options.taskId
+                    && stringValue(invocation.review_type) === options.reviewType
+                    && stringValue(invocation.original_reviewer_identity)
+                        === persisted.binding.reviewer_identity
+                    && stringValue(invocation.reviewer_attempt_id)
+                        === persisted.binding.reviewer_attempt_id
+                    && stringValue(invocation.correction_producer_identity)
+                        === responseAttestation.reviewer_identity
+                    && stringValue(invocation.provider_invocation_id)
+                        === responseAttestation.provider_invocation_id
+                    && stringValue(invocation.attestation_source)
+                        === responseAttestation.attestation_source
+                    && stringValue(invocation.corrected_output_sha256)
+                        === responseAttestation.provider_response_sha256
+                    && stringValue(invocation.provider_response_event_sha256)
+                        === responseAttestation.provider_response_event_sha256
+                    && typeof invocation.correction_attempt === 'number'
+                    && invocation.correction_attempt === options.correctionAttempt
+                    && stringValue(invocation.reviewer_invocation_event_sha256)
+                        === stringValue(options.details.reviewer_invocation_event_sha256)
+                    && stringValue(invocation.selected_transport) === options.transport
+                    && stringValue(invocation.correction_package_sha256)
+                        === options.correctionPackageSha256
+                    && stringValue(invocation.provider_id) === binding?.provider_id
+                    && stringValue(invocation.provider_capabilities_sha256)
+                        === binding?.provider_capabilities_sha256
+                    && stringValue(invocation.session_availability) === binding?.session_availability
+                )
+            )
             : [];
         const invocationAttestation = matchingInvocationAttestations.length === 1
             ? matchingInvocationAttestations[0]
@@ -1389,16 +1467,28 @@ function collectCorrectionTransports(
         reviewsRoot: string;
         taskId: string;
         authorizedReviewTypes: ReadonlySet<string>;
+        onWorkMetrics?: (metrics: Readonly<CorrectionTransportWorkMetrics>) => void;
     }
 ): ReviewOutputCorrectionTransportAudit[] {
-    const eventCollection = collectCorrectionTransportEvents(events, options);
+    const workMetrics: CorrectionTransportWorkMetrics = {
+        timeline_events_indexed: 0,
+        evidence_events_windowed: 0,
+        evidence_candidates_examined: 0,
+        selection_candidates_examined: 0,
+        artifact_reads: 0,
+        artifact_read_cache_hits: 0,
+        artifact_hash_reads: 0,
+        artifact_hash_cache_hits: 0
+    };
+    const eventCollection = collectCorrectionTransportEvents(events, {
+        ...options,
+        workMetrics
+    });
     const {
         transportEvents,
         acceptedCorrectionResponses,
         correctionInvocationAttestations,
-        acceptedResponsesByReviewType,
-        invocationAttestationsByReviewType,
-        retryRejectionsByReviewType,
+        evidenceWindowsBySelectionIndex,
         reviewerInvocationsBySha256,
         selectionsByPreviousPackage,
         selectionEventsByIndex,
@@ -1413,10 +1503,14 @@ function collectCorrectionTransports(
         providerInvocationId: string | null;
         reviewerInvocationEventSha256: string;
     }>();
+    const observedRejectionPackages = new Set<string>();
     const selectedPreviousPackages = new Set<string>();
     const consumedAcceptedResponseIndexes = new Set<number>();
     const consumedInvocationAttestationIndexes = new Set<number>();
-    const artifactCache = new Map<string, CorrectionArtifactCacheEntry>();
+    const artifactCache: CorrectionArtifactCache = {
+        entries: new Map<string, CorrectionArtifactCacheEntry>(),
+        workMetrics
+    };
     const results: ReviewOutputCorrectionTransportAudit[] = [];
     for (const {
         eventIndex: selectedEventIndex,
@@ -1497,21 +1591,30 @@ function collectCorrectionTransports(
                 && canonicalReviewType
                 && trustedOriginalReviewerInvocation
             ) {
-                const hasSuccessorSelection = (
-                    selectionsByPreviousPackage.get(correctionPackageSha256) || []
-                ).some((selection) => correctionSelectionMatchesValidationRejection({
-                    selection,
-                    rejectionEventIndex: selectedEventIndex,
-                    taskId: options.taskId,
-                    reviewType,
-                    correctionAttempt,
-                    reviewerIdentity,
-                    reviewerAttemptId,
-                    providerId,
-                    providerInvocationId,
-                    reviewerInvocationEventSha256
-                }));
-                const rejectionArtifactViolations = hasSuccessorSelection
+                const duplicateRejection = observedRejectionPackages.has(correctionPackageSha256);
+                observedRejectionPackages.add(correctionPackageSha256);
+                if (duplicateRejection) {
+                    violations.push(
+                        'Correction validation rejection is duplicate or replayed for the same correction package.'
+                    );
+                }
+                const hasSuccessorSelection = !duplicateRejection && hasCorrectionSelection(
+                    selectionsByPreviousPackage.get(correctionPackageSha256) || [],
+                    workMetrics,
+                    (selection) => correctionSelectionMatchesValidationRejection({
+                        selection,
+                        rejectionEventIndex: selectedEventIndex,
+                        taskId: options.taskId,
+                        reviewType,
+                        correctionAttempt,
+                        reviewerIdentity,
+                        reviewerAttemptId,
+                        providerId,
+                        providerInvocationId,
+                        reviewerInvocationEventSha256
+                    })
+                );
+                const rejectionArtifactViolations = duplicateRejection || hasSuccessorSelection
                     ? []
                     : validateTerminalCorrectionRejectionArtifact({
                         repoRoot: options.repoRoot,
@@ -1529,11 +1632,7 @@ function collectCorrectionTransports(
                         artifactCache
                     });
                 violations.push(...rejectionArtifactViolations);
-                if (requiredPackages.has(correctionPackageSha256)) {
-                    violations.push(
-                        'Correction validation rejection is duplicate or replayed for the same correction package.'
-                    );
-                } else if (rejectionArtifactViolations.length === 0) {
+                if (!duplicateRejection && rejectionArtifactViolations.length === 0) {
                     requiredPackages.set(correctionPackageSha256, {
                         eventIndex: selectedEventIndex,
                         reviewType,
@@ -1698,6 +1797,11 @@ function collectCorrectionTransports(
                 violations.push('API continuation lacks closed or stateless session evidence.');
             }
             const nextSelectedEventIndex = nextSelectionIndexByEventIndex.get(selectedEventIndex);
+            const evidenceWindow = evidenceWindowsBySelectionIndex.get(selectedEventIndex) || {
+                acceptedResponses: [],
+                invocationAttestations: [],
+                retryRejections: []
+            };
             const transportValidationOptions = {
                 ...options,
                 reviewType,
@@ -1705,8 +1809,8 @@ function collectCorrectionTransports(
                 correctionAttempt,
                 correctionPackageSha256,
                 details,
-                acceptedResponses: acceptedResponsesByReviewType.get(reviewType) || [],
-                invocationAttestations: invocationAttestationsByReviewType.get(reviewType) || [],
+                acceptedResponses: evidenceWindow.acceptedResponses,
+                invocationAttestations: evidenceWindow.invocationAttestations,
                 selectedEventIndex,
                 consumedAcceptedResponseIndexes,
                 consumedInvocationAttestationIndexes,
@@ -1722,8 +1826,7 @@ function collectCorrectionTransports(
                     historical: nextSelectedEventIndex === undefined
                         ? null
                         : {
-                            retryRejections: retryRejectionsByReviewType.get(reviewType) || [],
-                            nextSelectedEventIndex,
+                            retryRejections: evidenceWindow.retryRejections,
                             nextSelectionPreviousPackageSha256: stringValue(
                                 selectionEventsByIndex
                                     .get(nextSelectedEventIndex)
@@ -1797,6 +1900,7 @@ function collectCorrectionTransports(
                 ]
         });
     }
+    options.onWorkMetrics?.({ ...workMetrics });
     return results;
 }
 
@@ -1810,6 +1914,11 @@ export function buildReviewFindingsAuditSummary(options: {
     timelineEvents: readonly ReviewReuseTelemetryEventLike[];
     reviewAttemptSummary: ReviewAttemptSummary | null;
     taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>;
+    _testHooks?: {
+        onCorrectionTransportWorkMetrics?: (
+            metrics: Readonly<CorrectionTransportWorkMetrics>
+        ) => void;
+    };
 }): ReviewFindingsAuditSummary | null {
     const validationFailures = collectValidationFailures(options.timelineEvents);
     const remediationCycles = collectRemediationCycles(options.timelineEvents);
@@ -1821,7 +1930,8 @@ export function buildReviewFindingsAuditSummary(options: {
         ...options,
         authorizedReviewTypes: new Set(
             options.authorizedCorrectionReviewTypes || requiredReviewTypes
-        )
+        ),
+        onWorkMetrics: options._testHooks?.onCorrectionTransportWorkMetrics
     });
     const lanes = requiredReviewTypes
         .map((reviewType) => buildCurrentFindingsLane({ ...options, reviewType }))

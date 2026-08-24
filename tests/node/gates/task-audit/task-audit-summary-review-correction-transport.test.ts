@@ -100,6 +100,7 @@ function writeSelectedCorrectionFixture(options: {
     sessionAvailability: 'available' | 'closed' | 'stateless';
     attestationSource?: string;
     correctionAttempt?: number;
+    maxCorrectionAttempts?: number;
     selectTransport?: boolean;
 }): {
     artifactPath: string;
@@ -153,6 +154,7 @@ function writeSelectedCorrectionFixture(options: {
         validationArtifactSha256: fileSha256(validationArtifactPath) || '',
         violations: ['schema_version must be 2.'],
         correctionAttempt: options.correctionAttempt,
+        maxCorrectionAttempts: options.maxCorrectionAttempts,
         capabilities: options.capabilities,
         providerId: options.providerId,
         providerInvocationId: options.providerInvocationId,
@@ -203,6 +205,120 @@ function writeSelectedCorrectionFixture(options: {
         selectedFileSha256,
         snapshotPath
     };
+}
+
+function buildHistoricalLiveCorrectionAttempt(options: {
+    reviewsRoot: string;
+    taskId: string;
+    correctionAttempt: number;
+    reviewType: string;
+    reviewerIdentity: string;
+    providerInvocationId: string;
+    reviewerInvocationEventSha256: string;
+    maxCorrectionAttempts?: number;
+    capabilities: {
+        live_reviewer_continuation: boolean;
+        api_conversation_continuation: boolean;
+        correction_only_invocation: boolean;
+    };
+}): CorrectionEvent[] {
+    const capabilitiesSha256 = computeReviewOutputCorrectionProviderCapabilitiesSha256({
+        providerId: 'Codex',
+        capabilities: options.capabilities
+    });
+    const persisted = writeSelectedCorrectionFixture({
+        reviewsRoot: options.reviewsRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerIdentity: options.reviewerIdentity,
+        providerId: 'Codex',
+        providerInvocationId: options.providerInvocationId,
+        reviewerInvocationEventSha256: options.reviewerInvocationEventSha256,
+        capabilities: options.capabilities,
+        sessionAvailability: 'available',
+        attestationSource: 'codex_collaboration_followup_task',
+        correctionAttempt: options.correctionAttempt,
+        maxCorrectionAttempts: options.maxCorrectionAttempts
+    });
+    const artifact = readReviewOutputCorrectionArtifact(persisted.artifactPath).artifact!;
+    return [
+        correctionEvent('REVIEW_OUTPUT_CORRECTION_REQUIRED', {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            correction_attempt: options.correctionAttempt,
+            correction_package_sha256: persisted.previousFileSha256,
+            correction_artifact_path: persisted.artifactPath,
+            reviewer_identity: options.reviewerIdentity,
+            reviewer_attempt_id: 'attempt-1',
+            provider_id: 'Codex',
+            provider_invocation_id: options.providerInvocationId,
+            provider_capabilities_sha256: capabilitiesSha256,
+            reviewer_invocation_event_sha256: options.reviewerInvocationEventSha256
+        }),
+        correctionEvent('REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION', {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            correction_attempt: options.correctionAttempt,
+            previous_correction_package_sha256: persisted.previousFileSha256,
+            correction_package_sha256: persisted.selectedFileSha256,
+            correction_artifact_path: persisted.artifactPath,
+            correction_artifact_sha256: persisted.artifactSha256,
+            correction_artifact_snapshot_path: persisted.snapshotPath,
+            correction_artifact_snapshot_sha256: persisted.selectedFileSha256,
+            provider_id: 'Codex',
+            reviewer_identity: options.reviewerIdentity,
+            reviewer_attempt_id: 'attempt-1',
+            provider_invocation_id: options.providerInvocationId,
+            reviewer_invocation_event_sha256: options.reviewerInvocationEventSha256,
+            availability_attestation_source: 'codex_collaboration_followup_task',
+            availability_evidence_type: 'provider_native_session_receipt',
+            availability_provider_invocation_event_sha256:
+                options.reviewerInvocationEventSha256,
+            availability_provider_response_sha256: '7'.repeat(64),
+            session_availability: 'available',
+            selected_transport: 'live_reviewer_continuation',
+            provider_capabilities: options.capabilities,
+            provider_capabilities_sha256: capabilitiesSha256
+        }),
+        correctionEvent('REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED', {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            correction_attempt: options.correctionAttempt,
+            reviewer_invocation_event_sha256: options.reviewerInvocationEventSha256,
+            original_reviewer_identity: options.reviewerIdentity,
+            reviewer_attempt_id: 'attempt-1',
+            correction_producer_identity: options.reviewerIdentity,
+            provider_invocation_id: options.providerInvocationId,
+            attestation_source: 'codex_collaboration_followup_task',
+            corrected_output_sha256: '7'.repeat(64),
+            provider_response_event_sha256: '6'.repeat(64),
+            selected_transport: 'live_reviewer_continuation',
+            correction_package_sha256: persisted.selectedFileSha256,
+            provider_id: 'Codex',
+            provider_capabilities_sha256: capabilitiesSha256,
+            session_availability: 'available'
+        }),
+        correctionEvent('REVIEW_OUTPUT_CORRECTION_ACCEPTED', {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            reviewer_identity: options.reviewerIdentity,
+            reviewer_attempt_id: 'attempt-1',
+            correction_producer_identity: options.reviewerIdentity,
+            provider_invocation_id: options.providerInvocationId,
+            attestation_source: 'codex_collaboration_followup_task',
+            provider_response_event_sha256: '6'.repeat(64),
+            corrected_output_sha256: '7'.repeat(64),
+            selected_transport: 'live_reviewer_continuation',
+            correction_artifact_path: persisted.artifactPath,
+            correction_artifact_sha256: persisted.artifactSha256,
+            correction_package_sha256: persisted.selectedFileSha256,
+            original_output_sha256: artifact.binding.original_output_sha256,
+            findings_semantic_fingerprint: artifact.binding.findings_semantic_fingerprint,
+            provider_id: 'Codex',
+            provider_capabilities_sha256: capabilitiesSha256,
+            session_availability: 'available'
+        })
+    ];
 }
 
 describe('gates/task-audit-summary review correction transport', () => {
@@ -320,6 +436,39 @@ describe('gates/task-audit-summary review correction transport', () => {
         assert.match(
             duplicateRejection?.correction_transports?.[1]?.violations.join(' ') || '',
             /duplicate or replayed for the same correction package/iu
+        );
+
+        const duplicateTelemetryCount = 24;
+        const duplicateWorkMetricsCapture: {
+            value?: { selection_candidates_examined: number };
+        } = {};
+        const duplicateTelemetryScale = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId: 'T-AUDIT-CORRECTION-TRANSPORT',
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                codeReviewerInvocation,
+                ...Array.from({ length: duplicateTelemetryCount }, () => selected),
+                ...Array.from({ length: duplicateTelemetryCount }, () => required)
+            ],
+            reviewAttemptSummary: null,
+            _testHooks: {
+                onCorrectionTransportWorkMetrics(metrics) {
+                    duplicateWorkMetricsCapture.value = {
+                        selection_candidates_examined: metrics.selection_candidates_examined
+                    };
+                }
+            }
+        });
+        assert.equal(duplicateTelemetryScale?.status, 'BLOCKED');
+        const duplicateWorkMetrics = duplicateWorkMetricsCapture.value;
+        assert.ok(duplicateWorkMetrics);
+        assert.equal(
+            duplicateWorkMetrics.selection_candidates_examined,
+            duplicateTelemetryCount,
+            'Only the first rejection for one package may scan its package-indexed selection candidates.'
         );
 
         const forgedPredecessorPackageSha256 = 'a'.repeat(64);
@@ -1239,10 +1388,6 @@ describe('gates/task-audit-summary review correction transport', () => {
             api_conversation_continuation: false,
             correction_only_invocation: true
         };
-        const capabilitiesSha256 = computeReviewOutputCorrectionProviderCapabilitiesSha256({
-            providerId: 'Codex',
-            capabilities
-        });
         const originalReviewerInvocation = reviewerInvocationEvent({
             taskId,
             reviewType,
@@ -1264,98 +1409,16 @@ describe('gates/task-audit-summary review correction transport', () => {
                 providerInvocationId: '/root/code-review',
                 reviewerInvocationEventSha256: '9'.repeat(64)
             }
-        ) => {
-            const persisted = writeSelectedCorrectionFixture({
-                reviewsRoot,
-                taskId,
-                reviewType: lane.reviewType,
-                reviewerIdentity: lane.reviewerIdentity,
-                providerId: 'Codex',
-                providerInvocationId: lane.providerInvocationId,
-                reviewerInvocationEventSha256: lane.reviewerInvocationEventSha256,
-                capabilities,
-                sessionAvailability: 'available',
-                attestationSource: 'codex_collaboration_followup_task',
-                correctionAttempt
-            });
-            const artifact = readReviewOutputCorrectionArtifact(persisted.artifactPath).artifact!;
-            const required = correctionEvent('REVIEW_OUTPUT_CORRECTION_REQUIRED', {
-                task_id: taskId,
-                review_type: lane.reviewType,
-                correction_attempt: correctionAttempt,
-                correction_package_sha256: persisted.previousFileSha256,
-                correction_artifact_path: persisted.artifactPath,
-                reviewer_identity: lane.reviewerIdentity,
-                reviewer_attempt_id: 'attempt-1',
-                provider_id: 'Codex',
-                provider_invocation_id: lane.providerInvocationId,
-                provider_capabilities_sha256: capabilitiesSha256,
-                reviewer_invocation_event_sha256: lane.reviewerInvocationEventSha256
-            });
-            const selected = correctionEvent('REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION', {
-                task_id: taskId,
-                review_type: lane.reviewType,
-                correction_attempt: correctionAttempt,
-                previous_correction_package_sha256: persisted.previousFileSha256,
-                correction_package_sha256: persisted.selectedFileSha256,
-                correction_artifact_path: persisted.artifactPath,
-                correction_artifact_sha256: persisted.artifactSha256,
-                correction_artifact_snapshot_path: persisted.snapshotPath,
-                correction_artifact_snapshot_sha256: persisted.selectedFileSha256,
-                provider_id: 'Codex',
-                reviewer_identity: lane.reviewerIdentity,
-                reviewer_attempt_id: 'attempt-1',
-                provider_invocation_id: lane.providerInvocationId,
-                reviewer_invocation_event_sha256: lane.reviewerInvocationEventSha256,
-                availability_attestation_source: 'codex_collaboration_followup_task',
-                availability_evidence_type: 'provider_native_session_receipt',
-                availability_provider_invocation_event_sha256: lane.reviewerInvocationEventSha256,
-                availability_provider_response_sha256: '7'.repeat(64),
-                session_availability: 'available',
-                selected_transport: 'live_reviewer_continuation',
-                provider_capabilities: capabilities,
-                provider_capabilities_sha256: capabilitiesSha256
-            });
-            const invocation = correctionEvent('REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED', {
-                task_id: taskId,
-                review_type: lane.reviewType,
-                correction_attempt: correctionAttempt,
-                reviewer_invocation_event_sha256: lane.reviewerInvocationEventSha256,
-                original_reviewer_identity: lane.reviewerIdentity,
-                reviewer_attempt_id: 'attempt-1',
-                correction_producer_identity: lane.reviewerIdentity,
-                provider_invocation_id: lane.providerInvocationId,
-                attestation_source: 'codex_collaboration_followup_task',
-                corrected_output_sha256: '7'.repeat(64),
-                provider_response_event_sha256: '6'.repeat(64),
-                selected_transport: 'live_reviewer_continuation',
-                correction_package_sha256: persisted.selectedFileSha256,
-                provider_id: 'Codex',
-                provider_capabilities_sha256: capabilitiesSha256,
-                session_availability: 'available'
-            });
-            const accepted = correctionEvent('REVIEW_OUTPUT_CORRECTION_ACCEPTED', {
-                task_id: taskId,
-                review_type: lane.reviewType,
-                reviewer_identity: lane.reviewerIdentity,
-                reviewer_attempt_id: 'attempt-1',
-                correction_producer_identity: lane.reviewerIdentity,
-                provider_invocation_id: lane.providerInvocationId,
-                attestation_source: 'codex_collaboration_followup_task',
-                provider_response_event_sha256: '6'.repeat(64),
-                corrected_output_sha256: '7'.repeat(64),
-                selected_transport: 'live_reviewer_continuation',
-                correction_artifact_path: persisted.artifactPath,
-                correction_artifact_sha256: persisted.artifactSha256,
-                correction_package_sha256: persisted.selectedFileSha256,
-                original_output_sha256: artifact.binding.original_output_sha256,
-                findings_semantic_fingerprint: artifact.binding.findings_semantic_fingerprint,
-                provider_id: 'Codex',
-                provider_capabilities_sha256: capabilitiesSha256,
-                session_availability: 'available'
-            });
-            return [required, selected, invocation, accepted];
-        };
+        ) => buildHistoricalLiveCorrectionAttempt({
+            reviewsRoot,
+            taskId,
+            reviewType: lane.reviewType,
+            reviewerIdentity: lane.reviewerIdentity,
+            providerInvocationId: lane.providerInvocationId,
+            reviewerInvocationEventSha256: lane.reviewerInvocationEventSha256,
+            capabilities,
+            correctionAttempt
+        });
 
         const firstAttempt = buildAttempt(1);
         const interleavedReviewType = 'security';
@@ -1906,6 +1969,97 @@ describe('gates/task-audit-summary review correction transport', () => {
             forgedHistoricalAttestationSummary?.correction_transports?.[1]?.violations.join(' ') || '',
             /snapshot does not match transport telemetry/iu
         );
+    });
+
+    it('reconstruction scale: bounds evidence visits and correction artifact reads per attempt', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-correction-audit-scale-'));
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        tempRoots.push(repoRoot);
+        const taskId = 'T-AUDIT-CORRECTION-SCALE';
+        const reviewType = 'code';
+        const reviewerIdentity = 'agent:code-reviewer';
+        const providerInvocationId = '/root/code-review';
+        const reviewerInvocationEventSha256 = '9'.repeat(64);
+        const correctionAttemptCount = 24;
+        const capabilities = {
+            live_reviewer_continuation: true,
+            api_conversation_continuation: false,
+            correction_only_invocation: true
+        };
+        const timelineEvents: CorrectionEvent[] = [reviewerInvocationEvent({
+            taskId,
+            reviewType,
+            reviewerIdentity,
+            providerId: 'Codex',
+            providerInvocationId,
+            eventSha256: reviewerInvocationEventSha256
+        })];
+        for (let correctionAttempt = 1; correctionAttempt <= correctionAttemptCount; correctionAttempt += 1) {
+            timelineEvents.push(...buildHistoricalLiveCorrectionAttempt({
+                reviewsRoot,
+                taskId,
+                correctionAttempt,
+                reviewType,
+                reviewerIdentity,
+                providerInvocationId,
+                reviewerInvocationEventSha256,
+                maxCorrectionAttempts: correctionAttemptCount,
+                capabilities
+            }));
+        }
+        const workMetricsCapture: { value?: {
+            timeline_events_indexed: number;
+            evidence_events_windowed: number;
+            evidence_candidates_examined: number;
+            selection_candidates_examined: number;
+            artifact_reads: number;
+            artifact_read_cache_hits: number;
+            artifact_hash_reads: number;
+            artifact_hash_cache_hits: number;
+        } } = {};
+
+        const summary = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents,
+            reviewAttemptSummary: null,
+            _testHooks: {
+                onCorrectionTransportWorkMetrics(metrics) {
+                    workMetricsCapture.value = { ...metrics };
+                }
+            }
+        });
+
+        assert.notEqual(
+            summary?.status,
+            'BLOCKED',
+            JSON.stringify(summary?.correction_transports, null, 2)
+        );
+        assert.equal(summary?.correction_transports?.every((entry) => entry.evidence_valid), true);
+        const workMetrics = workMetricsCapture.value;
+        assert.ok(workMetrics);
+        assert.equal(workMetrics.timeline_events_indexed, timelineEvents.length);
+        assert.equal(workMetrics.evidence_events_windowed, (correctionAttemptCount * 3) - 1);
+        assert.equal(
+            workMetrics.evidence_candidates_examined,
+            workMetrics.evidence_events_windowed,
+            'Each accepted response, invocation attestation, and retry rejection must be examined once.'
+        );
+        assert.equal(
+            workMetrics.selection_candidates_examined,
+            correctionAttemptCount,
+            'Each validation rejection must inspect only its package-indexed successor.'
+        );
+        assert.equal(
+            workMetrics.artifact_reads,
+            correctionAttemptCount + 1,
+            'Each immutable snapshot and the one canonical current artifact must be read once.'
+        );
+        assert.equal(workMetrics.artifact_hash_reads, correctionAttemptCount);
     });
 
     it('reconstruction boundary: rejects escaped review types and binds FULL relaunch artifacts', () => {
