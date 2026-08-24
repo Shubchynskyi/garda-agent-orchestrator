@@ -1015,15 +1015,6 @@ export async function runRestartReviewCycleCommand(
                     if (!laneDecision) {
                         throw new Error(`Authoritative remediation decision is missing required lane '${reviewType}'.`);
                     }
-                    const reviewExecution = buildAuthenticatedRemediationReviewExecution({
-                        taskId: resolvedTaskId,
-                        reviewType,
-                        preflightSha256: refreshedPreflightSha256,
-                        fullReviewScope: refreshedFullReviewScope,
-                        authoritativeDecision: preliminaryAuthoritativeDecision,
-                        authoritativeClassification: authoritativeDecisionInputs.classification,
-                        persistedDecisionSha256: preliminaryAuthoritativeDecision.decision_sha256
-                    });
                     const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(
                         refreshedPreflight.preflight,
                         reviewType
@@ -1055,8 +1046,6 @@ export async function runRestartReviewCycleCommand(
                         tokenEconomyConfigData: sharedTokenEconomyConfigData,
                         scopedDiffMetadataPath,
                         timelineEventsSummary: batchTimelineSummary,
-                        reviewExecutionContract: reviewExecution.contract,
-                        reviewExecutionValidationAuthority: reviewExecution.validationAuthority,
                         ruleContextSectionsCache: sharedRuleContextSectionsCache,
                         ruleFileContentCache: sharedRuleFileContentCache
                     });

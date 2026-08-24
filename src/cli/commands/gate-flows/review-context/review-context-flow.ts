@@ -582,12 +582,6 @@ export async function runBuildReviewContextCommand(
             reason: currentPassReviewEvidence.reason
         });
     }
-    if (effectivePersistedRemediationReuseRequired) {
-        throw new Error(
-            `Persisted authoritative remediation decision requires accepted current-cycle reused evidence `
-            + `for '${reviewType}', but that evidence is missing, stale, or forged.`
-        );
-    }
     const result = buildReviewContext({
         reviewType,
         depth,
@@ -659,6 +653,14 @@ export async function runBuildReviewContextCommand(
                 reason: `review reuse check failed: ${error instanceof Error ? error.message : String(error)}`
             };
         }
+    }
+
+    if (effectivePersistedRemediationReuseRequired && !reviewReuseResult.reused) {
+        throw new Error(
+            `Persisted authoritative remediation decision requires accepted current-cycle reused evidence `
+            + `for '${reviewType}', but that evidence is missing, stale, or forged. `
+            + `Reuse validation: ${reviewReuseResult.reason}`
+        );
     }
 
     return buildGeneratedReviewContextCommandResult({
