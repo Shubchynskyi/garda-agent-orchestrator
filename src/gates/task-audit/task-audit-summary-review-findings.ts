@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 
+import { sha256RedactedJsonPayload } from '../../core/redaction';
+import { fileSha256 } from '../../gate-runtime/hash';
 import type { ReviewFindingDispositionAction } from '../../policy/profile-resolver';
 import type { TaskQueueEntry } from '../../core/task-queue-read';
 import type { ReviewReuseTelemetryEventLike } from '../review-reuse/review-reuse-telemetry';
@@ -10,6 +13,17 @@ import {
 import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
 import type { ReviewFindingsDispositionArtifactItem } from '../review/review-findings-disposition-artifact';
 import type { ReviewFindingsSeverity } from '../review/review-findings-schema';
+import {
+    buildReviewOutputCorrectionHandoff,
+    computeReviewOutputCorrectionProviderCapabilitiesSha256,
+    getReviewOutputCorrectionArtifactPath,
+    isProviderOwnedReviewOutputCorrectionSessionAttestationSource,
+    readReviewOutputCorrectionArtifact,
+    resolveReviewOutputCorrectionTransport,
+    requiresReviewOutputCorrectionFailClosedAvailabilityEvidence,
+    REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE,
+    type ReviewOutputCorrectionArtifact
+} from '../review/review-output-correction';
 import {
     validateReviewFindingsValidationArtifactForReceipt,
     type NormalizedReviewFindingInventoryEntry,
@@ -72,6 +86,27 @@ export interface ReviewFindingsRemediationCycleAudit {
     reused_review_types: string[];
 }
 
+export interface ReviewOutputCorrectionTransportAudit {
+    timestamp_utc: string | null;
+    event_type: string;
+    review_type: string;
+    transport:
+        | 'validation_rejection'
+        | 'live_reviewer_continuation'
+        | 'api_conversation_continuation'
+        | 'correction_only_invocation'
+        | 'full_reviewer_relaunch'
+        | 'invocation_attestation'
+        | 'acceptance';
+    session_availability: string | null;
+    correction_attempt: number | null;
+    correction_package_sha256: string | null;
+    reviewer_invocation_event_sha256: string | null;
+    provider_capabilities_sha256: string | null;
+    evidence_valid: boolean;
+    violations: string[];
+}
+
 export interface ReviewFindingsAuditSummary {
     status: 'CLEAR' | 'BLOCKED' | 'INCOMPLETE';
     lanes: ReviewFindingsAuditLane[];
@@ -85,6 +120,7 @@ export interface ReviewFindingsAuditSummary {
     remaining_blocker_count: number;
     validation_failures: ReviewFindingsValidationFailureAudit[];
     remediation_cycles: ReviewFindingsRemediationCycleAudit[];
+    correction_transports?: ReviewOutputCorrectionTransportAudit[];
     fresh_review_count: number;
     reused_review_count: number;
     visible_summary_line: string;
@@ -356,11 +392,1285 @@ function collectRemediationCycles(events: readonly ReviewReuseTelemetryEventLike
     });
 }
 
+function isSha256(value: string | null): value is string {
+    return !!value && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function isCanonicalCorrectionReviewType(value: string | null): value is string {
+    return !!value && /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(value);
+}
+
+interface IndexedCorrectionEvent {
+    eventIndex: number;
+    details: Record<string, unknown>;
+}
+
+interface CorrectionArtifactCacheEntry {
+    fileSha256?: string | null;
+    artifactRead?: ReturnType<typeof readReviewOutputCorrectionArtifact>;
+}
+
+function appendCorrectionEvent(
+    index: Map<string, IndexedCorrectionEvent[]>,
+    reviewType: string | null,
+    event: IndexedCorrectionEvent
+): void {
+    if (!reviewType) {
+        return;
+    }
+    const indexedEvents = index.get(reviewType);
+    if (indexedEvents) {
+        indexedEvents.push(event);
+        return;
+    }
+    index.set(reviewType, [event]);
+}
+
+function firstCorrectionEventAfter(
+    events: readonly IndexedCorrectionEvent[],
+    eventIndex: number
+): number {
+    let lower = 0;
+    let upper = events.length;
+    while (lower < upper) {
+        const middle = Math.floor((lower + upper) / 2);
+        if (events[middle].eventIndex <= eventIndex) {
+            lower = middle + 1;
+        } else {
+            upper = middle;
+        }
+    }
+    return lower;
+}
+
+function correctionEventsInWindow(
+    events: readonly IndexedCorrectionEvent[],
+    selectedEventIndex: number,
+    nextSelectedEventIndex: number
+): readonly IndexedCorrectionEvent[] {
+    const start = firstCorrectionEventAfter(events, selectedEventIndex);
+    const end = firstCorrectionEventAfter(events, nextSelectedEventIndex - 1);
+    return events.slice(start, end);
+}
+
+function hasTrustedOriginalReviewerInvocation(options: {
+    reviewerInvocationsBySha256: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    eventIndex: number;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string | null;
+    reviewerAttemptId: string | null;
+    providerId: string | null;
+    providerInvocationId: string | null;
+    reviewerInvocationEventSha256: string | null;
+}): boolean {
+    if (
+        !options.reviewerIdentity
+        || !options.reviewerAttemptId
+        || !options.providerId
+        || !options.providerInvocationId
+        || !isSha256(options.reviewerInvocationEventSha256)
+    ) {
+        return false;
+    }
+    const candidates = options.reviewerInvocationsBySha256.get(
+        options.reviewerInvocationEventSha256
+    ) || [];
+    if (candidates.length !== 1) {
+        return false;
+    }
+    const candidate = candidates[0];
+    const details = candidate.details;
+    const originalProviderId = stringValue(
+        details.execution_provider
+        ?? details.provider
+        ?? details.provider_family
+        ?? details.reviewer_launch_tool
+        ?? details.launch_tool
+    );
+    return candidate.eventIndex < options.eventIndex
+        && stringValue(details.task_id) === options.taskId
+        && stringValue(details.review_type) === options.reviewType
+        && stringValue(details.reviewer_execution_mode) === 'delegated_subagent'
+        && stringValue(details.reviewer_identity) === options.reviewerIdentity
+        && stringValue(details.reviewer_launch_attempt_id) === options.reviewerAttemptId
+        && originalProviderId === options.providerId
+        && stringValue(details.provider_invocation_id) === options.providerInvocationId
+        && isSha256(stringValue(details.reviewer_launch_artifact_sha256))
+        && isProviderOwnedReviewOutputCorrectionSessionAttestationSource(
+            stringValue(details.reviewer_launch_attestation_source) || ''
+        );
+}
+
+function readCachedCorrectionArtifact(
+    artifactPath: string,
+    cache: Map<string, CorrectionArtifactCacheEntry>
+): ReturnType<typeof readReviewOutputCorrectionArtifact> {
+    const cached = cache.get(artifactPath) || {};
+    if (!cached.artifactRead) {
+        cached.artifactRead = readReviewOutputCorrectionArtifact(artifactPath);
+        cache.set(artifactPath, cached);
+    }
+    return cached.artifactRead;
+}
+
+function readCachedCorrectionArtifactSha256(
+    artifactPath: string,
+    cache: Map<string, CorrectionArtifactCacheEntry>
+): string | null {
+    const cached = cache.get(artifactPath) || {};
+    if (cached.fileSha256 === undefined) {
+        cached.fileSha256 = fileSha256(artifactPath);
+        cache.set(artifactPath, cached);
+    }
+    return cached.fileSha256;
+}
+
+function correctionSelectionMatchesValidationRejection(options: {
+    selection: IndexedCorrectionEvent;
+    rejectionEventIndex: number;
+    taskId: string;
+    reviewType: string;
+    correctionAttempt: number;
+    reviewerIdentity: string;
+    reviewerAttemptId: string;
+    providerId: string | null;
+    providerInvocationId: string | null;
+    reviewerInvocationEventSha256: string;
+}): boolean {
+    const details = options.selection.details;
+    return options.selection.eventIndex > options.rejectionEventIndex
+        && stringValue(details.task_id) === options.taskId
+        && stringValue(details.review_type) === options.reviewType
+        && details.correction_attempt === options.correctionAttempt
+        && stringValue(details.reviewer_identity) === options.reviewerIdentity
+        && stringValue(details.reviewer_attempt_id) === options.reviewerAttemptId
+        && stringValue(details.provider_id) === options.providerId
+        && stringValue(details.provider_invocation_id) === options.providerInvocationId
+        && stringValue(details.reviewer_invocation_event_sha256)
+            === options.reviewerInvocationEventSha256;
+}
+
+function validateTerminalCorrectionRejectionArtifact(options: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    correctionAttempt: number;
+    correctionPackageSha256: string;
+    reviewerIdentity: string;
+    reviewerAttemptId: string;
+    providerId: string | null;
+    providerInvocationId: string | null;
+    reviewerInvocationEventSha256: string;
+    details: Record<string, unknown>;
+    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+}): string[] {
+    if (!isCanonicalCorrectionReviewType(options.reviewType)) {
+        return [];
+    }
+    const violations: string[] = [];
+    const expectedArtifactPath = getReviewOutputCorrectionArtifactPath(
+        path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`)
+    );
+    const eventArtifactPath = stringValue(options.details.correction_artifact_path);
+    const resolvedEventArtifactPath = eventArtifactPath
+        ? path.resolve(options.repoRoot, eventArtifactPath)
+        : null;
+    if (
+        !resolvedEventArtifactPath
+        || normalizePath(resolvedEventArtifactPath).toLowerCase()
+            !== normalizePath(path.resolve(expectedArtifactPath)).toLowerCase()
+    ) {
+        return ['Correction validation rejection does not reference its canonical correction artifact.'];
+    }
+    const persistedRead = readCachedCorrectionArtifact(expectedArtifactPath, options.artifactCache);
+    if (persistedRead.violations.length > 0 || !persistedRead.artifact) {
+        return ['Correction validation rejection lacks an intact task-owned correction artifact.'];
+    }
+    const persisted = persistedRead.artifact;
+    const binding = persisted.transport_binding;
+    if (
+        persisted.task_id !== options.taskId
+        || persisted.review_type !== options.reviewType
+        || persisted.state !== 'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        || persisted.recovery.correction_attempt !== options.correctionAttempt
+        || persisted.binding.reviewer_identity !== options.reviewerIdentity
+        || persisted.binding.reviewer_attempt_id !== options.reviewerAttemptId
+        || persisted.binding.reviewer_invocation_event_sha256
+            !== options.reviewerInvocationEventSha256
+        || !binding
+        || binding.provider_id !== options.providerId
+        || binding.provider_invocation_id !== options.providerInvocationId
+        || binding.provider_capabilities_sha256
+            !== stringValue(options.details.provider_capabilities_sha256)
+        || binding.session_availability !== stringValue(options.details.session_availability)
+    ) {
+        violations.push(
+            'Task-owned correction artifact does not match validation-rejection provenance.'
+        );
+    }
+    if (
+        persisted.artifact_sha256 !== stringValue(options.details.correction_artifact_sha256)
+    ) {
+        violations.push(
+            'Task-owned correction artifact content hash does not match validation-rejection telemetry.'
+        );
+    }
+    if (
+        readCachedCorrectionArtifactSha256(expectedArtifactPath, options.artifactCache)
+            !== options.correctionPackageSha256
+    ) {
+        violations.push(
+            'Correction validation rejection package does not match its canonical task-owned correction artifact.'
+        );
+    }
+    return violations;
+}
+
+function correctionArtifactDerivesFromPredecessorPackage(options: {
+    artifact: ReviewOutputCorrectionArtifact;
+    predecessorPackageSha256: string | null;
+}): boolean {
+    const artifact = options.artifact;
+    const binding = artifact.transport_binding;
+    if (
+        !binding
+        || !artifact.binding.findings_semantic_fingerprint
+        || !isSha256(options.predecessorPackageSha256)
+    ) {
+        return false;
+    }
+    const initialRecovery = resolveReviewOutputCorrectionTransport({
+        diagnostics: artifact.diagnostics,
+        capabilities: {
+            gate_normalization: false,
+            ...binding.provider_capabilities
+        },
+        correctionAttempt: artifact.recovery.correction_attempt,
+        maxCorrectionAttempts: artifact.recovery.max_correction_attempts,
+        sessionAvailability: 'pending'
+    });
+    const {
+        artifact_sha256: _artifactSha256,
+        producer_response_attestation: _producerResponseAttestation,
+        ...artifactWithoutDerivedFields
+    } = artifact;
+    const predecessorWithoutHash: Omit<ReviewOutputCorrectionArtifact, 'artifact_sha256'> = {
+        ...artifactWithoutDerivedFields,
+        state: initialRecovery.transport === 'full_reviewer_relaunch'
+            ? 'FULL_REVIEW_REQUIRED'
+            : 'REVIEW_OUTPUT_CORRECTION_REQUIRED',
+        updated_at_utc: artifact.created_at_utc,
+        transport_binding: {
+            ...binding,
+            session_availability: 'pending',
+            availability_attestation: null
+        },
+        recovery: {
+            correction_attempt: artifact.recovery.correction_attempt,
+            max_correction_attempts: artifact.recovery.max_correction_attempts,
+            selected_transport: initialRecovery.transport,
+            available_transports: initialRecovery.available,
+            reason: initialRecovery.reason,
+            handoff: buildReviewOutputCorrectionHandoff({
+                transport: initialRecovery.transport,
+                reviewerIdentity: artifact.binding.reviewer_identity
+            })
+        }
+    };
+    const predecessor = {
+        ...predecessorWithoutHash,
+        artifact_sha256: sha256RedactedJsonPayload(predecessorWithoutHash)
+    };
+    const predecessorFileSha256 = createHash('sha256')
+        .update(`${JSON.stringify(predecessor, null, 2)}\n`)
+        .digest('hex');
+    return predecessorFileSha256 === options.predecessorPackageSha256;
+}
+
+function selectionArtifactSnapshotMatches(options: {
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
+    correctionAttempt: number | null;
+    correctionPackageSha256: string | null;
+    details: Record<string, unknown>;
+    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+}): boolean {
+    if (
+        !isCanonicalCorrectionReviewType(options.reviewType)
+        || !options.correctionAttempt
+        || !isSha256(options.correctionPackageSha256)
+    ) {
+        return false;
+    }
+    const snapshotPath = path.join(
+        options.reviewsRoot,
+        `${options.taskId}-${options.reviewType}-output-correction-attempt-${options.correctionAttempt}`
+            + `-${options.correctionPackageSha256}.json`
+    );
+    if (
+        readCachedCorrectionArtifactSha256(snapshotPath, options.artifactCache)
+        !== options.correctionPackageSha256
+    ) {
+        return false;
+    }
+    const snapshotRead = readCachedCorrectionArtifact(snapshotPath, options.artifactCache);
+    const snapshot = snapshotRead.artifact;
+    const binding = snapshot?.transport_binding;
+    return snapshotRead.violations.length === 0
+        && !!snapshot
+        && snapshot.task_id === options.taskId
+        && snapshot.review_type === options.reviewType
+        && snapshot.recovery.correction_attempt === options.correctionAttempt
+        && snapshot.recovery.selected_transport === options.transport
+        && snapshot.artifact_sha256 === stringValue(options.details.correction_artifact_sha256)
+        && snapshot.binding.reviewer_identity === stringValue(options.details.reviewer_identity)
+        && snapshot.binding.reviewer_attempt_id === stringValue(options.details.reviewer_attempt_id)
+        && snapshot.binding.reviewer_invocation_event_sha256
+            === stringValue(options.details.reviewer_invocation_event_sha256)
+        && binding?.provider_id === stringValue(options.details.provider_id)
+        && binding?.provider_invocation_id === stringValue(options.details.provider_invocation_id)
+        && binding?.provider_capabilities_sha256
+            === stringValue(options.details.provider_capabilities_sha256)
+        && binding?.session_availability === stringValue(options.details.session_availability);
+}
+
+function validateHistoricalCorrectionTransport(options: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
+    correctionAttempt: number | null;
+    correctionPackageSha256: string | null;
+    details: Record<string, unknown>;
+    acceptedResponses: readonly IndexedCorrectionEvent[];
+    invocationAttestations: readonly IndexedCorrectionEvent[];
+    retryRejections: readonly IndexedCorrectionEvent[];
+    selectedEventIndex: number;
+    nextSelectedEventIndex: number;
+    nextSelectionPreviousPackageSha256: string | null;
+    consumedAcceptedResponseIndexes: Set<number>;
+    consumedInvocationAttestationIndexes: Set<number>;
+    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+}): string[] {
+    const violations: string[] = [];
+    if (!isCanonicalCorrectionReviewType(options.reviewType)) {
+        violations.push('Historical correction transport lacks a canonical review type.');
+        return violations;
+    }
+    const expectedArtifactPath = getReviewOutputCorrectionArtifactPath(
+        path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`)
+    );
+    const eventArtifactPath = stringValue(options.details.correction_artifact_path);
+    const resolvedEventArtifactPath = eventArtifactPath
+        ? path.resolve(options.repoRoot, eventArtifactPath)
+        : null;
+    if (
+        !resolvedEventArtifactPath
+        || normalizePath(resolvedEventArtifactPath).toLowerCase()
+            !== normalizePath(path.resolve(expectedArtifactPath)).toLowerCase()
+    ) {
+        violations.push('Historical correction transport selection does not reference its canonical artifact path.');
+        return violations;
+    }
+    const expectedSnapshotPath = path.join(
+        options.reviewsRoot,
+        `${options.taskId}-${options.reviewType}-output-correction-attempt-${options.correctionAttempt}`
+            + `-${options.correctionPackageSha256}.json`
+    );
+    const snapshotPath = stringValue(options.details.correction_artifact_snapshot_path);
+    const snapshotSha256 = stringValue(options.details.correction_artifact_snapshot_sha256);
+    const resolvedSnapshotPath = snapshotPath ? path.resolve(options.repoRoot, snapshotPath) : null;
+    if (
+        !resolvedSnapshotPath
+        || normalizePath(resolvedSnapshotPath).toLowerCase()
+            !== normalizePath(path.resolve(expectedSnapshotPath)).toLowerCase()
+        || snapshotSha256 !== options.correctionPackageSha256
+        || readCachedCorrectionArtifactSha256(expectedSnapshotPath, options.artifactCache) !== snapshotSha256
+    ) {
+        violations.push('Historical correction transport lacks its content-addressed artifact snapshot.');
+        return violations;
+    }
+    const snapshotRead = readCachedCorrectionArtifact(expectedSnapshotPath, options.artifactCache);
+    const snapshot = snapshotRead.artifact;
+    const snapshotBinding = snapshot?.transport_binding;
+    const snapshotAttestation = snapshotBinding?.availability_attestation;
+    if (
+        snapshotRead.violations.length > 0
+        || !snapshot
+        || snapshot.task_id !== options.taskId
+        || snapshot.review_type !== options.reviewType
+        || snapshot.recovery.correction_attempt !== options.correctionAttempt
+        || snapshot.recovery.selected_transport !== options.transport
+        || snapshot.artifact_sha256 !== stringValue(options.details.correction_artifact_sha256)
+        || snapshot.binding.reviewer_identity !== stringValue(options.details.reviewer_identity)
+        || snapshot.binding.reviewer_attempt_id !== stringValue(options.details.reviewer_attempt_id)
+        || snapshot.binding.reviewer_invocation_event_sha256
+            !== stringValue(options.details.reviewer_invocation_event_sha256)
+        || snapshotBinding?.provider_id !== stringValue(options.details.provider_id)
+        || snapshotBinding?.provider_invocation_id !== stringValue(options.details.provider_invocation_id)
+        || snapshotBinding?.provider_capabilities_sha256
+            !== stringValue(options.details.provider_capabilities_sha256)
+        || snapshotBinding?.session_availability !== stringValue(options.details.session_availability)
+        || (snapshotAttestation?.attestation_source || null)
+            !== stringValue(options.details.availability_attestation_source)
+        || (snapshotAttestation?.evidence_type || null)
+            !== stringValue(options.details.availability_evidence_type)
+        || (snapshotAttestation?.provider_invocation_event_sha256 || null)
+            !== stringValue(options.details.availability_provider_invocation_event_sha256)
+        || (snapshotAttestation?.provider_response_sha256 || null)
+            !== stringValue(options.details.availability_provider_response_sha256)
+    ) {
+        violations.push('Historical correction artifact snapshot does not match transport telemetry.');
+        return violations;
+    }
+    if (
+        options.transport !== 'full_reviewer_relaunch'
+        && !correctionArtifactDerivesFromPredecessorPackage({
+            artifact: snapshot,
+            predecessorPackageSha256: stringValue(
+                options.details.previous_correction_package_sha256
+            )
+        })
+    ) {
+        violations.push(
+            'Historical correction artifact is not derived from its validation-rejection predecessor package.'
+        );
+    }
+    if (options.transport === 'full_reviewer_relaunch') {
+        return violations;
+    }
+
+    const acceptedResponses = correctionEventsInWindow(
+        options.acceptedResponses,
+        options.selectedEventIndex,
+        options.nextSelectedEventIndex
+    ).filter(({ details }) => stringValue(details.task_id) === options.taskId);
+    const invocationAttestations = correctionEventsInWindow(
+        options.invocationAttestations,
+        options.selectedEventIndex,
+        options.nextSelectedEventIndex
+    ).filter(({ details }) => stringValue(details.task_id) === options.taskId);
+    const retryRejection = correctionEventsInWindow(
+        options.retryRejections,
+        options.selectedEventIndex,
+        options.nextSelectedEventIndex
+    ).find(({ details }) => (
+        stringValue(details.task_id) === options.taskId
+            && stringValue(details.review_type) === options.reviewType
+            && typeof details.correction_attempt === 'number'
+            && Number.isInteger(details.correction_attempt)
+            && details.correction_attempt === (options.correctionAttempt || 0) + 1
+            && stringValue(details.correction_package_sha256)
+                === options.nextSelectionPreviousPackageSha256
+            && !!stringValue(options.details.reviewer_attempt_id)
+            && stringValue(details.reviewer_attempt_id)
+                === stringValue(options.details.reviewer_attempt_id)
+            && stringValue(details.reviewer_identity)
+                === stringValue(options.details.reviewer_identity)
+            && stringValue(details.reviewer_invocation_event_sha256)
+                === stringValue(options.details.reviewer_invocation_event_sha256)
+            && stringValue(details.provider_id) === stringValue(options.details.provider_id)
+            && stringValue(details.provider_invocation_id)
+                === stringValue(options.details.provider_invocation_id)
+            && stringValue(details.provider_capabilities_sha256)
+                === stringValue(options.details.provider_capabilities_sha256)
+            && stringValue(details.correction_artifact_path) === eventArtifactPath
+    ));
+    if (acceptedResponses.length === 0 && invocationAttestations.length === 0) {
+        violations.push('Historical correction transport lacks a package-bound invocation or accepted response.');
+        return violations;
+    }
+    if (invocationAttestations.length !== 1) {
+        violations.push('Historical correction transport lacks exactly one provider invocation attestation.');
+        return violations;
+    }
+    const invocationAttestation = invocationAttestations[0];
+    const invocation = invocationAttestation.details;
+    const invocationMatches = (
+        stringValue(invocation.task_id) === options.taskId
+        && stringValue(invocation.review_type) === options.reviewType
+        && stringValue(invocation.original_reviewer_identity)
+            === stringValue(options.details.reviewer_identity)
+        && stringValue(invocation.reviewer_attempt_id)
+            === stringValue(options.details.reviewer_attempt_id)
+        && stringValue(invocation.reviewer_invocation_event_sha256)
+            === stringValue(options.details.reviewer_invocation_event_sha256)
+        && !!stringValue(invocation.correction_producer_identity)
+        && stringValue(invocation.provider_invocation_id)
+            === stringValue(options.details.provider_invocation_id)
+        && isProviderOwnedReviewOutputCorrectionSessionAttestationSource(
+            stringValue(invocation.attestation_source) || ''
+        )
+        && isSha256(stringValue(invocation.corrected_output_sha256))
+        && isSha256(stringValue(invocation.provider_response_event_sha256))
+        && stringValue(invocation.selected_transport) === options.transport
+        && stringValue(invocation.correction_package_sha256) === options.correctionPackageSha256
+        && stringValue(invocation.provider_id) === stringValue(options.details.provider_id)
+        && stringValue(invocation.provider_capabilities_sha256)
+            === stringValue(options.details.provider_capabilities_sha256)
+        && stringValue(invocation.session_availability)
+            === stringValue(options.details.session_availability)
+        && typeof invocation.correction_attempt === 'number'
+        && invocation.correction_attempt === options.correctionAttempt
+    );
+    if (!invocationMatches) {
+        violations.push('Historical correction transport is not bound to its provider invocation attestation.');
+        return violations;
+    }
+    if (acceptedResponses.length === 0) {
+        if (
+            !retryRejection
+            || retryRejection.eventIndex <= invocationAttestation.eventIndex
+        ) {
+            violations.push('Historical correction invocation lacks a consecutive rejected-output retry.');
+            return violations;
+        }
+        options.consumedInvocationAttestationIndexes.add(invocationAttestation.eventIndex);
+        return violations;
+    }
+    if (acceptedResponses.length !== 1) {
+        violations.push('Historical correction transport lacks exactly one accepted response.');
+        return violations;
+    }
+    const acceptedResponse = acceptedResponses[0];
+    const accepted = acceptedResponse.details;
+    const acceptedMatches = (
+        acceptedResponse.eventIndex > invocationAttestation.eventIndex
+        && stringValue(accepted.task_id) === options.taskId
+        && stringValue(accepted.review_type) === options.reviewType
+        && stringValue(accepted.reviewer_identity) === stringValue(options.details.reviewer_identity)
+        && !!stringValue(options.details.reviewer_attempt_id)
+        && stringValue(accepted.reviewer_attempt_id) === stringValue(options.details.reviewer_attempt_id)
+        && stringValue(accepted.correction_producer_identity)
+            === stringValue(invocation.correction_producer_identity)
+        && stringValue(accepted.provider_invocation_id) === stringValue(invocation.provider_invocation_id)
+        && stringValue(accepted.attestation_source) === stringValue(invocation.attestation_source)
+        && stringValue(accepted.provider_response_event_sha256)
+            === stringValue(invocation.provider_response_event_sha256)
+        && stringValue(accepted.corrected_output_sha256) === stringValue(invocation.corrected_output_sha256)
+        && stringValue(accepted.selected_transport) === options.transport
+        && stringValue(accepted.correction_artifact_path) === eventArtifactPath
+        && stringValue(accepted.correction_artifact_sha256) === snapshot.artifact_sha256
+        && stringValue(accepted.correction_package_sha256) === options.correctionPackageSha256
+        && isSha256(stringValue(accepted.original_output_sha256))
+        && isSha256(stringValue(accepted.findings_semantic_fingerprint))
+        && stringValue(accepted.provider_id) === stringValue(options.details.provider_id)
+        && stringValue(accepted.provider_capabilities_sha256)
+            === stringValue(options.details.provider_capabilities_sha256)
+        && stringValue(accepted.session_availability) === stringValue(options.details.session_availability)
+    );
+    if (!acceptedMatches) {
+        violations.push('Historical correction acceptance is not bound to its transport and invocation.');
+        return violations;
+    }
+    options.consumedInvocationAttestationIndexes.add(invocationAttestation.eventIndex);
+    options.consumedAcceptedResponseIndexes.add(acceptedResponse.eventIndex);
+    return violations;
+}
+
+function validatePersistedCorrectionTransport(options: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
+    correctionAttempt: number | null;
+    correctionPackageSha256: string | null;
+    details: Record<string, unknown>;
+    acceptedResponses: readonly IndexedCorrectionEvent[];
+    invocationAttestations: readonly IndexedCorrectionEvent[];
+    selectedEventIndex: number;
+    consumedAcceptedResponseIndexes: Set<number>;
+    consumedInvocationAttestationIndexes: Set<number>;
+    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
+}): string[] {
+    const violations: string[] = [];
+    if (!isCanonicalCorrectionReviewType(options.reviewType)) {
+        violations.push('Correction transport selection lacks a canonical review type.');
+        return violations;
+    }
+    const expectedArtifactPath = getReviewOutputCorrectionArtifactPath(
+        path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`)
+    );
+    const eventArtifactPath = stringValue(options.details.correction_artifact_path);
+    const resolvedEventArtifactPath = eventArtifactPath
+        ? path.resolve(options.repoRoot, eventArtifactPath)
+        : null;
+    if (
+        !resolvedEventArtifactPath
+        || normalizePath(resolvedEventArtifactPath).toLowerCase()
+            !== normalizePath(path.resolve(expectedArtifactPath)).toLowerCase()
+    ) {
+        violations.push('Correction transport selection does not reference its canonical correction artifact.');
+        return violations;
+    }
+    const persistedRead = readCachedCorrectionArtifact(expectedArtifactPath, options.artifactCache);
+    if (persistedRead.violations.length > 0 || !persistedRead.artifact) {
+        violations.push('Correction transport selection lacks an intact persisted correction artifact.');
+        return violations;
+    }
+    const persisted = persistedRead.artifact;
+    if (
+        persisted.task_id !== options.taskId
+        || persisted.review_type !== options.reviewType
+    ) {
+        violations.push('Persisted correction transport artifact has mismatched task or review bindings.');
+    }
+    if (persisted.recovery.correction_attempt !== options.correctionAttempt) {
+        violations.push('Persisted correction artifact does not match transport event correction attempt.');
+    }
+    if (persisted.recovery.selected_transport !== options.transport) {
+        violations.push('Persisted correction artifact does not contain the selected transport.');
+    }
+    if (
+        options.transport !== 'full_reviewer_relaunch'
+        && !correctionArtifactDerivesFromPredecessorPackage({
+            artifact: persisted,
+            predecessorPackageSha256: stringValue(
+                options.details.previous_correction_package_sha256
+            )
+        })
+    ) {
+        violations.push(
+            'Persisted correction artifact is not derived from its validation-rejection predecessor package.'
+        );
+    }
+    const binding = persisted.transport_binding;
+    const attestation = binding?.availability_attestation;
+    const acceptedApiContinuation = (
+        persisted.state === 'CORRECTION_ACCEPTED'
+        && options.transport === 'api_conversation_continuation'
+    );
+    if (
+        !binding
+        || binding.provider_id !== stringValue(options.details.provider_id)
+        || binding.provider_invocation_id !== stringValue(options.details.provider_invocation_id)
+        || binding.provider_capabilities_sha256
+            !== stringValue(options.details.provider_capabilities_sha256)
+        || binding.session_availability !== stringValue(options.details.session_availability)
+        || persisted.binding.reviewer_identity !== stringValue(options.details.reviewer_identity)
+        || persisted.binding.reviewer_attempt_id !== stringValue(options.details.reviewer_attempt_id)
+        || persisted.binding.reviewer_invocation_event_sha256
+            !== stringValue(options.details.reviewer_invocation_event_sha256)
+        || (!acceptedApiContinuation && (
+            (attestation?.attestation_source || null)
+                !== stringValue(options.details.availability_attestation_source)
+            || (attestation?.evidence_type || null)
+                !== stringValue(options.details.availability_evidence_type)
+            || (attestation?.provider_invocation_event_sha256 || null)
+                !== stringValue(options.details.availability_provider_invocation_event_sha256)
+            || (attestation?.provider_response_sha256 || null)
+                !== stringValue(options.details.availability_provider_response_sha256)
+        ))
+    ) {
+        violations.push('Persisted correction artifact does not match transport event provenance.');
+    }
+    if (
+        persisted.state === 'CORRECTION_ACCEPTED'
+        && options.transport !== 'full_reviewer_relaunch'
+    ) {
+        const responseAttestation = options.transport === 'correction_only_invocation'
+            ? persisted.producer_response_attestation
+            : attestation;
+        const matchingAcceptedResponses = responseAttestation ? options.acceptedResponses.filter(({ details: accepted }) => (
+            stringValue(accepted.task_id) === options.taskId
+            && stringValue(accepted.review_type) === options.reviewType
+            && stringValue(accepted.selected_transport) === options.transport
+            && stringValue(accepted.reviewer_identity) === persisted.binding.reviewer_identity
+            && stringValue(accepted.reviewer_attempt_id) === persisted.binding.reviewer_attempt_id
+            && stringValue(accepted.correction_producer_identity) === responseAttestation.reviewer_identity
+            && stringValue(accepted.provider_invocation_id) === responseAttestation.provider_invocation_id
+            && stringValue(accepted.attestation_source) === responseAttestation.attestation_source
+            && stringValue(accepted.provider_response_event_sha256)
+                === responseAttestation.provider_response_event_sha256
+            && stringValue(accepted.corrected_output_sha256) === responseAttestation.provider_response_sha256
+            && stringValue(accepted.correction_artifact_path) === eventArtifactPath
+            && stringValue(accepted.correction_artifact_sha256) === persisted.artifact_sha256
+            && stringValue(accepted.correction_package_sha256) === options.correctionPackageSha256
+            && stringValue(accepted.original_output_sha256) === persisted.binding.original_output_sha256
+            && stringValue(accepted.findings_semantic_fingerprint)
+                === persisted.binding.findings_semantic_fingerprint
+            && stringValue(accepted.provider_id) === binding?.provider_id
+            && stringValue(accepted.provider_capabilities_sha256) === binding?.provider_capabilities_sha256
+            && stringValue(accepted.session_availability) === binding?.session_availability
+        )) : [];
+        const acceptedResponse = matchingAcceptedResponses.length === 1
+            ? matchingAcceptedResponses[0]
+            : null;
+        const matchingInvocationAttestations = responseAttestation
+            ? options.invocationAttestations.filter(({ details: invocation }) => (
+                stringValue(invocation.task_id) === options.taskId
+                && stringValue(invocation.review_type) === options.reviewType
+                && stringValue(invocation.original_reviewer_identity) === persisted.binding.reviewer_identity
+                && stringValue(invocation.reviewer_attempt_id) === persisted.binding.reviewer_attempt_id
+                && stringValue(invocation.correction_producer_identity) === responseAttestation.reviewer_identity
+                && stringValue(invocation.provider_invocation_id) === responseAttestation.provider_invocation_id
+                && stringValue(invocation.attestation_source) === responseAttestation.attestation_source
+                && stringValue(invocation.corrected_output_sha256) === responseAttestation.provider_response_sha256
+                && stringValue(invocation.provider_response_event_sha256)
+                    === responseAttestation.provider_response_event_sha256
+                && typeof invocation.correction_attempt === 'number'
+                && invocation.correction_attempt === options.correctionAttempt
+                && stringValue(invocation.reviewer_invocation_event_sha256)
+                    === stringValue(options.details.reviewer_invocation_event_sha256)
+                && stringValue(invocation.selected_transport) === options.transport
+                && stringValue(invocation.correction_package_sha256) === options.correctionPackageSha256
+                && stringValue(invocation.provider_id) === binding?.provider_id
+                && stringValue(invocation.provider_capabilities_sha256) === binding?.provider_capabilities_sha256
+                && stringValue(invocation.session_availability) === binding?.session_availability
+            ))
+            : [];
+        const invocationAttestation = matchingInvocationAttestations.length === 1
+            ? matchingInvocationAttestations[0]
+            : null;
+        const acceptedResponseIsOrdered = !!acceptedResponse
+            && acceptedResponse.eventIndex > options.selectedEventIndex
+            && !options.consumedAcceptedResponseIndexes.has(acceptedResponse.eventIndex);
+        const invocationAttestationIsOrdered = !!invocationAttestation
+            && invocationAttestation.eventIndex > options.selectedEventIndex
+            && !!acceptedResponse
+            && invocationAttestation.eventIndex < acceptedResponse.eventIndex
+            && !options.consumedInvocationAttestationIndexes.has(invocationAttestation.eventIndex);
+        if (
+            !acceptedResponseIsOrdered
+            || violations.length > 0
+        ) {
+            violations.push(
+                'Correction transport acceptance is not bound to the current attempt and persisted artifact.'
+            );
+        }
+        if (
+            !invocationAttestationIsOrdered
+            || violations.length > 0
+        ) {
+            violations.push(
+                'Correction transport package is not bound to its provider invocation attestation.'
+            );
+        }
+        if (acceptedResponseIsOrdered && invocationAttestationIsOrdered && violations.length === 0) {
+            options.consumedAcceptedResponseIndexes.add(acceptedResponse.eventIndex);
+            options.consumedInvocationAttestationIndexes.add(invocationAttestation.eventIndex);
+        }
+    }
+    if (
+        persisted.state !== 'CORRECTION_ACCEPTED'
+        && options.transport !== 'full_reviewer_relaunch'
+    ) {
+        violations.push('Correction transport selection lacks accepted provider response provenance.');
+    }
+    if (persisted.state !== 'CORRECTION_ACCEPTED') {
+        const persistedFileSha256 = readCachedCorrectionArtifactSha256(
+            expectedArtifactPath,
+            options.artifactCache
+        );
+        if (persistedFileSha256 !== options.correctionPackageSha256) {
+            violations.push('Persisted correction artifact file hash does not match transport telemetry.');
+        }
+    }
+    if (
+        persisted.artifact_sha256 !== stringValue(options.details.correction_artifact_sha256)
+        && !selectionArtifactSnapshotMatches(options)
+    ) {
+        violations.push('Persisted correction artifact content hash does not match transport telemetry.');
+    }
+    return violations;
+}
+
+function collectCorrectionTransports(
+    events: readonly ReviewReuseTelemetryEventLike[],
+    options: {
+        repoRoot: string;
+        reviewsRoot: string;
+        taskId: string;
+        authorizedReviewTypes: ReadonlySet<string>;
+    }
+): ReviewOutputCorrectionTransportAudit[] {
+    const transportByEventType = new Map<string, ReviewOutputCorrectionTransportAudit['transport']>([
+        ['REVIEW_OUTPUT_CORRECTION_REQUIRED', 'validation_rejection'],
+        ['REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION', 'live_reviewer_continuation'],
+        ['REVIEW_OUTPUT_CORRECTION_API_CONTINUATION', 'api_conversation_continuation'],
+        ['REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION', 'correction_only_invocation'],
+        ['REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED', 'full_reviewer_relaunch']
+    ]);
+    const requiredPackages = new Map<string, {
+        eventIndex: number;
+        reviewType: string;
+        correctionAttempt: number;
+        reviewerIdentity: string;
+        reviewerAttemptId: string;
+        providerInvocationId: string | null;
+        reviewerInvocationEventSha256: string;
+    }>();
+    const selectedPreviousPackages = new Set<string>();
+    const acceptedCorrectionResponses: IndexedCorrectionEvent[] = [];
+    const correctionInvocationAttestations: IndexedCorrectionEvent[] = [];
+    const acceptedResponsesByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const invocationAttestationsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const retryRejectionsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const reviewerInvocationsBySha256 = new Map<string, IndexedCorrectionEvent[]>();
+    const selectionsByPreviousPackage = new Map<string, IndexedCorrectionEvent[]>();
+    const selectionEventTypes = new Set([
+        'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION',
+        'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION',
+        'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION',
+        'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED'
+    ]);
+    const nextSelectionIndexByEventIndex = new Map<number, number>();
+    const latestSelectionIndexByReviewType = new Map<string, number>();
+    for (const [eventIndex, event] of events.entries()) {
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const indexedEvent = { eventIndex, details };
+        const indexedReviewTypeValue = stringValue(details.review_type);
+        const indexedReviewType = isCanonicalCorrectionReviewType(indexedReviewTypeValue)
+            && options.authorizedReviewTypes.has(indexedReviewTypeValue)
+            ? indexedReviewTypeValue
+            : null;
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
+        const reviewerInvocationEventSha256 = stringValue(integrity.event_sha256);
+        if (
+            eventType === 'REVIEWER_INVOCATION_ATTESTED'
+            && isSha256(reviewerInvocationEventSha256)
+        ) {
+            appendCorrectionEvent(
+                reviewerInvocationsBySha256,
+                reviewerInvocationEventSha256,
+                indexedEvent
+            );
+        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED') {
+            acceptedCorrectionResponses.push(indexedEvent);
+            appendCorrectionEvent(acceptedResponsesByReviewType, indexedReviewType, indexedEvent);
+        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED') {
+            correctionInvocationAttestations.push(indexedEvent);
+            appendCorrectionEvent(invocationAttestationsByReviewType, indexedReviewType, indexedEvent);
+        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
+            appendCorrectionEvent(retryRejectionsByReviewType, indexedReviewType, indexedEvent);
+        }
+        if (
+            !selectionEventTypes.has(eventType)
+            || stringValue(details.task_id) !== options.taskId
+            || !indexedReviewType
+        ) {
+            continue;
+        }
+        const previousPackageSha256 = stringValue(details.previous_correction_package_sha256);
+        if (isSha256(previousPackageSha256)) {
+            appendCorrectionEvent(
+                selectionsByPreviousPackage,
+                previousPackageSha256,
+                indexedEvent
+            );
+        }
+        const reviewTypeValue = stringValue(details.review_type);
+        const reviewType = reviewTypeValue || 'unknown';
+        const previousSelectionIndex = latestSelectionIndexByReviewType.get(reviewType);
+        if (previousSelectionIndex !== undefined) {
+            nextSelectionIndexByEventIndex.set(previousSelectionIndex, eventIndex);
+        }
+        latestSelectionIndexByReviewType.set(reviewType, eventIndex);
+    }
+    const consumedAcceptedResponseIndexes = new Set<number>();
+    const consumedInvocationAttestationIndexes = new Set<number>();
+    const artifactCache = new Map<string, CorrectionArtifactCacheEntry>();
+    const results: ReviewOutputCorrectionTransportAudit[] = [];
+    for (const [selectedEventIndex, event] of events.entries()) {
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        const transport = transportByEventType.get(eventType);
+        if (!transport) {
+            continue;
+        }
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const eventRecord = event as unknown as Record<string, unknown>;
+        const correctionPackageSha256 = stringValue(details.correction_package_sha256);
+        const previousPackageSha256 = stringValue(details.previous_correction_package_sha256);
+        const providerCapabilitiesSha256 = stringValue(details.provider_capabilities_sha256);
+        const eventTaskId = stringValue(details.task_id);
+        const reviewTypeValue = stringValue(details.review_type);
+        const reviewType = reviewTypeValue || 'unknown';
+        const sessionAvailability = stringValue(details.session_availability);
+        const reviewerIdentity = stringValue(details.reviewer_identity);
+        const reviewerAttemptId = stringValue(details.reviewer_attempt_id);
+        const providerId = stringValue(details.provider_id);
+        const providerInvocationId = stringValue(details.provider_invocation_id);
+        const reviewerInvocationEventSha256 = stringValue(details.reviewer_invocation_event_sha256);
+        const correctionAttemptValue = details.correction_attempt;
+        const correctionAttempt = typeof correctionAttemptValue === 'number'
+            && Number.isInteger(correctionAttemptValue)
+            && correctionAttemptValue > 0
+            ? correctionAttemptValue
+            : null;
+        const violations: string[] = [];
+        const syntacticallyCanonicalReviewType = isCanonicalCorrectionReviewType(reviewTypeValue);
+        const canonicalReviewType = syntacticallyCanonicalReviewType
+            && options.authorizedReviewTypes.has(reviewTypeValue);
+        const trustedOriginalReviewerInvocation = hasTrustedOriginalReviewerInvocation({
+            reviewerInvocationsBySha256,
+            eventIndex: selectedEventIndex,
+            taskId: options.taskId,
+            reviewType,
+            reviewerIdentity,
+            reviewerAttemptId,
+            providerId,
+            providerInvocationId,
+            reviewerInvocationEventSha256
+        });
+        if (eventTaskId !== options.taskId) {
+            violations.push('Correction transport event is not bound to the audited task.');
+        }
+        if (!syntacticallyCanonicalReviewType) {
+            violations.push('Correction transport event lacks a canonical review type.');
+        } else if (!canonicalReviewType) {
+            violations.push('Correction transport event review type is not authorized for the audited task.');
+        }
+        if (!isSha256(correctionPackageSha256)) {
+            violations.push('Correction transport event lacks a valid correction package hash.');
+        }
+        if (!correctionAttempt) {
+            violations.push('Correction transport event lacks a positive correction attempt.');
+        }
+        if (!trustedOriginalReviewerInvocation) {
+            violations.push(
+                'Correction transport event does not match a trusted original reviewer invocation.'
+            );
+        }
+        if (transport === 'validation_rejection') {
+            if (!reviewerIdentity) {
+                violations.push('Correction validation rejection lacks reviewer identity evidence.');
+            }
+            if (!reviewerAttemptId) {
+                violations.push('Correction validation rejection lacks reviewer attempt evidence.');
+            }
+            if (!isSha256(reviewerInvocationEventSha256)) {
+                violations.push('Correction validation rejection lacks reviewer invocation evidence.');
+            }
+            if (
+                isSha256(correctionPackageSha256)
+                && correctionAttempt
+                && reviewerIdentity
+                && reviewerAttemptId
+                && isSha256(reviewerInvocationEventSha256)
+                && eventTaskId === options.taskId
+                && canonicalReviewType
+                && trustedOriginalReviewerInvocation
+            ) {
+                const hasSuccessorSelection = (
+                    selectionsByPreviousPackage.get(correctionPackageSha256) || []
+                ).some((selection) => correctionSelectionMatchesValidationRejection({
+                    selection,
+                    rejectionEventIndex: selectedEventIndex,
+                    taskId: options.taskId,
+                    reviewType,
+                    correctionAttempt,
+                    reviewerIdentity,
+                    reviewerAttemptId,
+                    providerId,
+                    providerInvocationId,
+                    reviewerInvocationEventSha256
+                }));
+                const rejectionArtifactViolations = hasSuccessorSelection
+                    ? []
+                    : validateTerminalCorrectionRejectionArtifact({
+                        repoRoot: options.repoRoot,
+                        reviewsRoot: options.reviewsRoot,
+                        taskId: options.taskId,
+                        reviewType,
+                        correctionAttempt,
+                        correctionPackageSha256,
+                        reviewerIdentity,
+                        reviewerAttemptId,
+                        providerId,
+                        providerInvocationId,
+                        reviewerInvocationEventSha256,
+                        details,
+                        artifactCache
+                    });
+                violations.push(...rejectionArtifactViolations);
+                if (requiredPackages.has(correctionPackageSha256)) {
+                    violations.push(
+                        'Correction validation rejection is duplicate or replayed for the same correction package.'
+                    );
+                } else if (rejectionArtifactViolations.length === 0) {
+                    requiredPackages.set(correctionPackageSha256, {
+                        eventIndex: selectedEventIndex,
+                        reviewType,
+                        correctionAttempt,
+                        reviewerIdentity,
+                        reviewerAttemptId,
+                        providerInvocationId,
+                        reviewerInvocationEventSha256
+                    });
+                }
+            }
+        } else if (
+            transport === 'live_reviewer_continuation'
+            || transport === 'api_conversation_continuation'
+            || transport === 'correction_only_invocation'
+            || transport === 'full_reviewer_relaunch'
+        ) {
+            if (transport === 'full_reviewer_relaunch') {
+                if (previousPackageSha256) {
+                    violations.push(
+                        'FULL reviewer relaunch must bind directly to its current correction package.'
+                    );
+                }
+            } else {
+                const predecessorPackageSha256 = isSha256(previousPackageSha256)
+                    ? previousPackageSha256
+                    : null;
+                const predecessor = predecessorPackageSha256
+                    ? requiredPackages.get(predecessorPackageSha256)
+                    : null;
+                if (
+                    !predecessorPackageSha256
+                    || !predecessor
+                    || predecessor.eventIndex >= selectedEventIndex
+                ) {
+                    violations.push(
+                        'Correction transport selection is stale or lacks its validation-rejection predecessor.'
+                    );
+                } else if (selectedPreviousPackages.has(predecessorPackageSha256)) {
+                    violations.push('Correction transport selection is duplicate or raced for the same correction package.');
+                } else if (
+                    eventTaskId === options.taskId
+                    && trustedOriginalReviewerInvocation
+                ) {
+                    selectedPreviousPackages.add(predecessorPackageSha256);
+                    if (
+                        predecessor.reviewType !== reviewType
+                        || predecessor.correctionAttempt !== correctionAttempt
+                        || predecessor.reviewerIdentity !== reviewerIdentity
+                        || predecessor.reviewerAttemptId !== reviewerAttemptId
+                        || predecessor.providerInvocationId !== providerInvocationId
+                        || predecessor.reviewerInvocationEventSha256 !== reviewerInvocationEventSha256
+                    ) {
+                        violations.push('Correction transport selection does not match its delegated reviewer predecessor.');
+                    }
+                }
+                if (previousPackageSha256 === correctionPackageSha256) {
+                    violations.push('Correction transport selection did not freeze a new attested package generation.');
+                }
+            }
+            const providerCapabilities = isPlainRecord(details.provider_capabilities)
+                ? details.provider_capabilities
+                : null;
+            if (!providerCapabilities || !isSha256(providerCapabilitiesSha256)) {
+                violations.push('Correction transport selection lacks provider capability evidence.');
+            } else {
+                const normalizedCapabilities = {
+                    live_reviewer_continuation:
+                        providerCapabilities.live_reviewer_continuation === true,
+                    api_conversation_continuation:
+                        providerCapabilities.api_conversation_continuation === true,
+                    correction_only_invocation:
+                        providerCapabilities.correction_only_invocation === true
+                };
+                const expectedCapabilitiesSha256 = computeReviewOutputCorrectionProviderCapabilitiesSha256({
+                    providerId: stringValue(details.provider_id),
+                    capabilities: normalizedCapabilities
+                });
+                if (expectedCapabilitiesSha256 !== providerCapabilitiesSha256) {
+                    violations.push('Correction transport provider capability hash is unverifiable.');
+                }
+                if (
+                    transport === 'live_reviewer_continuation'
+                    && !normalizedCapabilities.live_reviewer_continuation
+                ) {
+                    violations.push('Live continuation was selected without provider capability evidence.');
+                }
+                if (
+                    transport === 'api_conversation_continuation'
+                    && !normalizedCapabilities.api_conversation_continuation
+                ) {
+                    violations.push('API continuation was selected without provider capability evidence.');
+                }
+                if (
+                    transport === 'correction_only_invocation'
+                    && !normalizedCapabilities.correction_only_invocation
+                ) {
+                    violations.push('Correction-only fallback was selected without provider capability evidence.');
+                }
+            }
+            if (!providerInvocationId) {
+                violations.push('Correction transport selection lacks the original provider invocation id.');
+            }
+            if (!isSha256(reviewerInvocationEventSha256)) {
+                violations.push('Correction transport selection lacks reviewer invocation evidence.');
+            }
+            const availabilityAttestationSource = stringValue(details.availability_attestation_source);
+            const availabilityEvidenceType = stringValue(details.availability_evidence_type);
+            const availabilityProviderInvocationEventSha256 = stringValue(
+                details.availability_provider_invocation_event_sha256
+            );
+            const availabilityProviderResponseSha256 = stringValue(
+                details.availability_provider_response_sha256
+            );
+            const correctionSessionAvailability =
+                sessionAvailability === 'available'
+                || sessionAvailability === 'closed'
+                || sessionAvailability === 'stateless'
+                    ? sessionAvailability
+                    : 'not_applicable';
+            if (transport === 'live_reviewer_continuation') {
+                if (
+                    sessionAvailability !== 'available'
+                    || availabilityEvidenceType !== 'provider_native_session_receipt'
+                    || availabilityProviderInvocationEventSha256 !== reviewerInvocationEventSha256
+                    || !isSha256(availabilityProviderResponseSha256)
+                    || !isProviderOwnedReviewOutputCorrectionSessionAttestationSource(
+                        availabilityAttestationSource || ''
+                    )
+                ) {
+                    violations.push(
+                        'Live continuation lacks an authenticated provider-owned session receipt.'
+                    );
+                }
+            } else if (
+                providerCapabilities
+                && requiresReviewOutputCorrectionFailClosedAvailabilityEvidence({
+                    sessionAvailability: correctionSessionAvailability,
+                    selectedTransport: transport,
+                    providerCapabilities: {
+                        live_reviewer_continuation:
+                            providerCapabilities.live_reviewer_continuation === true
+                    }
+                })
+                && (
+                availabilityAttestationSource !== REVIEW_OUTPUT_CORRECTION_FAIL_CLOSED_ATTESTATION_SOURCE
+                || availabilityEvidenceType !== 'fail_closed_no_provider_session_receipt'
+                )
+            ) {
+                violations.push('Correction transport selection lacks canonical fail-closed availability evidence.');
+            }
+            if (
+                transport === 'correction_only_invocation'
+                && !['closed', 'stateless'].includes(sessionAvailability || '')
+            ) {
+                violations.push('Correction-only fallback lacks closed or stateless session evidence.');
+            }
+            if (
+                transport === 'api_conversation_continuation'
+                && !['closed', 'stateless'].includes(sessionAvailability || '')
+            ) {
+                violations.push('API continuation lacks closed or stateless session evidence.');
+            }
+            const nextSelectedEventIndex = nextSelectionIndexByEventIndex.get(selectedEventIndex);
+            const transportValidationOptions = {
+                ...options,
+                reviewType,
+                transport,
+                correctionAttempt,
+                correctionPackageSha256,
+                details,
+                acceptedResponses: acceptedResponsesByReviewType.get(reviewType) || [],
+                invocationAttestations: invocationAttestationsByReviewType.get(reviewType) || [],
+                selectedEventIndex,
+                consumedAcceptedResponseIndexes,
+                consumedInvocationAttestationIndexes,
+                artifactCache
+            };
+            if (
+                canonicalReviewType
+                && eventTaskId === options.taskId
+                && trustedOriginalReviewerInvocation
+            ) {
+                violations.push(...(
+                    nextSelectedEventIndex === undefined
+                        ? validatePersistedCorrectionTransport(transportValidationOptions)
+                        : validateHistoricalCorrectionTransport({
+                            ...transportValidationOptions,
+                            retryRejections: retryRejectionsByReviewType.get(reviewType) || [],
+                            nextSelectedEventIndex,
+                            nextSelectionPreviousPackageSha256: stringValue(
+                                isPlainRecord(events[nextSelectedEventIndex]?.details)
+                                    ? events[nextSelectedEventIndex].details.previous_correction_package_sha256
+                                    : null
+                            )
+                        })
+                ));
+            }
+        }
+        results.push({
+            timestamp_utc: stringValue(eventRecord.timestamp_utc),
+            event_type: eventType,
+            review_type: reviewType,
+            transport,
+            session_availability: sessionAvailability,
+            correction_attempt: correctionAttempt,
+            correction_package_sha256: correctionPackageSha256,
+            reviewer_invocation_event_sha256: reviewerInvocationEventSha256,
+            provider_capabilities_sha256: providerCapabilitiesSha256,
+            evidence_valid: violations.length === 0,
+            violations
+        });
+    }
+    for (const invocationAttestation of correctionInvocationAttestations) {
+        const invocationEvent = events[invocationAttestation.eventIndex];
+        const eventRecord = invocationEvent as unknown as Record<string, unknown>;
+        const details = invocationAttestation.details;
+        const evidenceValid = consumedInvocationAttestationIndexes.has(invocationAttestation.eventIndex)
+            && stringValue(details.task_id) === options.taskId;
+        results.push({
+            timestamp_utc: stringValue(eventRecord.timestamp_utc),
+            event_type: 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
+            review_type: stringValue(details.review_type) || 'unknown',
+            transport: 'invocation_attestation',
+            session_availability: stringValue(details.session_availability),
+            correction_attempt: null,
+            correction_package_sha256: stringValue(details.correction_package_sha256),
+            reviewer_invocation_event_sha256: null,
+            provider_capabilities_sha256: stringValue(details.provider_capabilities_sha256),
+            evidence_valid: evidenceValid,
+            violations: evidenceValid
+                ? []
+                : [
+                    ...(stringValue(details.task_id) === options.taskId
+                        ? []
+                        : ['Correction invocation attestation is not bound to the audited task.']),
+                    'Correction invocation attestation lacks exactly one matching transport acceptance chain.'
+                ]
+        });
+    }
+    for (const acceptedResponse of acceptedCorrectionResponses) {
+        const acceptedEvent = events[acceptedResponse.eventIndex];
+        const eventRecord = acceptedEvent as unknown as Record<string, unknown>;
+        const details = acceptedResponse.details;
+        const evidenceValid = consumedAcceptedResponseIndexes.has(acceptedResponse.eventIndex)
+            && stringValue(details.task_id) === options.taskId;
+        results.push({
+            timestamp_utc: stringValue(eventRecord.timestamp_utc),
+            event_type: 'REVIEW_OUTPUT_CORRECTION_ACCEPTED',
+            review_type: stringValue(details.review_type) || 'unknown',
+            transport: 'acceptance',
+            session_availability: stringValue(details.session_availability),
+            correction_attempt: null,
+            correction_package_sha256: stringValue(details.correction_package_sha256),
+            reviewer_invocation_event_sha256: null,
+            provider_capabilities_sha256: stringValue(details.provider_capabilities_sha256),
+            evidence_valid: evidenceValid,
+            violations: evidenceValid
+                ? []
+                : [
+                    ...(stringValue(details.task_id) === options.taskId
+                        ? []
+                        : ['Correction acceptance is not bound to the audited task.']),
+                    'Correction acceptance lacks exactly one matching prior transport selection.'
+                ]
+        });
+    }
+    return results;
+}
+
 export function buildReviewFindingsAuditSummary(options: {
     repoRoot: string;
     reviewsRoot: string;
     taskId: string;
     requiredReviews: Record<string, boolean>;
+    authorizedCorrectionReviewTypes?: readonly string[];
     currentPreflight: Record<string, unknown> | null;
     timelineEvents: readonly ReviewReuseTelemetryEventLike[];
     reviewAttemptSummary: ReviewAttemptSummary | null;
@@ -368,11 +1678,26 @@ export function buildReviewFindingsAuditSummary(options: {
 }): ReviewFindingsAuditSummary | null {
     const validationFailures = collectValidationFailures(options.timelineEvents);
     const remediationCycles = collectRemediationCycles(options.timelineEvents);
-    const lanes = collectKnownRequiredReviewTypes(options.requiredReviews, options.currentPreflight)
+    const requiredReviewTypes = collectKnownRequiredReviewTypes(
+        options.requiredReviews,
+        options.currentPreflight
+    );
+    const correctionTransports = collectCorrectionTransports(options.timelineEvents, {
+        ...options,
+        authorizedReviewTypes: new Set(
+            options.authorizedCorrectionReviewTypes || requiredReviewTypes
+        )
+    });
+    const lanes = requiredReviewTypes
         .map((reviewType) => buildCurrentFindingsLane({ ...options, reviewType }))
         .filter((lane): lane is ReviewFindingsAuditLane => lane !== null)
         .sort((left, right) => left.review_type.localeCompare(right.review_type));
-    if (lanes.length === 0 && validationFailures.length === 0 && remediationCycles.length === 0) {
+    if (
+        lanes.length === 0
+        && validationFailures.length === 0
+        && remediationCycles.length === 0
+        && correctionTransports.length === 0
+    ) {
         return null;
     }
     const findings = lanes.flatMap((lane) => lane.findings);
@@ -386,7 +1711,7 @@ export function buildReviewFindingsAuditSummary(options: {
         + lane.remaining_blocker_ids.length
         + (lane.validation_violations.length > 0 ? 1 : 0)
         + (lane.remaining_blocker_ids.length === 0 && lane.disposition_violations.length > 0 ? 1 : 0)
-    ), 0);
+    ), 0) + correctionTransports.filter((entry) => !entry.evidence_valid).length;
     const reusedReviewCount = Object.values(options.reviewAttemptSummary?.fresh_reused_by_review_type || {})
         .reduce((count, entry) => count + entry.reused, 0);
     const freshReviewCount = options.reviewAttemptSummary?.total_attempts || 0;
@@ -406,6 +1731,7 @@ export function buildReviewFindingsAuditSummary(options: {
         remaining_blocker_count: remainingBlockerCount,
         validation_failures: validationFailures,
         remediation_cycles: remediationCycles,
+        correction_transports: correctionTransports,
         fresh_review_count: freshReviewCount,
         reused_review_count: reusedReviewCount,
         visible_summary_line:
