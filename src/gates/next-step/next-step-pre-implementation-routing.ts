@@ -218,7 +218,7 @@ function taskIntentLooksCodeChanging(taskEntry: TaskQueueEntry | null, taskMode:
     if (!text.trim()) {
         return false;
     }
-    const hasImplementationAction = /\b(?:add|adjust|avoid|change|compare|correct|cover|create|delete|distinguish|enforce|ensure|extract|fix|harden|implement|make|migrate|modify|move|narrow|prevent|refactor|remove|rename|replace|revise|route|split|support|surface|teach|unify|update|validate|warn)\b/u.test(text);
+    const hasImplementationAction = /\b(?:add|adjust|avoid|change|compare|complete|correct|cover|create|delete|distinguish|enforce|ensure|extract|fix|harden|implement|make|migrate|modify|move|narrow|prevent|refactor|remove|rename|replace|revise|route|split|support|surface|teach|unify|update|validate|warn)\b/u.test(text);
     const hasImplementationSurface = /\b(?:code[- ]?changing|implementation|source|runtime|workflow|navigator|next-step|preflight|compile|gate|scope|diagnostic|test(?:s|ing)?|handler|contract|project[- ]memory|memory map)\b/u.test(text);
     return hasImplementationAction && hasImplementationSurface;
 }
