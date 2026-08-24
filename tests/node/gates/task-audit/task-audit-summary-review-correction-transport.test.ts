@@ -882,6 +882,158 @@ describe('gates/task-audit-summary review correction transport', () => {
             );
         }
 
+        for (const responseProvenanceMutation of [
+            {
+                label: 'cross-session selection',
+                eventIndex: 1,
+                details: { session_availability: 'closed' }
+            },
+            {
+                label: 'cross-provider invocation',
+                eventIndex: 2,
+                details: { provider_id: 'ForeignProvider' }
+            },
+            {
+                label: 'cross-session invocation',
+                eventIndex: 2,
+                details: { session_availability: 'closed' }
+            },
+            {
+                label: 'cross-provider-invocation invocation',
+                eventIndex: 2,
+                details: { provider_invocation_id: 'provider-foreign-review' }
+            },
+            {
+                label: 'forged response-event invocation',
+                eventIndex: 2,
+                details: { provider_response_event_sha256: '4'.repeat(64) }
+            },
+            {
+                label: 'forged corrected-output invocation',
+                eventIndex: 2,
+                details: { corrected_output_sha256: '5'.repeat(64) }
+            },
+            {
+                label: 'cross-attempt acceptance',
+                eventIndex: 3,
+                details: { reviewer_attempt_id: 'attempt-2' }
+            },
+            {
+                label: 'cross-provider acceptance',
+                eventIndex: 3,
+                details: { provider_id: 'ForeignProvider' }
+            },
+            {
+                label: 'cross-session acceptance',
+                eventIndex: 3,
+                details: { session_availability: 'closed' }
+            },
+            {
+                label: 'cross-provider-invocation acceptance',
+                eventIndex: 3,
+                details: { provider_invocation_id: 'provider-foreign-review' }
+            },
+            {
+                label: 'forged response-event acceptance',
+                eventIndex: 3,
+                details: { provider_response_event_sha256: '4'.repeat(64) }
+            },
+            {
+                label: 'forged corrected-output acceptance',
+                eventIndex: 3,
+                details: { corrected_output_sha256: '5'.repeat(64) }
+            }
+        ]) {
+            const responseEvents = [liveRequired, liveSelection, liveInvocation, liveAcceptance];
+            const forgedResponseEvent = correctionEvent(
+                responseEvents[responseProvenanceMutation.eventIndex].event_type,
+                {
+                    ...responseEvents[responseProvenanceMutation.eventIndex].details,
+                    ...responseProvenanceMutation.details
+                }
+            );
+            const forgedResponseProvenance = buildReviewFindingsAuditSummary({
+                repoRoot,
+                reviewsRoot,
+                taskId: 'T-AUDIT-CORRECTION-TRANSPORT',
+                requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+                currentPreflight: null,
+                timelineEvents: [
+                    securityReviewerInvocation,
+                    ...responseEvents.map((event, index) => (
+                        index === responseProvenanceMutation.eventIndex ? forgedResponseEvent : event
+                    ))
+                ],
+                reviewAttemptSummary: null
+            });
+            assert.equal(
+                forgedResponseProvenance?.status,
+                'BLOCKED',
+                responseProvenanceMutation.label
+            );
+        }
+
+        const duplicateLiveSelection = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId: 'T-AUDIT-CORRECTION-TRANSPORT',
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                securityReviewerInvocation,
+                liveRequired,
+                liveSelection,
+                liveSelection,
+                liveInvocation,
+                liveAcceptance
+            ],
+            reviewAttemptSummary: null
+        });
+        assert.equal(duplicateLiveSelection?.status, 'BLOCKED');
+
+        const duplicateLiveInvocation = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId: 'T-AUDIT-CORRECTION-TRANSPORT',
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                securityReviewerInvocation,
+                liveRequired,
+                liveSelection,
+                liveInvocation,
+                liveInvocation,
+                liveAcceptance
+            ],
+            reviewAttemptSummary: null
+        });
+        assert.equal(duplicateLiveInvocation?.status, 'BLOCKED');
+        assert.match(
+            duplicateLiveInvocation?.correction_transports?.[1]?.violations.join(' ') || '',
+            /package is not bound to its provider invocation attestation/iu
+        );
+
+        const acceptanceBeforeInvocation = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId: 'T-AUDIT-CORRECTION-TRANSPORT',
+            requiredReviews: CORRECTION_REQUIRED_REVIEWS,
+            currentPreflight: null,
+            timelineEvents: [
+                securityReviewerInvocation,
+                liveRequired,
+                liveSelection,
+                liveAcceptance,
+                liveInvocation
+            ],
+            reviewAttemptSummary: null
+        });
+        assert.equal(acceptanceBeforeInvocation?.status, 'BLOCKED');
+        assert.match(
+            acceptanceBeforeInvocation?.correction_transports?.[1]?.violations.join(' ') || '',
+            /package is not bound to its provider invocation attestation/iu
+        );
+
         const forgedLiveArtifactHash = buildReviewFindingsAuditSummary({
             repoRoot,
             reviewsRoot,
