@@ -69,6 +69,32 @@ describe('next-step baseline-only pre-implementation routing', () => {
         assert.match(result?.reason || '', /task has implementation intent/u);
     });
 
+    it('routes a backlog implementation task without a whitelisted action before audited no-op', () => {
+        const taskId = 'T-1013-2-3-1-2';
+        const taskSummary =
+            '[security] Isolate current and historical correction artifact-chain integrity validation';
+        const result = buildBaselineOnlyPreImplementationRoute({
+            repoRoot: process.cwd(),
+            taskEntry: {
+                taskId,
+                status: 'IN_PROGRESS',
+                area: 'workflow/review-output-correction-artifact-integrity',
+                title: taskSummary,
+                profile: 'strict',
+                notes: 'Keep current and historical validators independently reviewable.'
+            },
+            taskMode: {
+                task_id: taskId,
+                task_summary: taskSummary
+            },
+            preflight: buildBaselineOnlyPreflight(),
+            auditedNoOpPassed: false
+        });
+
+        assert.equal(result?.nextGate, 'implementation');
+        assert.match(result?.reason || '', /task has implementation intent/u);
+    });
+
     it('preserves explicit audit-only metadata as a no-op candidate', () => {
         const result = buildBaselineOnlyPreImplementationRoute({
             repoRoot: process.cwd(),
