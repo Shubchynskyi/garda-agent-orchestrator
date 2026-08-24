@@ -402,8 +402,52 @@ function isCanonicalCorrectionReviewType(value: string | null): value is string 
 
 interface IndexedCorrectionEvent {
     eventIndex: number;
+    timestampUtc: string | null;
     details: Record<string, unknown>;
 }
+
+type CorrectionTransportSelection = Exclude<
+    ReviewOutputCorrectionTransportAudit['transport'],
+    'invocation_attestation' | 'acceptance'
+>;
+
+type CorrectionContinuationTransport = Exclude<
+    CorrectionTransportSelection,
+    'validation_rejection'
+>;
+
+interface IndexedCorrectionTransportEvent extends IndexedCorrectionEvent {
+    eventType: string;
+    transport: CorrectionTransportSelection;
+}
+
+interface CorrectionTransportEventCollection {
+    transportEvents: readonly IndexedCorrectionTransportEvent[];
+    acceptedCorrectionResponses: readonly IndexedCorrectionEvent[];
+    correctionInvocationAttestations: readonly IndexedCorrectionEvent[];
+    acceptedResponsesByReviewType: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    invocationAttestationsByReviewType: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    retryRejectionsByReviewType: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    reviewerInvocationsBySha256: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    selectionsByPreviousPackage: ReadonlyMap<string, readonly IndexedCorrectionEvent[]>;
+    selectionEventsByIndex: ReadonlyMap<number, IndexedCorrectionTransportEvent>;
+    nextSelectionIndexByEventIndex: ReadonlyMap<number, number>;
+}
+
+const CORRECTION_TRANSPORT_BY_EVENT_TYPE = new Map<string, CorrectionTransportSelection>([
+    ['REVIEW_OUTPUT_CORRECTION_REQUIRED', 'validation_rejection'],
+    ['REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION', 'live_reviewer_continuation'],
+    ['REVIEW_OUTPUT_CORRECTION_API_CONTINUATION', 'api_conversation_continuation'],
+    ['REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION', 'correction_only_invocation'],
+    ['REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED', 'full_reviewer_relaunch']
+]);
+
+const CORRECTION_SELECTION_EVENT_TYPES = new Set([
+    'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION',
+    'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION',
+    'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION',
+    'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED'
+]);
 
 interface CorrectionArtifactCacheEntry {
     fileSha256?: string | null;
@@ -451,6 +495,102 @@ function correctionEventsInWindow(
     const start = firstCorrectionEventAfter(events, selectedEventIndex);
     const end = firstCorrectionEventAfter(events, nextSelectedEventIndex - 1);
     return events.slice(start, end);
+}
+
+function collectCorrectionTransportEvents(
+    events: readonly ReviewReuseTelemetryEventLike[],
+    options: {
+        taskId: string;
+        authorizedReviewTypes: ReadonlySet<string>;
+    }
+): CorrectionTransportEventCollection {
+    const transportEvents: IndexedCorrectionTransportEvent[] = [];
+    const acceptedCorrectionResponses: IndexedCorrectionEvent[] = [];
+    const correctionInvocationAttestations: IndexedCorrectionEvent[] = [];
+    const acceptedResponsesByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const invocationAttestationsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const retryRejectionsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
+    const reviewerInvocationsBySha256 = new Map<string, IndexedCorrectionEvent[]>();
+    const selectionsByPreviousPackage = new Map<string, IndexedCorrectionEvent[]>();
+    const selectionEventsByIndex = new Map<number, IndexedCorrectionTransportEvent>();
+    const nextSelectionIndexByEventIndex = new Map<number, number>();
+    const latestSelectionIndexByReviewType = new Map<string, number>();
+
+    for (const [eventIndex, event] of events.entries()) {
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const eventRecord = event as unknown as Record<string, unknown>;
+        const indexedEvent: IndexedCorrectionEvent = {
+            eventIndex,
+            timestampUtc: stringValue(eventRecord.timestamp_utc),
+            details
+        };
+        const transport = CORRECTION_TRANSPORT_BY_EVENT_TYPE.get(eventType);
+        if (transport) {
+            transportEvents.push({ ...indexedEvent, eventType, transport });
+        }
+        const indexedReviewTypeValue = stringValue(details.review_type);
+        const indexedReviewType = isCanonicalCorrectionReviewType(indexedReviewTypeValue)
+            && options.authorizedReviewTypes.has(indexedReviewTypeValue)
+            ? indexedReviewTypeValue
+            : null;
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
+        const reviewerInvocationEventSha256 = stringValue(integrity.event_sha256);
+        if (
+            eventType === 'REVIEWER_INVOCATION_ATTESTED'
+            && isSha256(reviewerInvocationEventSha256)
+        ) {
+            appendCorrectionEvent(
+                reviewerInvocationsBySha256,
+                reviewerInvocationEventSha256,
+                indexedEvent
+            );
+        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED') {
+            acceptedCorrectionResponses.push(indexedEvent);
+            appendCorrectionEvent(acceptedResponsesByReviewType, indexedReviewType, indexedEvent);
+        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED') {
+            correctionInvocationAttestations.push(indexedEvent);
+            appendCorrectionEvent(invocationAttestationsByReviewType, indexedReviewType, indexedEvent);
+        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
+            appendCorrectionEvent(retryRejectionsByReviewType, indexedReviewType, indexedEvent);
+        }
+        if (
+            !CORRECTION_SELECTION_EVENT_TYPES.has(eventType)
+            || stringValue(details.task_id) !== options.taskId
+            || !indexedReviewType
+            || !transport
+        ) {
+            continue;
+        }
+        const selectionEvent = { ...indexedEvent, eventType, transport };
+        selectionEventsByIndex.set(eventIndex, selectionEvent);
+        const previousPackageSha256 = stringValue(details.previous_correction_package_sha256);
+        if (isSha256(previousPackageSha256)) {
+            appendCorrectionEvent(
+                selectionsByPreviousPackage,
+                previousPackageSha256,
+                indexedEvent
+            );
+        }
+        const previousSelectionIndex = latestSelectionIndexByReviewType.get(indexedReviewType);
+        if (previousSelectionIndex !== undefined) {
+            nextSelectionIndexByEventIndex.set(previousSelectionIndex, eventIndex);
+        }
+        latestSelectionIndexByReviewType.set(indexedReviewType, eventIndex);
+    }
+
+    return {
+        transportEvents,
+        acceptedCorrectionResponses,
+        correctionInvocationAttestations,
+        acceptedResponsesByReviewType,
+        invocationAttestationsByReviewType,
+        retryRejectionsByReviewType,
+        reviewerInvocationsBySha256,
+        selectionsByPreviousPackage,
+        selectionEventsByIndex,
+        nextSelectionIndexByEventIndex
+    };
 }
 
 function hasTrustedOriginalReviewerInvocation(options: {
@@ -752,7 +892,7 @@ interface CorrectionArtifactChainValidationOptions {
     reviewsRoot: string;
     taskId: string;
     reviewType: string;
-    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
+    transport: CorrectionContinuationTransport;
     correctionAttempt: number | null;
     correctionPackageSha256: string | null;
     details: Record<string, unknown>;
@@ -763,6 +903,22 @@ interface CorrectionArtifactChainValidationResult {
     artifact: ReviewOutputCorrectionArtifact | null;
     eventArtifactPath: string | null;
     violations: string[];
+}
+
+interface CurrentCorrectionTransportValidationOptions
+    extends CorrectionArtifactChainValidationOptions {
+    acceptedResponses: readonly IndexedCorrectionEvent[];
+    invocationAttestations: readonly IndexedCorrectionEvent[];
+    selectedEventIndex: number;
+    consumedAcceptedResponseIndexes: Set<number>;
+    consumedInvocationAttestationIndexes: Set<number>;
+}
+
+interface HistoricalCorrectionTransportValidationOptions
+    extends CurrentCorrectionTransportValidationOptions {
+    retryRejections: readonly IndexedCorrectionEvent[];
+    nextSelectedEventIndex: number;
+    nextSelectionPreviousPackageSha256: string | null;
 }
 
 function validateHistoricalCorrectionArtifactChain(
@@ -860,25 +1016,9 @@ function validateHistoricalCorrectionArtifactChain(
     return { artifact: snapshot, eventArtifactPath, violations };
 }
 
-function validateHistoricalCorrectionTransport(options: {
-    repoRoot: string;
-    reviewsRoot: string;
-    taskId: string;
-    reviewType: string;
-    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
-    correctionAttempt: number | null;
-    correctionPackageSha256: string | null;
-    details: Record<string, unknown>;
-    acceptedResponses: readonly IndexedCorrectionEvent[];
-    invocationAttestations: readonly IndexedCorrectionEvent[];
-    retryRejections: readonly IndexedCorrectionEvent[];
-    selectedEventIndex: number;
-    nextSelectedEventIndex: number;
-    nextSelectionPreviousPackageSha256: string | null;
-    consumedAcceptedResponseIndexes: Set<number>;
-    consumedInvocationAttestationIndexes: Set<number>;
-    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
-}): string[] {
+function validateHistoricalCorrectionTransport(
+    options: HistoricalCorrectionTransportValidationOptions
+): string[] {
     const artifactValidation = validateHistoricalCorrectionArtifactChain(options);
     const violations = artifactValidation.violations;
     const snapshot = artifactValidation.artifact;
@@ -1119,22 +1259,9 @@ function validateCurrentCorrectionArtifactChain(
     return { artifact: persisted, eventArtifactPath, violations };
 }
 
-function validatePersistedCorrectionTransport(options: {
-    repoRoot: string;
-    reviewsRoot: string;
-    taskId: string;
-    reviewType: string;
-    transport: Exclude<ReviewOutputCorrectionTransportAudit['transport'], 'validation_rejection'>;
-    correctionAttempt: number | null;
-    correctionPackageSha256: string | null;
-    details: Record<string, unknown>;
-    acceptedResponses: readonly IndexedCorrectionEvent[];
-    invocationAttestations: readonly IndexedCorrectionEvent[];
-    selectedEventIndex: number;
-    consumedAcceptedResponseIndexes: Set<number>;
-    consumedInvocationAttestationIndexes: Set<number>;
-    artifactCache: Map<string, CorrectionArtifactCacheEntry>;
-}): string[] {
+function validatePersistedCorrectionTransport(
+    options: CurrentCorrectionTransportValidationOptions
+): string[] {
     const artifactValidation = validateCurrentCorrectionArtifactChain(options);
     const violations = artifactValidation.violations;
     const persisted = artifactValidation.artifact;
@@ -1240,6 +1367,21 @@ function validatePersistedCorrectionTransport(options: {
     return violations;
 }
 
+function validateCorrectionTransportReconstruction(options: {
+    current: CurrentCorrectionTransportValidationOptions;
+    historical: Omit<
+        HistoricalCorrectionTransportValidationOptions,
+        keyof CurrentCorrectionTransportValidationOptions
+    > | null;
+}): string[] {
+    return options.historical
+        ? validateHistoricalCorrectionTransport({
+            ...options.current,
+            ...options.historical
+        })
+        : validatePersistedCorrectionTransport(options.current);
+}
+
 function collectCorrectionTransports(
     events: readonly ReviewReuseTelemetryEventLike[],
     options: {
@@ -1249,13 +1391,19 @@ function collectCorrectionTransports(
         authorizedReviewTypes: ReadonlySet<string>;
     }
 ): ReviewOutputCorrectionTransportAudit[] {
-    const transportByEventType = new Map<string, ReviewOutputCorrectionTransportAudit['transport']>([
-        ['REVIEW_OUTPUT_CORRECTION_REQUIRED', 'validation_rejection'],
-        ['REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION', 'live_reviewer_continuation'],
-        ['REVIEW_OUTPUT_CORRECTION_API_CONTINUATION', 'api_conversation_continuation'],
-        ['REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION', 'correction_only_invocation'],
-        ['REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED', 'full_reviewer_relaunch']
-    ]);
+    const eventCollection = collectCorrectionTransportEvents(events, options);
+    const {
+        transportEvents,
+        acceptedCorrectionResponses,
+        correctionInvocationAttestations,
+        acceptedResponsesByReviewType,
+        invocationAttestationsByReviewType,
+        retryRejectionsByReviewType,
+        reviewerInvocationsBySha256,
+        selectionsByPreviousPackage,
+        selectionEventsByIndex,
+        nextSelectionIndexByEventIndex
+    } = eventCollection;
     const requiredPackages = new Map<string, {
         eventIndex: number;
         reviewType: string;
@@ -1266,85 +1414,17 @@ function collectCorrectionTransports(
         reviewerInvocationEventSha256: string;
     }>();
     const selectedPreviousPackages = new Set<string>();
-    const acceptedCorrectionResponses: IndexedCorrectionEvent[] = [];
-    const correctionInvocationAttestations: IndexedCorrectionEvent[] = [];
-    const acceptedResponsesByReviewType = new Map<string, IndexedCorrectionEvent[]>();
-    const invocationAttestationsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
-    const retryRejectionsByReviewType = new Map<string, IndexedCorrectionEvent[]>();
-    const reviewerInvocationsBySha256 = new Map<string, IndexedCorrectionEvent[]>();
-    const selectionsByPreviousPackage = new Map<string, IndexedCorrectionEvent[]>();
-    const selectionEventTypes = new Set([
-        'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION',
-        'REVIEW_OUTPUT_CORRECTION_API_CONTINUATION',
-        'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION',
-        'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED'
-    ]);
-    const nextSelectionIndexByEventIndex = new Map<number, number>();
-    const latestSelectionIndexByReviewType = new Map<string, number>();
-    for (const [eventIndex, event] of events.entries()) {
-        const eventType = String(event.event_type || '').trim().toUpperCase();
-        const details = isPlainRecord(event.details) ? event.details : {};
-        const indexedEvent = { eventIndex, details };
-        const indexedReviewTypeValue = stringValue(details.review_type);
-        const indexedReviewType = isCanonicalCorrectionReviewType(indexedReviewTypeValue)
-            && options.authorizedReviewTypes.has(indexedReviewTypeValue)
-            ? indexedReviewTypeValue
-            : null;
-        const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
-        const reviewerInvocationEventSha256 = stringValue(integrity.event_sha256);
-        if (
-            eventType === 'REVIEWER_INVOCATION_ATTESTED'
-            && isSha256(reviewerInvocationEventSha256)
-        ) {
-            appendCorrectionEvent(
-                reviewerInvocationsBySha256,
-                reviewerInvocationEventSha256,
-                indexedEvent
-            );
-        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED') {
-            acceptedCorrectionResponses.push(indexedEvent);
-            appendCorrectionEvent(acceptedResponsesByReviewType, indexedReviewType, indexedEvent);
-        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED') {
-            correctionInvocationAttestations.push(indexedEvent);
-            appendCorrectionEvent(invocationAttestationsByReviewType, indexedReviewType, indexedEvent);
-        } else if (eventType === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
-            appendCorrectionEvent(retryRejectionsByReviewType, indexedReviewType, indexedEvent);
-        }
-        if (
-            !selectionEventTypes.has(eventType)
-            || stringValue(details.task_id) !== options.taskId
-            || !indexedReviewType
-        ) {
-            continue;
-        }
-        const previousPackageSha256 = stringValue(details.previous_correction_package_sha256);
-        if (isSha256(previousPackageSha256)) {
-            appendCorrectionEvent(
-                selectionsByPreviousPackage,
-                previousPackageSha256,
-                indexedEvent
-            );
-        }
-        const reviewTypeValue = stringValue(details.review_type);
-        const reviewType = reviewTypeValue || 'unknown';
-        const previousSelectionIndex = latestSelectionIndexByReviewType.get(reviewType);
-        if (previousSelectionIndex !== undefined) {
-            nextSelectionIndexByEventIndex.set(previousSelectionIndex, eventIndex);
-        }
-        latestSelectionIndexByReviewType.set(reviewType, eventIndex);
-    }
     const consumedAcceptedResponseIndexes = new Set<number>();
     const consumedInvocationAttestationIndexes = new Set<number>();
     const artifactCache = new Map<string, CorrectionArtifactCacheEntry>();
     const results: ReviewOutputCorrectionTransportAudit[] = [];
-    for (const [selectedEventIndex, event] of events.entries()) {
-        const eventType = String(event.event_type || '').trim().toUpperCase();
-        const transport = transportByEventType.get(eventType);
-        if (!transport) {
-            continue;
-        }
-        const details = isPlainRecord(event.details) ? event.details : {};
-        const eventRecord = event as unknown as Record<string, unknown>;
+    for (const {
+        eventIndex: selectedEventIndex,
+        timestampUtc,
+        eventType,
+        transport,
+        details
+    } of transportEvents) {
         const correctionPackageSha256 = stringValue(details.correction_package_sha256);
         const previousPackageSha256 = stringValue(details.previous_correction_package_sha256);
         const providerCapabilitiesSha256 = stringValue(details.provider_capabilities_sha256);
@@ -1637,24 +1717,24 @@ function collectCorrectionTransports(
                 && eventTaskId === options.taskId
                 && trustedOriginalReviewerInvocation
             ) {
-                violations.push(...(
-                    nextSelectedEventIndex === undefined
-                        ? validatePersistedCorrectionTransport(transportValidationOptions)
-                        : validateHistoricalCorrectionTransport({
-                            ...transportValidationOptions,
+                violations.push(...validateCorrectionTransportReconstruction({
+                    current: transportValidationOptions,
+                    historical: nextSelectedEventIndex === undefined
+                        ? null
+                        : {
                             retryRejections: retryRejectionsByReviewType.get(reviewType) || [],
                             nextSelectedEventIndex,
                             nextSelectionPreviousPackageSha256: stringValue(
-                                isPlainRecord(events[nextSelectedEventIndex]?.details)
-                                    ? events[nextSelectedEventIndex].details.previous_correction_package_sha256
-                                    : null
+                                selectionEventsByIndex
+                                    .get(nextSelectedEventIndex)
+                                    ?.details.previous_correction_package_sha256
                             )
-                        })
-                ));
+                        }
+                }));
             }
         }
         results.push({
-            timestamp_utc: stringValue(eventRecord.timestamp_utc),
+            timestamp_utc: timestampUtc,
             event_type: eventType,
             review_type: reviewType,
             transport,
@@ -1668,13 +1748,11 @@ function collectCorrectionTransports(
         });
     }
     for (const invocationAttestation of correctionInvocationAttestations) {
-        const invocationEvent = events[invocationAttestation.eventIndex];
-        const eventRecord = invocationEvent as unknown as Record<string, unknown>;
         const details = invocationAttestation.details;
         const evidenceValid = consumedInvocationAttestationIndexes.has(invocationAttestation.eventIndex)
             && stringValue(details.task_id) === options.taskId;
         results.push({
-            timestamp_utc: stringValue(eventRecord.timestamp_utc),
+            timestamp_utc: invocationAttestation.timestampUtc,
             event_type: 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
             review_type: stringValue(details.review_type) || 'unknown',
             transport: 'invocation_attestation',
@@ -1695,13 +1773,11 @@ function collectCorrectionTransports(
         });
     }
     for (const acceptedResponse of acceptedCorrectionResponses) {
-        const acceptedEvent = events[acceptedResponse.eventIndex];
-        const eventRecord = acceptedEvent as unknown as Record<string, unknown>;
         const details = acceptedResponse.details;
         const evidenceValid = consumedAcceptedResponseIndexes.has(acceptedResponse.eventIndex)
             && stringValue(details.task_id) === options.taskId;
         results.push({
-            timestamp_utc: stringValue(eventRecord.timestamp_utc),
+            timestamp_utc: acceptedResponse.timestampUtc,
             event_type: 'REVIEW_OUTPUT_CORRECTION_ACCEPTED',
             review_type: stringValue(details.review_type) || 'unknown',
             transport: 'acceptance',

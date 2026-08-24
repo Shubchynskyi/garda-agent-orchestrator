@@ -214,7 +214,7 @@ describe('gates/task-audit-summary review correction transport', () => {
         }
     });
 
-    it('distinguishes transports and rejects stale, duplicate, raced, or unverifiable evidence', () => {
+    it('event provenance: distinguishes transports and rejects stale, duplicate, raced, or unverifiable evidence', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-correction-audit-'));
         const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -1227,7 +1227,7 @@ describe('gates/task-audit-summary review correction transport', () => {
         assert.match(violations, /capability hash is unverifiable/iu);
     });
 
-    it('reconstructs historical attempts from snapshots and rejects forged artifact evidence', () => {
+    it('artifact integrity: reconstructs historical attempts from snapshots and rejects forged evidence', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-correction-audit-history-'));
         const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -1251,15 +1251,28 @@ describe('gates/task-audit-summary review correction transport', () => {
             providerInvocationId: '/root/code-review',
             eventSha256: '9'.repeat(64)
         });
-        const buildAttempt = (correctionAttempt: number) => {
+        const buildAttempt = (
+            correctionAttempt: number,
+            lane: {
+                reviewType: string;
+                reviewerIdentity: string;
+                providerInvocationId: string;
+                reviewerInvocationEventSha256: string;
+            } = {
+                reviewType,
+                reviewerIdentity: 'agent:code-reviewer',
+                providerInvocationId: '/root/code-review',
+                reviewerInvocationEventSha256: '9'.repeat(64)
+            }
+        ) => {
             const persisted = writeSelectedCorrectionFixture({
                 reviewsRoot,
                 taskId,
-                reviewType,
-                reviewerIdentity: 'agent:code-reviewer',
+                reviewType: lane.reviewType,
+                reviewerIdentity: lane.reviewerIdentity,
                 providerId: 'Codex',
-                providerInvocationId: '/root/code-review',
-                reviewerInvocationEventSha256: '9'.repeat(64),
+                providerInvocationId: lane.providerInvocationId,
+                reviewerInvocationEventSha256: lane.reviewerInvocationEventSha256,
                 capabilities,
                 sessionAvailability: 'available',
                 attestationSource: 'codex_collaboration_followup_task',
@@ -1268,20 +1281,20 @@ describe('gates/task-audit-summary review correction transport', () => {
             const artifact = readReviewOutputCorrectionArtifact(persisted.artifactPath).artifact!;
             const required = correctionEvent('REVIEW_OUTPUT_CORRECTION_REQUIRED', {
                 task_id: taskId,
-                review_type: reviewType,
+                review_type: lane.reviewType,
                 correction_attempt: correctionAttempt,
                 correction_package_sha256: persisted.previousFileSha256,
                 correction_artifact_path: persisted.artifactPath,
-                reviewer_identity: 'agent:code-reviewer',
+                reviewer_identity: lane.reviewerIdentity,
                 reviewer_attempt_id: 'attempt-1',
                 provider_id: 'Codex',
-                provider_invocation_id: '/root/code-review',
+                provider_invocation_id: lane.providerInvocationId,
                 provider_capabilities_sha256: capabilitiesSha256,
-                reviewer_invocation_event_sha256: '9'.repeat(64)
+                reviewer_invocation_event_sha256: lane.reviewerInvocationEventSha256
             });
             const selected = correctionEvent('REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION', {
                 task_id: taskId,
-                review_type: reviewType,
+                review_type: lane.reviewType,
                 correction_attempt: correctionAttempt,
                 previous_correction_package_sha256: persisted.previousFileSha256,
                 correction_package_sha256: persisted.selectedFileSha256,
@@ -1290,13 +1303,13 @@ describe('gates/task-audit-summary review correction transport', () => {
                 correction_artifact_snapshot_path: persisted.snapshotPath,
                 correction_artifact_snapshot_sha256: persisted.selectedFileSha256,
                 provider_id: 'Codex',
-                reviewer_identity: 'agent:code-reviewer',
+                reviewer_identity: lane.reviewerIdentity,
                 reviewer_attempt_id: 'attempt-1',
-                provider_invocation_id: '/root/code-review',
-                reviewer_invocation_event_sha256: '9'.repeat(64),
+                provider_invocation_id: lane.providerInvocationId,
+                reviewer_invocation_event_sha256: lane.reviewerInvocationEventSha256,
                 availability_attestation_source: 'codex_collaboration_followup_task',
                 availability_evidence_type: 'provider_native_session_receipt',
-                availability_provider_invocation_event_sha256: '9'.repeat(64),
+                availability_provider_invocation_event_sha256: lane.reviewerInvocationEventSha256,
                 availability_provider_response_sha256: '7'.repeat(64),
                 session_availability: 'available',
                 selected_transport: 'live_reviewer_continuation',
@@ -1305,13 +1318,13 @@ describe('gates/task-audit-summary review correction transport', () => {
             });
             const invocation = correctionEvent('REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED', {
                 task_id: taskId,
-                review_type: reviewType,
+                review_type: lane.reviewType,
                 correction_attempt: correctionAttempt,
-                reviewer_invocation_event_sha256: '9'.repeat(64),
-                original_reviewer_identity: 'agent:code-reviewer',
+                reviewer_invocation_event_sha256: lane.reviewerInvocationEventSha256,
+                original_reviewer_identity: lane.reviewerIdentity,
                 reviewer_attempt_id: 'attempt-1',
-                correction_producer_identity: 'agent:code-reviewer',
-                provider_invocation_id: '/root/code-review',
+                correction_producer_identity: lane.reviewerIdentity,
+                provider_invocation_id: lane.providerInvocationId,
                 attestation_source: 'codex_collaboration_followup_task',
                 corrected_output_sha256: '7'.repeat(64),
                 provider_response_event_sha256: '6'.repeat(64),
@@ -1323,11 +1336,11 @@ describe('gates/task-audit-summary review correction transport', () => {
             });
             const accepted = correctionEvent('REVIEW_OUTPUT_CORRECTION_ACCEPTED', {
                 task_id: taskId,
-                review_type: reviewType,
-                reviewer_identity: 'agent:code-reviewer',
+                review_type: lane.reviewType,
+                reviewer_identity: lane.reviewerIdentity,
                 reviewer_attempt_id: 'attempt-1',
-                correction_producer_identity: 'agent:code-reviewer',
-                provider_invocation_id: '/root/code-review',
+                correction_producer_identity: lane.reviewerIdentity,
+                provider_invocation_id: lane.providerInvocationId,
                 attestation_source: 'codex_collaboration_followup_task',
                 provider_response_event_sha256: '6'.repeat(64),
                 corrected_output_sha256: '7'.repeat(64),
@@ -1345,6 +1358,21 @@ describe('gates/task-audit-summary review correction transport', () => {
         };
 
         const firstAttempt = buildAttempt(1);
+        const interleavedReviewType = 'security';
+        const interleavedReviewerInvocation = reviewerInvocationEvent({
+            taskId,
+            reviewType: interleavedReviewType,
+            reviewerIdentity: 'agent:security-reviewer',
+            providerId: 'Codex',
+            providerInvocationId: '/root/security-review',
+            eventSha256: '8'.repeat(64)
+        });
+        const interleavedAttempt = buildAttempt(1, {
+            reviewType: interleavedReviewType,
+            reviewerIdentity: 'agent:security-reviewer',
+            providerInvocationId: '/root/security-review',
+            reviewerInvocationEventSha256: '8'.repeat(64)
+        });
         const secondAttempt = buildAttempt(2);
         const summary = buildReviewFindingsAuditSummary({
             repoRoot,
@@ -1352,7 +1380,13 @@ describe('gates/task-audit-summary review correction transport', () => {
             taskId,
             requiredReviews: CORRECTION_REQUIRED_REVIEWS,
             currentPreflight: null,
-            timelineEvents: [originalReviewerInvocation, ...firstAttempt, ...secondAttempt],
+            timelineEvents: [
+                originalReviewerInvocation,
+                interleavedReviewerInvocation,
+                ...firstAttempt,
+                ...interleavedAttempt,
+                ...secondAttempt
+            ],
             reviewAttemptSummary: null
         });
 
@@ -1362,6 +1396,12 @@ describe('gates/task-audit-summary review correction transport', () => {
             JSON.stringify(summary?.correction_transports, null, 2)
         );
         assert.equal(summary?.correction_transports?.every((entry) => entry.evidence_valid), true);
+        assert.deepEqual(
+            summary?.correction_transports
+                ?.filter((entry) => entry.transport === 'live_reviewer_continuation')
+                .map((entry) => `${entry.review_type}:${entry.correction_attempt}`),
+            ['code:1', 'security:1', 'code:2']
+        );
 
         for (const historicalArtifactMutation of [
             {
@@ -1868,7 +1908,7 @@ describe('gates/task-audit-summary review correction transport', () => {
         );
     });
 
-    it('rejects escaped review type path traversal and binds FULL relaunch to its correction artifact', () => {
+    it('reconstruction boundary: rejects escaped review types and binds FULL relaunch artifacts', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-correction-audit-types-'));
         const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(reviewsRoot, { recursive: true });
