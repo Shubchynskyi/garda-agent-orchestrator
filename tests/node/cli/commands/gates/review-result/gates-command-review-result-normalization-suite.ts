@@ -3638,18 +3638,30 @@ describe('gates command review result - normalization', () => {
         );
         assert.match(originalInvocationSha256, /^[0-9a-f]{64}$/u);
         const originalInvocationDetails = originalInvocation.details as Record<string, unknown>;
+        const originalReviewerAttemptId = String(
+            originalInvocationDetails.reviewer_launch_attempt_id
+            || originalInvocationDetails.provider_invocation_id
+            || originalInvocationSha256
+        );
         const rawOutput = `${JSON.stringify(
             buildNoFindingsJsonReport(fixture.reviewContextPath, taskId),
             null,
             2
         )}\n`;
+        const invalidCorrectionReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        invalidCorrectionReport.unexpected = true;
+        const invalidCorrectionOutput = `${JSON.stringify(invalidCorrectionReport, null, 2)}\n`;
         const rejectedOutputPath = path.join(fixture.reviewsRoot, `${taskId}-code-rejected-placeholder.md`);
+        const validationArtifactContent = '{}\n';
+        const validationArtifactSha256 = createHash('sha256')
+            .update(validationArtifactContent)
+            .digest('hex');
         const validationArtifactPath = path.join(
             fixture.reviewsRoot,
-            `${taskId}-code-findings-validation.json`
+            `${taskId}-code-findings-validation-${validationArtifactSha256}.json`
         );
         fs.writeFileSync(rejectedOutputPath, rawOutput, 'utf8');
-        fs.writeFileSync(validationArtifactPath, '{}\n', 'utf8');
+        fs.writeFileSync(validationArtifactPath, validationArtifactContent, 'utf8');
         const reviewContext = JSON.parse(
             fs.readFileSync(fixture.reviewContextPath, 'utf8')
         ) as Record<string, unknown>;
@@ -3664,18 +3676,14 @@ describe('gates command review result - normalization', () => {
             reviewContextSha256: createHash('sha256')
                 .update(fs.readFileSync(fixture.reviewContextPath))
                 .digest('hex'),
-            reviewTreeStateSha256: String(reviewContext.review_tree_state_sha256 || ''),
-            reviewerIdentity: fixture.reviewerIdentity,
-            reviewerAttemptId: String(
-                originalInvocationDetails.reviewer_launch_attempt_id
-                || originalInvocationDetails.provider_invocation_id
-                || originalInvocationSha256
+            reviewTreeStateSha256: String(
+                (reviewContext.tree_state as Record<string, unknown>).tree_state_sha256 || ''
             ),
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewerAttemptId: originalReviewerAttemptId,
             reviewerInvocationEventSha256: originalInvocationSha256,
             validationArtifactPath,
-            validationArtifactSha256: createHash('sha256')
-                .update(fs.readFileSync(validationArtifactPath))
-                .digest('hex'),
+            validationArtifactSha256,
             violations: ['findings.high[0].description is required.'],
             capabilities: {
                 live_reviewer_continuation: false,
@@ -3728,7 +3736,7 @@ describe('gates command review result - normalization', () => {
         )) as { provider_response_output_path: string };
         fs.writeFileSync(
             startedCorrectionLaunchArtifact.provider_response_output_path,
-            rawOutput,
+            invalidCorrectionOutput,
             'utf8'
         );
 
@@ -3780,12 +3788,58 @@ describe('gates command review result - normalization', () => {
                 .correction_delegation_started_event_sha256,
             (correctionDelegations[0]?.integrity as Record<string, unknown>).event_sha256
         );
+        const pendingCorrectionRead = readReviewOutputCorrectionArtifact(persisted.artifactPath);
+        assert.deepEqual(pendingCorrectionRead.violations, []);
+        assert.equal(
+            pendingCorrectionRead.artifact?.binding.reviewer_attempt_id,
+            originalReviewerAttemptId
+        );
+        const completedCorrectionLaunchArtifact = JSON.parse(fs.readFileSync(
+            persisted.correctionLaunchArtifactPath!,
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(completedCorrectionLaunchArtifact.state, 'delegation_started');
+        assert.equal(
+            completedCorrectionLaunchArtifact.correction_producer_identity,
+            'agent:/root/correction-only-reviewer'
+        );
+        const rejectedCorrection = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', startedCorrectionLaunchArtifact.provider_response_output_path,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--correction-producer-identity', 'agent:/root/correction-only-reviewer',
+            '--correction-provider-invocation-id', '/root/correction-only-reviewer',
+            '--correction-provider-invocation-event-sha256', String(
+                (correctionInvocationTelemetry[0]?.details as Record<string, unknown>)
+                    .provider_invocation_event_sha256 || ''
+            ),
+            '--correction-attestation-source', 'codex_collaboration_spawn_agent',
+            '--correction-launch-input-sha256', correctionInputSha256,
+            '--correction-fork-context', 'false',
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+        assert.notEqual(rejectedCorrection.exitCode, 0);
+        const retriedCorrection = JSON.parse(fs.readFileSync(persisted.artifactPath, 'utf8')) as {
+            state: string;
+            recovery: { correction_attempt: number; selected_transport: string };
+        };
+        assert.equal(
+            retriedCorrection.recovery.correction_attempt,
+            2,
+            rejectedCorrection.errors.join('\n')
+        );
+        assert.equal(retriedCorrection.state, 'REVIEW_OUTPUT_CORRECTION_REQUIRED');
+        assert.equal(retriedCorrection.recovery.selected_transport, 'correction_only_invocation');
         const correctionLaunchArtifact = JSON.parse(fs.readFileSync(
             persisted.correctionLaunchArtifactPath!,
             'utf8'
         )) as Record<string, unknown>;
-        assert.equal(correctionLaunchArtifact.state, 'delegation_started');
-        assert.equal(correctionLaunchArtifact.correction_producer_identity, 'agent:/root/correction-only-reviewer');
+        assert.equal(correctionLaunchArtifact.state, 'prepared');
+        assert.equal(correctionLaunchArtifact.correction_producer_identity, undefined);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

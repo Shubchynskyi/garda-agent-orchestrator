@@ -3023,19 +3023,43 @@ async function handleRecordReviewResultUnlocked(
                 reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
                 coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
             });
-            await terminalizeCompletedLaunchAfterFindingsRejection({
-                repoRoot,
-                taskId,
-                reviewType,
-                reviewerIdentity,
-                preflightPath,
-                reviewContextPath: contextPath,
-                rawReviewOutputContent: reviewOutput.reviewContent,
-                reviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
-                reviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
-                validationEvidence: findingsValidationEvidence,
-                persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence)
-            });
+            if (
+                pendingCorrectionArtifact
+                && pendingCorrectionProducerAttestation
+                && pendingCorrectionLaunchInputSha256
+                && pendingCorrectionOriginalReviewerAttemptId
+                && correctionComparisonOutputSha256 !== pendingCorrectionArtifact.binding.original_output_sha256
+            ) {
+                await persistReviewOutputCorrectionRequired({
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    reviewerIdentity,
+                    reviewContextPath: contextPath,
+                    rawReviewOutputContent: reviewOutput.reviewContent,
+                    reviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
+                    validationEvidence: findingsValidationEvidence,
+                    persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(
+                        findingsValidationEvidence
+                    )
+                });
+            } else {
+                await terminalizeCompletedLaunchAfterFindingsRejection({
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    reviewerIdentity,
+                    preflightPath,
+                    reviewContextPath: contextPath,
+                    rawReviewOutputContent: reviewOutput.reviewContent,
+                    reviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
+                    reviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
+                    validationEvidence: findingsValidationEvidence,
+                    persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(
+                        findingsValidationEvidence
+                    )
+                });
+            }
             if (!verdictToken) {
                 const validationMessage = findingsValidation.detected
                     ? findingsValidation.violations.join(' ')
