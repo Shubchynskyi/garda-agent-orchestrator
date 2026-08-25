@@ -1576,6 +1576,9 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'restart-review-cycle');
         assert.match(result.reason, /cannot safely continue|provenance or semantic binding is unavailable/u);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(result.commands[0].command.includes('--review-evidence-only'));
+        assert.equal(result.commands[0].command.includes('--changed-file'), false);
         assert.equal(result.commands[0].command.includes('forged-provider-invocation'), false);
         assert.equal(result.commands[0].command.includes('record-review-output-correction-transport'), false);
     });

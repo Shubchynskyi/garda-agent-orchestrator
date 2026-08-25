@@ -4123,6 +4123,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             if (!state?.failed) {
                 return null;
             }
+            const correctionFullReviewRestart =
+                state.failureKind === 'review-correction-full-review-required';
             const taskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
             const downstreamReviewTypes = getDownstreamReviewTypesFor(
                 reviewType,
@@ -4225,9 +4227,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             }),
                             {
                                 includeChangedFileScope:
-                                    state.failureKind !== 'missing-focused-validation-evidence'
+                                    !correctionFullReviewRestart
+                                    && state.failureKind !== 'missing-focused-validation-evidence'
                                     && state.failureKind !== 'missing-validation-evidence',
-                                reviewType
+                                reviewType,
+                                reviewEvidenceOnly: correctionFullReviewRestart
                             }
                         )
                     ),
