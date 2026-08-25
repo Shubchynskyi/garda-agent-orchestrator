@@ -210,6 +210,14 @@ export function getReviewDependencyTimelineOrderViolations(
         events,
         (event) => event.event_type === 'COMPILE_GATE_PASSED'
     )?.sequence ?? null;
+    const latestReviewCycleRestartSequence = findLatestTimelineEventLike(
+        events,
+        (event) => event.event_type === 'REVIEW_CYCLE_RESTARTED'
+    )?.sequence ?? null;
+    const timelineOrderFloorSequence = Math.max(
+        latestCompileSequence ?? Number.NEGATIVE_INFINITY,
+        latestReviewCycleRestartSequence ?? Number.NEGATIVE_INFINITY
+    );
     const typedReviewPhasesPresent = events.some((event) => (
         event.event_type === 'REVIEW_PHASE_STARTED' && normalizeTimelineReviewId(event) !== ''
     ));
@@ -222,12 +230,12 @@ export function getReviewDependencyTimelineOrderViolations(
         const typedDownstreamPhases = events.filter((event) => (
             event.event_type === 'REVIEW_PHASE_STARTED'
             && normalizeTimelineReviewId(event) === downstreamReviewId
-            && (latestCompileSequence == null || event.sequence >= latestCompileSequence)
+            && event.sequence >= timelineOrderFloorSequence
         ));
         const downstreamPhases = typedDownstreamPhases.length > 0
             ? typedDownstreamPhases
             : latestUntypedReviewPhase
-                && (latestCompileSequence == null || latestUntypedReviewPhase.sequence >= latestCompileSequence)
+                && latestUntypedReviewPhase.sequence >= timelineOrderFloorSequence
                 ? [latestUntypedReviewPhase]
                 : [];
         if (downstreamPhases.length === 0) {
@@ -272,7 +280,7 @@ export function getReviewDependencyTimelineOrderViolations(
                 const validReuseRebind = upstreamRecord.details?.reused_existing_review === true
                     && events.some((event) => (
                         event.sequence < downstreamPhase.sequence
-                        && (latestCompileSequence == null || event.sequence >= latestCompileSequence)
+                        && event.sequence >= timelineOrderFloorSequence
                         && event.event_type === 'REVIEW_RECORDED'
                         && normalizeTimelineReviewId(event) === upstreamReviewId
                         && isAcceptedReviewTimelineRecord(event)

@@ -358,6 +358,28 @@ describe('review dependency graph compilation', () => {
         ]), []);
     });
 
+    it('does not carry superseded prepared phases across a review-cycle restart', () => {
+        const graph = compileReviewDependencyGraph({
+            catalogLaneIds: [...BUILT_IN_LANES, 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+
+        assert.deepEqual(getReviewDependencyTimelineOrderViolations(graph, [
+            { event_type: 'COMPILE_GATE_PASSED', sequence: 1, details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 2, details: { review_type: 'architecture-boundary' } },
+            { event_type: 'REVIEW_CYCLE_RESTARTED', sequence: 3, details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 4, details: { review_type: 'code' } },
+            { event_type: 'REVIEW_RECORDED', sequence: 5, details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', sequence: 6, details: { review_type: 'architecture-boundary' } }
+        ]), []);
+    });
+
     it('injects full-suite placement as a gate barrier instead of a review lane', () => {
         const graph = compileReviewDependencyGraph({
             catalogLaneIds: BUILT_IN_LANES,
