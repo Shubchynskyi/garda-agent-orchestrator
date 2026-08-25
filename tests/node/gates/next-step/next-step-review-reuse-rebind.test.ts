@@ -797,6 +797,46 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
+    it('advances after current PASS context acceptance resolves the stale upstream gate failure', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        fx.writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            taskProfile: 'balanced',
+            expectedReviewTypes: ['code', 'test']
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_GATE_FAILED', 'FAIL', {
+            violations: [
+                "Review 'code' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle."
+            ]
+        });
+
+        const blocked = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(blocked.next_gate, 'build-review-context', blocked.reason);
+        assert.ok(blocked.commands[0].command.includes('--review-type "code"'));
+
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_CONTEXT_REUSE_ACCEPTED', 'PASS', {
+            review_type: 'code',
+            current_pass_review_evidence: true,
+            output_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`)
+        });
+
+        const recovered = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(recovered.next_gate, 'required-reviews-check', recovered.reason);
+        assert.ok(recovered.commands[0].command.includes('gate required-reviews-check'));
+        assert.ok(!recovered.commands[0].command.includes('build-review-context'));
+    });
+
     it('routes review context hash mismatch failures to upstream recovery instead of fresh reviewer work', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

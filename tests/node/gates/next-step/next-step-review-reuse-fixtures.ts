@@ -266,6 +266,7 @@ export function writeStrictDecompositionDecision(
     taskId: string,
     options: {
         decision?: 'atomic' | 'single-cycle' | 'split-required';
+        taskProfile?: string;
         taskSummary?: string;
         expectedReviewTypes?: string[];
         proposedChildTaskIds?: string[];
@@ -277,6 +278,7 @@ export function writeStrictDecompositionDecision(
         buildStrictDecompositionDecisionArtifact({
             taskId,
             decision,
+            taskProfile: options.taskProfile,
             taskSummary: options.taskSummary || 'Seeded next-step task',
             reason: 'This strict task is intentionally bounded for the current lifecycle cycle.',
             scopeRisk: 'The scope is constrained by the test fixture and must keep normal review gates.',
