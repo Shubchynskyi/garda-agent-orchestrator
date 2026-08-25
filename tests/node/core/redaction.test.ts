@@ -210,6 +210,18 @@ test('redactSensitiveData preserves authenticated redacted line-array boundaries
     );
 });
 
+test('redacted JSON serialization preserves canonical assignment placeholders and line endings', () => {
+    const redactedLines = [
+        'export const TOKEN_ECONOMY_FIELDS = <redacted>\n',
+        'const max_review_tokens: <redacted>\r\n',
+        'const auth = <redacted>\r'
+    ];
+    const serialized = serializeRedactedJson({ redacted_lines: redactedLines });
+
+    assert.deepEqual(JSON.parse(serialized), { redacted_lines: redactedLines });
+    assert.equal(serializeRedactedJson(JSON.parse(serialized)), serialized);
+});
+
 test('redactSensitiveData preserves token telemetry keys while masking real token secrets', () => {
     const result = redactSensitiveData({
         token: 'bare-token-secret',

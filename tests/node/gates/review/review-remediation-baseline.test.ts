@@ -542,10 +542,23 @@ describe('review remediation delta classification', () => {
 
     it('keeps delta line evidence valid after durable redacted JSON serialization', () => {
         const fixture = buildFixture(createTempRoot());
+        const sourcePath = path.join(fixture.root, 'src', 'example.ts');
+        fs.writeFileSync(
+            sourcePath,
+            'export const TOKEN_ECONOMY_FIELDS = <redacted>\n',
+            'utf8'
+        );
+        fixture.baseline.delta_base = buildReviewRemediationDeltaBase({
+            repoRoot: fixture.root,
+            taskId: fixture.taskId,
+            reviewType: fixture.reviewType,
+            reviewTreeStateSha256: fixture.treeSha256,
+            changedFiles: fixture.deltaBaseFiles
+        });
         const serialized = serializeRedactedJson(fixture.baseline);
         fs.writeFileSync(fixture.baselinePath, serialized, 'utf8');
         fixture.baselineSha256 = hash(serialized);
-        fs.appendFileSync(path.join(fixture.root, 'src', 'example.ts'), 'export const fixed = true;\n', 'utf8');
+        fs.appendFileSync(sourcePath, 'export const fixed = true;\n', 'utf8');
 
         const result = classifyFixture(fixture);
 
