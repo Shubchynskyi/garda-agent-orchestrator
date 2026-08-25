@@ -54,4 +54,40 @@ describe('cli gate-flow runtime helpers', () => {
             `Task timeline '${timelinePath.replace(/\\/g, '/')}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before review gate.`
         ]);
     });
+
+    it('finds required lifecycle events outside the bounded optional-skill timeline tail', () => {
+        const repoRoot = createManagedTestTempDirectory('gate-flow-runtime-');
+        const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        const taskId = 'T-runtime-large';
+        const timelinePath = resolveGateFlowTimelinePath(repoRoot, taskId);
+        fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+        const firstEvent = JSON.stringify({
+            task_id: taskId,
+            event_type: 'TASK_MODE_ENTERED',
+            timestamp_utc: '2026-06-14T00:00:00.000Z'
+        });
+        const paddingEvent = JSON.stringify({
+            task_id: taskId,
+            event_type: 'NOISE',
+            details: { payload: 'x'.repeat(2048) }
+        });
+        fs.writeFileSync(
+            timelinePath,
+            `${firstEvent}\n${Array.from({ length: 600 }, () => paddingEvent).join('\n')}\n`,
+            'utf8'
+        );
+
+        const result = evaluateGateFlowTimelineReadiness({
+            orchestratorRoot,
+            repoRoot,
+            taskId,
+            requirements: [
+                { eventType: 'TASK_MODE_ENTERED', recoveryInstruction: 'Run enter-task-mode before recovery.' }
+            ]
+        });
+
+        assert.equal(result.timelineEvidence.boundedRead?.truncated, true);
+        assert.equal(result.timelineEvidence.eventTypes.has('TASK_MODE_ENTERED'), true);
+        assert.deepEqual(result.violations, []);
+    });
 });
