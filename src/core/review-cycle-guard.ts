@@ -48,7 +48,7 @@ export interface ReviewCycleGuardEvaluation {
 export const DEFAULT_REVIEW_CYCLE_GUARD_CONFIG: ReviewCycleGuardConfig = Object.freeze({
     enabled: true,
     action: 'BLOCK_FOR_OPERATOR_DECISION',
-    max_failed_non_test_reviews: 15,
+    max_failed_non_test_reviews: 10,
     max_total_non_test_reviews: 30,
     excluded_review_types: ['test'],
     auto_split_enabled: true

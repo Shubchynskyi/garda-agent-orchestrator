@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { buildUpdateReportLines, buildUpdateResult } from '../../../src/lifecycle/update-reporting';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
 
-const WORKFLOW_CONFIG_MERGE_STATUS = 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template';
+const WORKFLOW_CONFIG_MERGE_STATUS = 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template';
 
 function makeStageResult(overrides: Record<string, unknown> = {}) {
     return {

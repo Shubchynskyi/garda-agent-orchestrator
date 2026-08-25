@@ -598,7 +598,7 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
         assert.ok(refreshText.includes(`WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json full_suite_validation.enabled=true`));
-        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'));
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'));
         assert.ok(initReport.includes('Workflow config merge status: existing_values_preserved_and_missing_keys_filled'));
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=true'));
@@ -919,14 +919,14 @@ test('handleSetup migrates exact legacy review-cycle guard default during refres
         });
 
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
-        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 10);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
         assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
 
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
-        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=migrated_from_old_default'));
-        assert.ok(initReport.includes('review_cycle_guard.max_failed_non_test_reviews=15'));
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=migrated_from_old_default'));
+        assert.ok(initReport.includes('review_cycle_guard.max_failed_non_test_reviews=10'));
         assert.ok(initReport.includes('review_cycle_guard.max_total_non_test_reviews=30'));
         assert.ok(initReport.includes('review_cycle_guard.limit_status=migrated_from_old_default'));
     } finally {
@@ -1025,12 +1025,12 @@ test('handleSetup reports workflow-config template fallback when preserved refre
 
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.equal(workflowConfig.full_suite_validation.enabled, false);
-        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 10);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
         assert.ok(refreshText.includes(`WorkflowConfigMerge: live_config_missing_template_applied path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json full_suite_validation.enabled=false`));
-        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied'));
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied'));
         assert.ok(initReport.includes('Workflow config merge status: live_config_missing_template_applied'));
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=false'));
@@ -1145,7 +1145,7 @@ test('handleSetup materializes strict_sequential review_execution_policy for a f
         assert.equal(workflowConfig.scope_budget_guard.warn_changed_lines, 2000);
         assert.equal(workflowConfig.scope_budget_guard.block_changed_lines, 5000);
         assert.equal(workflowConfig.scope_budget_guard.max_required_reviews, 5);
-        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 10);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
         assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
         assert.equal(workflowConfig.optional_quality_checks.enabled, true);

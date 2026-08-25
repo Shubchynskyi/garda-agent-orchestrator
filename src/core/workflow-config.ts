@@ -280,6 +280,15 @@ const LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Obje
     auto_split_enabled: false
 });
 
+const PREVIOUS_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Object.freeze({
+    enabled: true,
+    action: 'BLOCK_FOR_OPERATOR_DECISION',
+    max_failed_non_test_reviews: 15,
+    max_total_non_test_reviews: 30,
+    excluded_review_types: ['test'],
+    auto_split_enabled: true
+});
+
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {
     return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG);
 }
@@ -495,24 +504,24 @@ export function isExactLegacyReviewCycleGuardGeneratedDefault(input: unknown): b
         return false;
     }
 
-    const expected = LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT as unknown as Record<string, unknown>;
-    const actualKeys = Object.keys(input).sort();
-    const expectedKeys = Object.keys(expected).sort();
-    if (actualKeys.length !== expectedKeys.length) {
-        return false;
-    }
-    if (!expectedKeys.every((key, index) => actualKeys[index] === key)) {
-        return false;
-    }
-
-    return input.enabled === expected.enabled
-        && input.action === expected.action
-        && input.max_failed_non_test_reviews === expected.max_failed_non_test_reviews
-        && input.max_total_non_test_reviews === expected.max_total_non_test_reviews
-        && Array.isArray(input.excluded_review_types)
-        && input.excluded_review_types.length === 1
-        && input.excluded_review_types[0] === 'test'
-        && input.auto_split_enabled === expected.auto_split_enabled;
+    return [
+        LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT,
+        PREVIOUS_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT
+    ].some((candidate) => {
+        const expected = candidate as unknown as Record<string, unknown>;
+        const actualKeys = Object.keys(input).sort();
+        const expectedKeys = Object.keys(expected).sort();
+        return actualKeys.length === expectedKeys.length
+            && expectedKeys.every((key, index) => actualKeys[index] === key)
+            && input.enabled === expected.enabled
+            && input.action === expected.action
+            && input.max_failed_non_test_reviews === expected.max_failed_non_test_reviews
+            && input.max_total_non_test_reviews === expected.max_total_non_test_reviews
+            && Array.isArray(input.excluded_review_types)
+            && input.excluded_review_types.length === 1
+            && input.excluded_review_types[0] === 'test'
+            && input.auto_split_enabled === expected.auto_split_enabled;
+    });
 }
 
 function migrateLegacyProjectMemoryGeneratedDefault(

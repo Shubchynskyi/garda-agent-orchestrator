@@ -2,9 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    DEFAULT_REVIEW_CYCLE_GUARD_CONFIG,
     evaluateReviewCycleGuard,
     normalizeReviewCycleGuardConfig
 } from '../../../src/core/review-cycle-guard';
+
+test('review cycle guard defaults to splitting after ten failed non-test reviews', () => {
+    assert.equal(DEFAULT_REVIEW_CYCLE_GUARD_CONFIG.max_failed_non_test_reviews, 10);
+    assert.equal(normalizeReviewCycleGuardConfig({}).max_failed_non_test_reviews, 10);
+});
 
 test('review cycle guard blocks when failed reviews reach the configured maximum', () => {
     const config = normalizeReviewCycleGuardConfig({
