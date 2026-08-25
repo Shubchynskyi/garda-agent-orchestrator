@@ -112,10 +112,20 @@ export function buildLocalUiProfilesFixture(): Record<string, unknown> {
                     dependency: 'auto'
                 },
                 review_remediation_mode_policy: {
-                    schema_version: 1,
+                    schema_version: 2,
                     policy_id: 'conservative_review_remediation_mode_v1',
                     initial_review_mode: 'FULL',
-                    delta_eligible_review_types: ['code', 'refactor', 'test'],
+                    delta_eligible_review_types: [
+                        'api',
+                        'code',
+                        'db',
+                        'dependency',
+                        'infra',
+                        'performance',
+                        'refactor',
+                        'security',
+                        'test'
+                    ],
                     force_full_categories: ['ambiguous', 'generated_churn', 'global'],
                     max_delta_changed_files: 4,
                     max_delta_changed_lines: 240,

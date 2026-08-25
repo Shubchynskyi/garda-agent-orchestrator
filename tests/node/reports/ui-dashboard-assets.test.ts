@@ -1085,6 +1085,17 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     source: 'safe_inherit_parent',
                     configured_mode: 'one_level_lighter',
                     diagnostics: ['Custom profiles safely inherit the parent.']
+                },
+                review_remediation_mode_policy: {
+                    configured: true,
+                    legacy_full_only: false,
+                    policy_id: 'conservative_review_remediation_mode_v1',
+                    initial_review_mode: 'FULL',
+                    delta_eligible_review_types: ['code', 'test'],
+                    max_delta_changed_files: 4,
+                    max_delta_changed_lines: 240,
+                    max_consecutive_delta_reviews: 3,
+                    diagnostics: ['Explicit DELTA policy.']
                 }
             },
             {
@@ -1104,12 +1115,43 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     policy_id: 'balanced',
                     findings: { critical: 'fix_now', high: 'fix_now', medium: 'fix_now', low: 'create_follow_up' },
                     residual_risk: 'create_follow_up'
+                },
+                review_remediation_mode_policy: {
+                    configured: false,
+                    legacy_full_only: true,
+                    policy_id: 'conservative_review_remediation_mode_v1',
+                    initial_review_mode: 'FULL',
+                    delta_eligible_review_types: [],
+                    max_delta_changed_files: 4,
+                    max_delta_changed_lines: 240,
+                    max_consecutive_delta_reviews: 3,
+                    diagnostics: ['Legacy profile remains FULL-only.']
                 }
             }
         ]
     };
     const html = renderProfilesHtml(profilesTab, true);
     const russianHtml = renderProfilesHtml(profilesTab, true, 'ru');
+    const legacyHtml = renderProfilesHtml({
+        ...profilesTab,
+        active_profile: 'balanced',
+        profiles: profilesTab.profiles.map(profile => ({
+            ...profile,
+            active: profile.name === 'balanced'
+        }))
+    }, true);
+    const configuredFullOnlyHtml = renderProfilesHtml({
+        ...profilesTab,
+        profiles: profilesTab.profiles.map(profile => profile.name === 'custom-review'
+            ? {
+                ...profile,
+                review_remediation_mode_policy: {
+                    ...profile.review_remediation_mode_policy,
+                    delta_eligible_review_types: []
+                }
+            }
+            : profile)
+    }, true);
 
     const addProfileIndex = html.indexOf('class="profile-add-row"');
     const userProfileTabIndex = html.indexOf('data-profile-tab="custom-review"');
@@ -1158,6 +1200,19 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(russianHtml, /<strong>Фактический источник:<\/strong> <code>explicit_profile_config<\/code>/u);
     assert.match(html, /class="empty profile-follow-up-task-profile-effective"><strong>Current value:<\/strong> <code>custom-review<\/code> \(Same as parent\)/u);
     assert.match(russianHtml, /class="empty profile-follow-up-task-profile-effective"><strong>Текущее значение:<\/strong> <code>custom-review<\/code> \(Как у родителя\)/u);
+    assert.match(html, /<fieldset class="profile-delta-review"><legend>DELTA · Reviews<\/legend>/u);
+    assert.match(html, /<strong>Effective source:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(html, /id="profile-custom-review-delta-review-code" type="checkbox" checked/u);
+    assert.match(html, /id="profile-custom-review-delta-review-test" type="checkbox" checked/u);
+    assert.match(html, /id="profile-custom-review-delta-review-performance" type="checkbox">/u);
+    assert.match(html, /<summary>Runtime diagnostics<\/summary>[\s\S]*Explicit DELTA policy\./u);
+    assert.match(russianHtml, /<fieldset class="profile-delta-review"><legend>DELTA · Ревью<\/legend>/u);
+    assert.match(russianHtml, /<strong>Фактический источник:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(configuredFullOnlyHtml, /<fieldset class="profile-delta-review">[\s\S]*?<strong>Current value:<\/strong> <code>FULL<\/code><\/p>/u);
+    assert.match(legacyHtml, /<strong>Effective source:<\/strong> <code>legacy_full_only<\/code>[\s\S]*<strong>Current value:<\/strong> <code>FULL<\/code>/u);
+    assert.doesNotMatch(legacyHtml, /id="profile-balanced-delta-review-(?:code|test|performance)"[^>]* checked/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-delta-review-grid label\.profile-delta-enabled/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-delta-review-grid label\.profile-delta-disabled/u);
     assert.match(html, /data-profile-policy-action="copy" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="reset" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="apply" data-profile-name="custom-review"/u);
@@ -1244,6 +1299,67 @@ test('follow-up task profile controls toggle fixed selection and serialize the s
         fixed_profile: null
     });
     assert.deepEqual(inheritedPayload.task_decomposition, { enabled: false });
+});
+
+test('profile DELTA controls serialize each review lane and preserve legacy FULL-only state until enabled', () => {
+    const profileName = 'balanced';
+    const element = (value = '', checked = false) => ({ value, checked });
+    const elementsById: Record<string, { value: string; checked: boolean }> = {
+        [`profile-${profileName}-description`]: element('Balanced'),
+        [`profile-${profileName}-depth`]: element('2'),
+        [`profile-${profileName}-task-decomposition`]: element('', true),
+        [`profile-${profileName}-follow-up-mode`]: element('one_level_lighter'),
+        [`profile-${profileName}-follow-up-fixed-profile`]: element(''),
+        [`profile-${profileName}-review-code`]: element('auto'),
+        [`profile-${profileName}-review-test`]: element('required'),
+        [`profile-${profileName}-review-performance`]: element('disabled'),
+        [`profile-${profileName}-delta-review-code`]: element('', true),
+        [`profile-${profileName}-delta-review-test`]: element('', false),
+        [`profile-${profileName}-delta-review-performance`]: element('', true)
+    };
+    const remediationSummary = {
+        configured: true,
+        legacy_full_only: false,
+        delta_eligible_review_types: ['code', 'performance']
+    };
+    const context: Record<string, unknown> = {
+        currentProfilesPayload: {
+            review_types: [{ id: 'code' }, { id: 'test' }, { id: 'performance' }],
+            profiles: [{
+                name: profileName,
+                review_follow_up_policy: { materialization_mode: 'grouped_by_parent' },
+                review_remediation_mode_policy: remediationSummary
+            }]
+        },
+        document: {
+            getElementById: (id: string) => elementsById[id] || null
+        },
+        serialized: [] as string[]
+    };
+
+    vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nserialized.push(JSON.stringify(readProfileForm('${profileName}')));`,
+        context
+    );
+    const configuredPayload = JSON.parse((context.serialized as string[])[0]);
+    assert.deepEqual(configuredPayload.review_remediation_mode_policy, {
+        delta_eligible_review_types: ['code', 'performance']
+    });
+
+    remediationSummary.configured = false;
+    remediationSummary.legacy_full_only = true;
+    elementsById[`profile-${profileName}-delta-review-code`].checked = false;
+    elementsById[`profile-${profileName}-delta-review-performance`].checked = false;
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+    const legacyPayload = JSON.parse((context.serialized as string[])[1]);
+    assert.equal(Object.hasOwn(legacyPayload, 'review_remediation_mode_policy'), false);
+
+    elementsById[`profile-${profileName}-delta-review-test`].checked = true;
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+    const enabledLegacyPayload = JSON.parse((context.serialized as string[])[2]);
+    assert.deepEqual(enabledLegacyPayload.review_remediation_mode_policy, {
+        delta_eligible_review_types: ['test']
+    });
 });
 
 test('task detail renders skipped quality-check cadence as a neutral localized state', () => {

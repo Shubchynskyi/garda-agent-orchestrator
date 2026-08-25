@@ -135,6 +135,9 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                     mode: 'fixed_profile',
                     fixed_profile: 'fast'
                 }
+            },
+            review_remediation_mode_policy: {
+                delta_eligible_review_types: ['code', 'test']
             }
         };
         const createPreviewResponse = await fetch(`${server.url}api/profiles`, {
@@ -270,6 +273,14 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                 review_follow_up_policy: {
                     task_profile: { mode: string; fixed_profile: string | null };
                 };
+                review_remediation_mode_policy: {
+                    schema_version: number;
+                    delta_eligible_review_types: string[];
+                    force_full_categories: string[];
+                    max_delta_changed_files: number;
+                    max_delta_changed_lines: number;
+                    max_consecutive_delta_reviews: number;
+                };
             }>;
         };
         assert.equal(createdData.user_profiles['custom-review'].depth, 3);
@@ -286,6 +297,20 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             createdData.user_profiles['custom-review'].review_follow_up_policy.task_profile.fixed_profile,
             'fast'
         );
+        assert.equal(createdData.user_profiles['custom-review'].review_remediation_mode_policy.schema_version, 2);
+        assert.deepEqual(
+            createdData.user_profiles['custom-review'].review_remediation_mode_policy.delta_eligible_review_types,
+            ['code', 'test']
+        );
+        assert.deepEqual(
+            createdData.user_profiles['custom-review'].review_remediation_mode_policy.force_full_categories,
+            ['ambiguous', 'generated_churn', 'global']
+        );
+        assert.deepEqual({
+            files: createdData.user_profiles['custom-review'].review_remediation_mode_policy.max_delta_changed_files,
+            lines: createdData.user_profiles['custom-review'].review_remediation_mode_policy.max_delta_changed_lines,
+            consecutive: createdData.user_profiles['custom-review'].review_remediation_mode_policy.max_consecutive_delta_reviews
+        }, { files: 4, lines: 240, consecutive: 3 });
         const updatedList = await (await fetch(`${server.url}api/profiles`)).json() as {
             profiles: Array<{
                 name: string;
@@ -496,8 +521,35 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             description: 'Locally edited balanced',
             depth: '1',
             task_decomposition: { enabled: false },
-            review_policy: { code: true, test: true }
+            review_policy: { code: true, test: true },
+            review_remediation_mode_policy: {
+                delta_eligible_review_types: ['code', 'test']
+            }
         };
+        const beforeInvalidRemediationRequests = fs.readFileSync(profilesPath(repoRoot), 'utf8');
+        for (const reviewRemediationModePolicy of [
+            { delta_eligible_review_types: ['unknown-review'] },
+            {
+                delta_eligible_review_types: ['code'],
+                force_full_categories: []
+            }
+        ]) {
+            const invalidRemediationResponse = await fetch(`${server.url}api/profiles`, {
+                method: 'POST',
+                headers: actionHeaders,
+                body: JSON.stringify({
+                    ...saveBuiltInPayload,
+                    mode: 'preview',
+                    review_remediation_mode_policy: reviewRemediationModePolicy
+                })
+            });
+            assert.equal(invalidRemediationResponse.status, 400);
+            assert.equal(
+                (await invalidRemediationResponse.json() as { code: string }).code,
+                'invalid_profile_request'
+            );
+        }
+        assert.equal(fs.readFileSync(profilesPath(repoRoot), 'utf8'), beforeInvalidRemediationRequests);
         const saveBuiltInPreviewSha256 = await previewProfileAction(saveBuiltInPayload);
         const saveBuiltInResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
@@ -521,6 +573,16 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.task_decomposition.enabled,
             false
         );
+        const savedBalancedPolicy = JSON.parse(
+            fs.readFileSync(profilesPath(repoRoot), 'utf8')
+        ).built_in_profiles.balanced.review_remediation_mode_policy;
+        assert.deepEqual(savedBalancedPolicy.delta_eligible_review_types, ['code', 'test']);
+        assert.deepEqual(savedBalancedPolicy.force_full_categories, ['ambiguous', 'generated_churn', 'global']);
+        assert.deepEqual({
+            files: savedBalancedPolicy.max_delta_changed_files,
+            lines: savedBalancedPolicy.max_delta_changed_lines,
+            consecutive: savedBalancedPolicy.max_consecutive_delta_reviews
+        }, { files: 4, lines: 240, consecutive: 3 });
 
         const localizedCreatePayload = {
             operation: 'create',

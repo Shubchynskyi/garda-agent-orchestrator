@@ -24,6 +24,9 @@ function profileInputId(profileName, field) {
 function profileReviewInputId(profileName, reviewType) {
   return profileInputId(profileName, 'review-' + reviewType);
 }
+function profileDeltaReviewInputId(profileName, reviewType) {
+  return profileInputId(profileName, 'delta-review-' + reviewType);
+}
 function profileFindingInputId(profileName, field) {
   return profileInputId(profileName, 'finding-' + field);
 }
@@ -72,6 +75,41 @@ function renderProfilePolicyGrid(profile, disabled) {
         + '</label>';
     }).join('')
     + '</div>';
+}
+function renderProfileDeltaReviewSection(profile, disabled) {
+  const reviewTypes = currentProfilesPayload && Array.isArray(currentProfilesPayload.review_types)
+    ? currentProfilesPayload.review_types
+    : [];
+  const summary = profile && profile.review_remediation_mode_policy
+    ? profile.review_remediation_mode_policy
+    : { configured: false, legacy_full_only: true, delta_eligible_review_types: [], diagnostics: [] };
+  const eligibleReviewTypes = new Set(Array.isArray(summary.delta_eligible_review_types)
+    ? summary.delta_eligible_review_types
+    : []);
+  const source = summary.configured && !summary.legacy_full_only
+    ? 'explicit_profile_config'
+    : 'legacy_full_only';
+  const effectiveMode = eligibleReviewTypes.size > 0 ? 'FULL/DELTA' : 'FULL';
+  const diagnostics = Array.isArray(summary.diagnostics) ? summary.diagnostics : [];
+  const disabledAttr = disabled ? ' disabled' : '';
+  return '<fieldset class="profile-delta-review"><legend>DELTA · ' + safe(t('reviews')) + '</legend>'
+    + '<p class="empty profile-delta-review-help"><strong>FULL:</strong> ' + safe(t('profilePolicyRequired'))
+    + ' · <strong>DELTA:</strong> ' + safe(t('profilePolicyAuto')) + '</p>'
+    + '<p class="empty"><strong>' + safe(t('profileTaskDecompositionSource')) + ':</strong> <code>' + safe(source) + '</code>'
+    + ' · <strong>' + safe(t('currentValueColumn')) + ':</strong> <code>' + safe(effectiveMode) + '</code></p>'
+    + (reviewTypes.length === 0
+      ? '<p class="empty">' + safe(t('availableReviewTypes')) + ': -</p>'
+      : '<div class="profile-delta-review-grid">'
+        + reviewTypes.map(reviewType => '<label class="' + (eligibleReviewTypes.has(reviewType.id) ? 'profile-delta-enabled' : 'profile-delta-disabled') + '">'
+          + '<input id="' + safe(profileDeltaReviewInputId(profile.name, reviewType.id)) + '" type="checkbox"'
+          + (eligibleReviewTypes.has(reviewType.id) ? ' checked' : '') + disabledAttr + '>'
+          + '<span>' + safe(reviewType.label || reviewType.id) + '</span></label>').join('')
+        + '</div>')
+    + (diagnostics.length > 0
+      ? '<details class="profile-delta-review-diagnostics"><summary>' + safe(t('runtimeDiagnosticsTitle')) + '</summary><ul>'
+        + diagnostics.map(diagnostic => '<li>' + safe(diagnostic) + '</li>').join('') + '</ul></details>'
+      : '')
+    + '</fieldset>';
 }
 function findingPolicyActions() {
   return currentProfilesPayload && Array.isArray(currentProfilesPayload.finding_policy_actions)
@@ -275,6 +313,7 @@ function renderProfileCard(profile, disabled) {
     + '<p class="empty"><strong>' + safe(t('profileTaskDecompositionSource')) + ':</strong> <code>' + safe(profile.task_decomposition ? profile.task_decomposition.provenance : 'unavailable') + '</code></p>'
     + renderFindingPolicySection(profile, disabled)
     + renderFollowUpTaskProfileSection(profile, disabled)
+    + renderProfileDeltaReviewSection(profile, disabled)
     + renderProfilePolicyGrid(profile, disabled)
     + '<div class="profile-card-footer"><button type="button" data-profile-action="save" data-profile-name="' + safe(profile.name) + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div>'
     + '</article>';
@@ -305,9 +344,12 @@ function readProfileForm(profileName) {
     ? currentProfilesPayload.review_types
     : [];
   const reviewPolicy = {};
+  const deltaEligibleReviewTypes = [];
   for (const reviewType of reviewTypes) {
     const input = document.getElementById(profileReviewInputId(profileName, reviewType.id));
     reviewPolicy[reviewType.id] = profilePolicyFromSubmitValue(input ? input.value : 'auto');
+    const deltaInput = document.getElementById(profileDeltaReviewInputId(profileName, reviewType.id));
+    if (deltaInput && deltaInput.checked) deltaEligibleReviewTypes.push(reviewType.id);
   }
   const followUpModeInput = document.getElementById(profileFollowUpInputId(profileName, 'mode'));
   const fixedProfileInput = document.getElementById(profileFollowUpInputId(profileName, 'fixed-profile'));
@@ -318,7 +360,7 @@ function readProfileForm(profileName) {
   const materializationMode = currentProfile && currentProfile.review_follow_up_policy
     ? currentProfile.review_follow_up_policy.materialization_mode
     : 'per_finding';
-  return {
+  const payload = {
     profile_name: profileName,
     description: description ? description.value : '',
     depth: depth ? depth.value : '2',
@@ -333,6 +375,13 @@ function readProfileForm(profileName) {
       }
     }
   };
+  const remediationSummary = currentProfile && currentProfile.review_remediation_mode_policy;
+  if (remediationSummary && (!remediationSummary.legacy_full_only || deltaEligibleReviewTypes.length > 0)) {
+    payload.review_remediation_mode_policy = {
+      delta_eligible_review_types: deltaEligibleReviewTypes
+    };
+  }
+  return payload;
 }
 async function submitProfileAction(payload) {
   const previewResponse = await fetch('/api/profiles', {
