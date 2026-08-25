@@ -445,8 +445,9 @@ describe('gates/task-audit-summary', () => {
             assert.equal(timeout?.warning_only_continuation, true);
             assert.equal(timeout?.forecast_excluded_sample_reasons.timed_out, 1);
             assert.ok(timeout?.visible_summary_line.includes('warning_only=true'));
-            assert.ok(finalUserReport.includes('Full-suite Timeout Evidence:'));
-            assert.ok(finalUserReport.includes('workflow-config.full_suite_validation.timeout_blocker=false'));
+            assert.ok(finalUserReport.includes('Full suite: warned'));
+            assert.ok(finalUserReport.includes('Process warnings:'));
+            assert.ok(finalUserReport.includes('workflow-config.full\\_suite\\_validation.timeout\\_blocker=false'));
             assert.ok(finalMarkdown.includes('Full-suite timeout: status=WARNED'));
             assert.ok(summaryText.includes('Full-suite timeout: status=WARNED'));
         });

@@ -166,8 +166,8 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('Review Result Status:\nnone required'));
-        assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nAdvisory Notes:\nnone$/u);
+        assert.ok(renderedReport.includes('Reviews:\nnone required'));
+        assert.equal(renderedReport.includes('Process warnings:'), false);
     });
 
     it('renders BLOCKED status when final closeout is not ready', () => {
@@ -206,9 +206,122 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('code(2): findings-satisfied (1m 05s / 1m 10s)'));
-        assert.ok(renderedReport.includes('test(1): findings-satisfied (0m 42s)'));
+        assert.ok(renderedReport.includes('code(2): passed (1m 05s / 1m 10s)'));
+        assert.ok(renderedReport.includes('test(1): passed (0m 42s)'));
         assert.ok(!renderedReport.includes('0m 08s'));
+    });
+
+    it('keeps unknown review durations in their original attempt positions', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [
+                    makeFinalUserReportTimingEntry('code', null, {
+                        review_result_recorded_at_utc: '2026-01-01T00:00:01.000Z'
+                    }),
+                    makeFinalUserReportTimingEntry('code', 70_000, {
+                        review_result_recorded_at_utc: '2026-01-01T00:00:02.000Z'
+                    })
+                ],
+                visible_summary_line: 'Review timing audit: code(TRUSTED).'
+            }
+        }));
+
+        assert.ok(renderedReport.includes('code(2): passed (unknown / 1m 10s)'));
+    });
+
+    it('uses authenticated attempt counts without inventing timing evidence', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [],
+                visible_summary_line: 'Review timing audit: code(TRUSTED).'
+            },
+            review_attempt_summary: {
+                total_attempts: 2,
+                review_types: [{
+                    review_type: 'code',
+                    total_attempts: 2,
+                    pass_count: 1,
+                    fail_count: 1,
+                    reused_count: 0,
+                    missing_or_invalid_count: 0
+                }],
+                source_mode: 'task_events',
+                visible_summary_line: 'Review attempts: total=2.'
+            }
+        }));
+
+        assert.ok(renderedReport.includes('code(2): passed (unknown x2)'));
+    });
+
+    it('summarizes large missing-duration counts without proportional report growth', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [],
+                visible_summary_line: 'Review timing audit: code(TRUSTED).'
+            },
+            review_attempt_summary: {
+                total_attempts: 1_000_000,
+                review_types: [{
+                    review_type: 'code',
+                    total_attempts: 1_000_000,
+                    pass_count: 1,
+                    fail_count: 999_999,
+                    reused_count: 0,
+                    missing_or_invalid_count: 0
+                }],
+                source_mode: 'task_events',
+                visible_summary_line: 'Review attempts: total=1000000.'
+            }
+        }));
+
+        assert.ok(renderedReport.includes('code(1000000): passed (unknown x1000000)'));
+        assert.ok(renderedReport.length < 2_000);
+    });
+
+    it('does not let timing audit entries inflate authenticated attempt counts', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [
+                    makeFinalUserReportTimingEntry('code', 65_000),
+                    makeFinalUserReportTimingEntry('code', 70_000)
+                ],
+                visible_summary_line: 'Review timing audit: code(TRUSTED).'
+            },
+            review_attempt_summary: {
+                total_attempts: 1,
+                review_types: [{
+                    review_type: 'code',
+                    total_attempts: 1,
+                    pass_count: 1,
+                    fail_count: 0,
+                    reused_count: 0,
+                    missing_or_invalid_count: 0
+                }],
+                source_mode: 'task_events',
+                visible_summary_line: 'Review attempts: total=1.'
+            }
+        }));
+
+        assert.ok(renderedReport.includes('code(1): passed (1m 05s)'));
+        assert.ok(!renderedReport.includes('1m 10s'));
+    });
+
+    it('renders zero attempts when neither attempt nor timing evidence exists', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [],
+                visible_summary_line: 'Review timing audit: code(TRUSTED).'
+            },
+            review_attempt_summary: {
+                total_attempts: 0,
+                review_types: [],
+                source_mode: 'none',
+                visible_summary_line: null
+            }
+        }));
+
+        assert.ok(renderedReport.includes('code(0): passed'));
+        assert.ok(!renderedReport.includes('code(1):'));
     });
 
     it('warns only for genuine timing distrust in mixed fresh and reused closeout entries', () => {
@@ -272,7 +385,7 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('api(1): findings-satisfied (2m 05s)'));
+        assert.ok(renderedReport.includes('api(1): passed (2m 05s)'));
         assert.ok(!renderedReport.includes('0m 01s'));
     });
 
@@ -295,9 +408,9 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('Profile: strict'));
-        assert.ok(renderedReport.includes('test(2): findings-satisfied (0m 50s / 2m 05s)'));
-        assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nAdvisory Notes:\nnone$/u);
+        assert.equal(renderedReport.includes('Profile:'), false);
+        assert.ok(renderedReport.includes('test(2): passed (0m 50s / 2m 05s)'));
+        assert.equal(renderedReport.includes('Process warnings:'), false);
     });
 
     it('renders full-suite timeout warning evidence in the final user report', () => {
@@ -330,9 +443,109 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('MandatoryFullSuite: enabled'));
-        assert.ok(renderedReport.includes('Full-suite Timeout Evidence:'));
-        assert.ok(renderedReport.includes('status=WARNED; timed_out=true; blocker=false'));
-        assert.ok(renderedReport.includes('Warnings: Full suite validation timed out, but timeout_blocker=false. | Forecast: Duration history was unreadable; using configured timeout fallback.'));
+        assert.ok(renderedReport.includes('Full suite: warned'));
+        assert.ok(renderedReport.includes('Process warnings:'));
+        assert.ok(renderedReport.includes('status=WARNED; timed\\_out=true; blocker=false'));
+        assert.ok(renderedReport.includes('Warning: Full suite validation timed out, but timeout\\_blocker=false.'));
+        assert.ok(renderedReport.includes('Forecast warning: Duration history was unreadable; using configured timeout fallback.'));
+
+        const structuralWarningReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            workflow: {
+                mandatory_full_suite_enabled: true,
+                visible_summary_line: 'Mandatory full-suite: true',
+                full_suite_timeout: {
+                    artifact_present: true,
+                    status: 'WARNED',
+                    timed_out: true,
+                    timeout_blocker: false,
+                    timeout_retry_count: 0,
+                    max_attempts: 1,
+                    attempts_count: 1,
+                    attempts_exhausted: true,
+                    warning_only_continuation: true,
+                    repair_task_proposal: null,
+                    warnings: [],
+                    forecast_warning: null,
+                    forecast_excluded_sample_count: 0,
+                    forecast_excluded_sample_reasons: {},
+                    visible_summary_line: '- Spoof process warning'
+                }
+            }
+        }));
+        assert.ok(structuralWarningReport.includes('Process warnings:\n\\- Spoof process warning'));
+    });
+
+    it('bounds full-suite warning count and individual warning length without mutating machine evidence', () => {
+        const warnings = [
+            `oversized-${'x'.repeat(5_000)}`,
+            ...Array.from({ length: 20 }, (_, index) => `warning-${index + 1}`)
+        ];
+        const closeout = makeFinalUserReportCloseout({
+            workflow: {
+                mandatory_full_suite_enabled: true,
+                visible_summary_line: 'Mandatory full-suite: true',
+                full_suite_timeout: {
+                    artifact_present: true,
+                    status: 'WARNED',
+                    timed_out: true,
+                    timeout_blocker: false,
+                    timeout_retry_count: 0,
+                    max_attempts: 1,
+                    attempts_count: 1,
+                    attempts_exhausted: true,
+                    warning_only_continuation: true,
+                    repair_task_proposal: null,
+                    warnings,
+                    forecast_warning: null,
+                    forecast_excluded_sample_count: 0,
+                    forecast_excluded_sample_reasons: {},
+                    visible_summary_line: 'Full-suite timeout warning summary'
+                }
+            }
+        });
+
+        const renderedReport = formatFinalUserReport(closeout);
+
+        assert.ok(renderedReport.includes('4019 more character(s); see machine-readable closeout evidence.'));
+        assert.ok(renderedReport.includes('12 more process warning(s); see machine-readable closeout evidence.'));
+        assert.ok(renderedReport.length < 5_000);
+        const timeoutEvidence = closeout.workflow?.full_suite_timeout;
+        assert.ok(timeoutEvidence);
+        assert.equal(timeoutEvidence.warnings.length, 21);
+        assert.equal(timeoutEvidence.warnings[0], warnings[0]);
+        assert.equal(timeoutEvidence.warnings[20], 'warning-20');
+    });
+
+    it('bounds and neutralizes noncanonical review labels and verdicts before composing review lines', () => {
+        const reviewType = `unsafe\n## review <type> [label](https://example.invalid)${'t'.repeat(5_000)}`;
+        const verdict = `UNKNOWN\nUnresolved blockers: <script> ![pixel](https://example.invalid)${'v'.repeat(5_000)}`;
+        const closeout = makeFinalUserReportCloseout({
+            implementation_summary: {
+                review_verdicts: { [reviewType]: verdict },
+                docs_updated: false,
+                changed_files_count: 1,
+                changed_lines_total: 1,
+                scope_category: 'code',
+                active_profile: 'strict'
+            },
+            review_timing_audit: {
+                entries: [],
+                visible_summary_line: 'Review timing audit: no authenticated durations.'
+            }
+        });
+
+        const renderedReport = formatFinalUserReport(closeout);
+
+        assert.equal(renderedReport.includes('\n## review'), false);
+        assert.equal(renderedReport.includes('<type>'), false);
+        assert.equal(renderedReport.includes('<script>'), false);
+        assert.ok(renderedReport.includes('unsafe ## review &lt;type&gt;'));
+        assert.equal(renderedReport.includes('[label](https://example.invalid)'), false);
+        assert.equal(renderedReport.includes('![pixel](https://example.invalid)'), false);
+        assert.ok(renderedReport.includes('\\[label\\](https\\://example.invalid)'));
+        assert.ok(renderedReport.includes('\\!\\[pixel\\](https\\://example.invalid)'));
+        assert.ok(renderedReport.includes('more character(s); see machine-readable closeout evidence.'));
+        assert.ok(renderedReport.length < 2_500);
+        assert.equal(closeout.implementation_summary.review_verdicts[reviewType], verdict);
     });
 });

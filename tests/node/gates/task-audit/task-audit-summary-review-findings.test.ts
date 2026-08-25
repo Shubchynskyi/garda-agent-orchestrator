@@ -147,8 +147,7 @@ describe('gates/task-audit-summary structured review findings', () => {
 
         for (const rendered of [
             formatTaskAuditSummaryText(result),
-            formatFinalCloseoutMarkdown(result.final_closeout),
-            formatFinalUserReport(result.final_closeout)
+            formatFinalCloseoutMarkdown(result.final_closeout)
         ]) {
             assert.match(rendered, /Review findings audit:/u);
             assert.match(rendered, /code\/F-001/u);
@@ -156,6 +155,11 @@ describe('gates/task-audit-summary structured review findings', () => {
             assert.match(rendered, /src\/app\.ts:1/u);
             assert.match(rendered, /Coverage obligation FILE-001 has no authenticated evidence\./u);
         }
+        const finalUserReport = formatFinalUserReport(result.final_closeout);
+        assert.match(finalUserReport, /Unresolved blockers:\ncode\/F-001/u);
+        assert.doesNotMatch(finalUserReport, /Review findings audit:/u);
+        assert.doesNotMatch(finalUserReport, /Fixture active finding/u);
+        assert.doesNotMatch(finalUserReport, /src\/app\.ts:1/u);
     });
 
     it('reports a materialized follow-up task as satisfied without a remaining blocker', () => {
@@ -215,12 +219,14 @@ describe('gates/task-audit-summary structured review findings', () => {
         assert.equal(residualRisk?.severity, 'residual_risk');
         for (const rendered of [
             formatTaskAuditSummaryText(result),
-            formatFinalCloseoutMarkdown(result.final_closeout),
-            formatFinalUserReport(result.final_closeout)
+            formatFinalCloseoutMarkdown(result.final_closeout)
         ]) {
             assert.match(rendered, /code\/R-001/u);
             assert.match(rendered, /Seeded residual-risk fixture/u);
             assert.match(rendered, /src\/app\.ts:1/u);
         }
+        const finalUserReport = formatFinalUserReport(result.final_closeout);
+        assert.match(finalUserReport, /Residual risks:\ncode\/R-001: Seeded residual-risk fixture/u);
+        assert.doesNotMatch(finalUserReport, /src\/app\.ts:1/u);
     });
 });

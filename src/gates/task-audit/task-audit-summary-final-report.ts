@@ -4,9 +4,66 @@ import {
     type ReviewIntegrityAttestation,
     type ReviewTimingAuditEntry
 } from './task-audit-summary-renderer-common';
-import {
-    formatKnownNonBlockingSignalSummaries
-} from '../shared/known-nonblocking-signals';
+const MAX_FINAL_USER_REPORT_FINDING_PREVIEW = 10;
+const MAX_FINAL_USER_REPORT_INLINE_CHARACTERS = 1_000;
+const MAX_FINAL_USER_REPORT_REVIEW_COMPONENT_CHARACTERS = 384;
+
+interface FinalUserReportSection {
+    preview: string[];
+    totalEntries: number;
+}
+
+function createFinalUserReportSection(): FinalUserReportSection {
+    return { preview: [], totalEntries: 0 };
+}
+
+function appendFinalUserReportSectionEntry(
+    section: FinalUserReportSection,
+    buildEntry: () => string
+): void {
+    section.totalEntries += 1;
+    if (section.preview.length < MAX_FINAL_USER_REPORT_FINDING_PREVIEW) {
+        section.preview.push(buildEntry());
+    }
+}
+
+function normalizeBoundedFinalUserReportInlineText(
+    value: unknown,
+    maxCharacters: number = MAX_FINAL_USER_REPORT_INLINE_CHARACTERS
+): string {
+    const rawText = String(value ?? '');
+    const omittedCharacterCount = Math.max(
+        0,
+        rawText.length - maxCharacters
+    );
+    const normalizedText = rawText
+        .slice(0, maxCharacters)
+        .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]+/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim();
+    return omittedCharacterCount > 0
+        ? normalizedText + `... (${omittedCharacterCount} more character(s); see machine-readable closeout evidence.)`
+        : normalizedText;
+}
+
+function formatFinalUserReportInlineText(value: unknown): string {
+    const boundedText = normalizeBoundedFinalUserReportInlineText(value);
+    const inlineText = boundedText
+        .replace(/\\/gu, '\\\\')
+        .replace(/\b([a-z][a-z0-9+.-]{1,31}):(?=\/\/)/giu, '$1\\:')
+        .replace(
+            /\b([a-z0-9.!#$%&'*+/=?^_`{|}~-]+)@((?:[a-z0-9-]+\.)+[a-z]{2,63})\b/giu,
+            '$1\\@$2'
+        )
+        .replace(/\bwww\.(?=[a-z0-9])/giu, 'www\\.')
+        .replace(/&/gu, '&amp;')
+        .replace(/</gu, '&lt;')
+        .replace(/>/gu, '&gt;')
+        .replace(/([`*_[\]!|~])/gu, '\\$1');
+    return inlineText
+        .replace(/^([#+\-=])/u, '\\$1')
+        .replace(/^(\d{1,9})([.)])(?=\s)/u, '$1\\$2');
+}
 
 function formatDurationMsAsMinutesSeconds(durationMs: number | null | undefined): string {
     if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
@@ -38,20 +95,42 @@ function getReviewTimingAuditSortTimestamp(entry: ReviewTimingAuditEntry): numbe
         ?? Number.NEGATIVE_INFINITY;
 }
 
-function selectPreferredFinalUserReportTimingEntries(timingEntries: ReviewTimingAuditEntry[]): ReviewTimingAuditEntry[] {
-    const eligibleEntries = timingEntries
-        .map((entry, index) => ({ entry, index }))
-        .filter(({ entry }) => (
-            !entry.reused_existing_review
-            && entry.delegation_to_result_ms != null
-            && Number.isFinite(entry.delegation_to_result_ms)
-            && entry.delegation_to_result_ms >= 0
-        ))
-        .sort((left, right) => (
-            getReviewTimingAuditSortTimestamp(left.entry) - getReviewTimingAuditSortTimestamp(right.entry)
-            || left.index - right.index
+function selectPreferredFinalUserReportTimingEntries(
+    timingEntries: readonly ReviewTimingAuditEntry[],
+    reviewType: string,
+    limit: number
+): { entries: ReviewTimingAuditEntry[]; totalEligibleEntries: number } {
+    const selected: Array<{ entry: ReviewTimingAuditEntry; index: number }> = [];
+    let totalEligibleEntries = 0;
+    for (let index = 0; index < timingEntries.length; index += 1) {
+        const entry = timingEntries[index];
+        if (entry.review_type !== reviewType || entry.reused_existing_review) {
+            continue;
+        }
+        totalEligibleEntries += 1;
+        if (limit <= 0) {
+            continue;
+        }
+        const insertionIndex = selected.findIndex((candidate) => (
+            getReviewTimingAuditSortTimestamp(entry) < getReviewTimingAuditSortTimestamp(candidate.entry)
+            || (
+                getReviewTimingAuditSortTimestamp(entry) === getReviewTimingAuditSortTimestamp(candidate.entry)
+                && index < candidate.index
+            )
         ));
-    return eligibleEntries.map(({ entry }) => entry);
+        if (insertionIndex < 0) {
+            selected.push({ entry, index });
+        } else {
+            selected.splice(insertionIndex, 0, { entry, index });
+        }
+        if (selected.length > limit) {
+            selected.pop();
+        }
+    }
+    return {
+        entries: selected.map(({ entry }) => entry),
+        totalEligibleEntries
+    };
 }
 
 export function formatReviewResultStatus(value: string): string {
@@ -68,28 +147,79 @@ export function formatReviewResultStatus(value: string): string {
     return text.toLowerCase();
 }
 
-function buildFinalUserReportReviewLine(
+function formatHumanReviewOutcome(value: string): string {
+    const text = String(value || '').trim();
+    if (/\bPASSED\b/iu.test(text)) {
+        return 'passed';
+    }
+    if (/\bFAILED\b/iu.test(text)) {
+        return 'failed';
+    }
+    return text ? text.toLowerCase() : 'unknown';
+}
+
+function buildUnescapedFinalUserReportReviewLine(
     reviewType: string,
     verdict: string,
-    timingEntries: ReviewTimingAuditEntry[]
+    timingEntries: readonly ReviewTimingAuditEntry[],
+    closeout: FinalCloseoutArtifact
 ): string {
-    const normalizedVerdict = formatReviewResultStatus(verdict);
-    const durations = selectPreferredFinalUserReportTimingEntries(timingEntries)
-        .map((entry) => entry.delegation_to_result_ms)
-        .filter((durationMs): durationMs is number =>
-            durationMs != null && Number.isFinite(durationMs) && durationMs >= 0
-        )
-        .map((durationMs) => formatDurationMsAsMinutesSeconds(durationMs));
-    if (durations.length === 0) {
-        return `${reviewType}: ${normalizedVerdict}`;
+    const boundedReviewType = normalizeBoundedFinalUserReportInlineText(
+        reviewType,
+        MAX_FINAL_USER_REPORT_REVIEW_COMPONENT_CHARACTERS
+    );
+    const boundedVerdict = normalizeBoundedFinalUserReportInlineText(
+        verdict,
+        MAX_FINAL_USER_REPORT_REVIEW_COMPONENT_CHARACTERS
+    );
+    const lane = closeout.review_findings_audit?.lanes.find((entry) => entry.review_type === reviewType);
+    const hasUnmaterializedRequiredFollowUp = lane?.findings.some((finding) => (
+        finding.action === 'create_follow_up'
+        && (!finding.follow_up_task_id || finding.materialization_status !== 'MATERIALIZED')
+    ));
+    const hasMaterializedRequiredFollowUp = lane?.findings.some((finding) => (
+        finding.action === 'create_follow_up'
+        && !!finding.follow_up_task_id
+        && finding.materialization_status === 'MATERIALIZED'
+    ));
+    const normalizedVerdict = /\bFAILED\b/iu.test(boundedVerdict)
+        || (lane?.remaining_blocker_ids.length || 0) > 0
+        || hasUnmaterializedRequiredFollowUp
+        ? 'failed'
+        : hasMaterializedRequiredFollowUp
+            ? 'passed with follow-up'
+            : formatHumanReviewOutcome(boundedVerdict);
+    const recordedAttemptSummary = closeout.review_attempt_summary?.review_types
+        .find((entry) => entry.review_type === reviewType);
+    const recordedAttemptCount = recordedAttemptSummary?.total_attempts;
+    const timingSelection = selectPreferredFinalUserReportTimingEntries(
+        timingEntries,
+        reviewType,
+        recordedAttemptCount == null
+            ? MAX_FINAL_USER_REPORT_FINDING_PREVIEW
+            : Math.min(recordedAttemptCount, MAX_FINAL_USER_REPORT_FINDING_PREVIEW)
+    );
+    const attemptCount = recordedAttemptCount ?? timingSelection.totalEligibleEntries;
+    const authenticatedTimedCount = Math.min(attemptCount, timingSelection.totalEligibleEntries);
+    const durations = timingSelection.entries
+        .slice(0, attemptCount)
+        .map((entry) => formatDurationMsAsMinutesSeconds(entry.delegation_to_result_ms));
+    const omittedDurationCount = Math.max(0, authenticatedTimedCount - durations.length);
+    if (omittedDurationCount > 0) {
+        durations.push(`${omittedDurationCount} more duration(s); see machine-readable closeout evidence`);
     }
-    return `${reviewType}(${durations.length}): ${normalizedVerdict} (${durations.join(' / ')})`;
+    const missingDurationCount = Math.max(0, attemptCount - authenticatedTimedCount);
+    if (missingDurationCount > 0) {
+        durations.push(missingDurationCount === 1 ? 'unknown' : `unknown x${missingDurationCount}`);
+    }
+    const durationSuffix = durations.length > 0 ? ` (${durations.join(' / ')})` : '';
+    return `${boundedReviewType}(${attemptCount}): ${normalizedVerdict}${durationSuffix}`;
 }
 
 function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: ReviewIntegrityAttestation): string {
-    const suspiciousEntries = (closeout.review_timing_audit?.entries || [])
-        .filter((entry) => !entry.reused_existing_review && entry.hidden_timing_status === 'DISTRUSTED');
-    if (suspiciousEntries.length > 0) {
+    const hasSuspiciousEntry = (closeout.review_timing_audit?.entries || [])
+        .some((entry) => !entry.reused_existing_review && entry.hidden_timing_status === 'DISTRUSTED');
+    if (hasSuspiciousEntry) {
         return 'WARNING: review accepted, but timing looked unusual; operator may double-check.';
     }
     if (attestation.completion_allowed !== true || attestation.status === 'DEGRADED_OR_UNVERIFIABLE') {
@@ -98,117 +228,209 @@ function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: 
     return 'none';
 }
 
-function buildFullSuiteTimeoutEvidenceLines(closeout: FinalCloseoutArtifact): string[] {
-    const timeout = closeout.workflow?.full_suite_timeout;
-    if (!timeout) {
-        return ['none'];
+function buildFullSuiteResult(closeout: FinalCloseoutArtifact): string {
+    const status = String(closeout.workflow?.full_suite_timeout?.status || '').trim();
+    if (status) {
+        return status.toLowerCase();
     }
-    const lines = [timeout.visible_summary_line];
-    const warnings = [
-        ...timeout.warnings,
-        ...(timeout.forecast_warning ? [`Forecast: ${timeout.forecast_warning}`] : [])
-    ];
-    if (warnings.length > 0) {
-        lines.push(`Warnings: ${warnings.join(' | ')}`);
+    if (closeout.workflow?.mandatory_full_suite_enabled !== true) {
+        return 'not required';
     }
-    if (timeout.repair_task_proposal) {
-        lines.push(
-            `RepairTask: ${timeout.repair_task_proposal.suggested_task_id} - ` +
-            `${timeout.repair_task_proposal.title}`
-        );
-    }
-    return lines;
+    return closeout.status === 'READY' && closeout.audit_status === 'PASS'
+        ? 'passed'
+        : 'result unavailable';
 }
 
-function buildReviewFindingsLines(closeout: FinalCloseoutArtifact): string[] {
+function appendExceptionalFullSuiteLines(
+    section: FinalUserReportSection,
+    closeout: FinalCloseoutArtifact
+): void {
+    const timeout = closeout.workflow?.full_suite_timeout;
+    if (!timeout || (
+        timeout.timed_out !== true
+        && timeout.warnings.length === 0
+        && !timeout.forecast_warning
+        && !timeout.repair_task_proposal
+    )) {
+        return;
+    }
+    appendFinalUserReportSectionEntry(section, () => timeout.visible_summary_line);
+    for (const warning of timeout.warnings) {
+        appendFinalUserReportSectionEntry(section, () => `Warning: ${warning}`);
+    }
+    if (timeout.forecast_warning) {
+        appendFinalUserReportSectionEntry(section, () => `Forecast warning: ${timeout.forecast_warning}`);
+    }
+    const repairTaskProposal = timeout.repair_task_proposal;
+    if (repairTaskProposal) {
+        appendFinalUserReportSectionEntry(section, () => (
+            `RepairTask: ${repairTaskProposal.suggested_task_id} - ${repairTaskProposal.title}`
+        ));
+    }
+}
+
+function buildReviewFindingSections(closeout: FinalCloseoutArtifact): {
+    nonBlocking: FinalUserReportSection;
+    followUps: FinalUserReportSection;
+    blockers: FinalUserReportSection;
+    residualRisks: FinalUserReportSection;
+} {
+    const sections = {
+        nonBlocking: createFinalUserReportSection(),
+        followUps: createFinalUserReportSection(),
+        blockers: createFinalUserReportSection(),
+        residualRisks: createFinalUserReportSection()
+    };
     const summary = closeout.review_findings_audit;
     if (!summary) {
-        return [
-            'Summary: none',
-            'FollowUpTasksCreated: none',
-            `AuditDetails: ${closeout.artifact_paths.json}`
-        ];
+        return sections;
     }
-    const followUpTaskIds = [...new Set(summary.lanes.flatMap((lane) =>
-        lane.findings.map((item) => item.follow_up_task_id).filter((value): value is string => !!value)
-    ))].sort();
-    const blockingFindingIds = [...new Set(summary.lanes.flatMap((lane) =>
-        lane.remaining_blocker_ids.map((id) => `${lane.review_type}/${id}`)
-    ))].sort();
-    const unmaterializedFollowUps = [...new Set(summary.lanes.flatMap((lane) =>
-        lane.findings
-            .filter((item) => item.action === 'create_follow_up' && !item.follow_up_task_id)
-            .map((item) => `${lane.review_type}/${item.id}`)
-    ))].sort();
-    const lines = [
-        `Summary: status=${summary.status}; findings=${summary.finding_count}; ` +
-        `residual_risks=${summary.residual_risk_count}; fix_now=${summary.disposition_counts.fix_now}; ` +
-        `follow_up=${summary.disposition_counts.create_follow_up}; ignored=${summary.disposition_counts.ignore}; ` +
-        `remaining_blockers=${summary.remaining_blocker_count}`,
-        `FollowUpTasksCreated: ${followUpTaskIds.join(', ') || 'none'}`
-    ];
-    if (blockingFindingIds.length > 0) {
-        lines.push(`BlockingFindings: ${blockingFindingIds.join(', ')}`);
+    for (const lane of summary.lanes) {
+        for (const id of lane.remaining_blocker_ids) {
+            appendFinalUserReportSectionEntry(sections.blockers, () => `${lane.review_type}/${id}`);
+        }
+        for (const item of lane.findings) {
+            const requiresFollowUp = item.action === 'create_follow_up';
+            const hasMaterializedFollowUp = requiresFollowUp
+                && !!item.follow_up_task_id
+                && item.materialization_status === 'MATERIALIZED';
+            const missingRequiredFollowUp = requiresFollowUp && !hasMaterializedFollowUp;
+            if (item.kind === 'finding' && !item.blocking && !missingRequiredFollowUp) {
+                appendFinalUserReportSectionEntry(sections.nonBlocking, () => (
+                    `${lane.review_type}/${item.id} (${item.severity}): ${item.title || item.description}`
+                    + (item.follow_up_task_id ? ` -> ${item.follow_up_task_id}` : '')
+                ));
+            }
+            if (hasMaterializedFollowUp) {
+                appendFinalUserReportSectionEntry(sections.followUps, () => item.follow_up_task_id!);
+            }
+            if (missingRequiredFollowUp) {
+                appendFinalUserReportSectionEntry(
+                    sections.blockers,
+                    () => `${lane.review_type}/${item.id} has no materialized follow-up`
+                );
+            }
+            if (item.kind === 'residual_risk') {
+                appendFinalUserReportSectionEntry(
+                    sections.residualRisks,
+                    () => `${lane.review_type}/${item.id}: ${item.description}`
+                );
+            }
+        }
     }
-    if (unmaterializedFollowUps.length > 0) {
-        lines.push(`UnmaterializedFollowUps: ${unmaterializedFollowUps.join(', ')}`);
+    return sections;
+}
+
+function formatFinalUserReportSectionEntries(
+    section: FinalUserReportSection,
+    entryLabel: string,
+    emptyEntry: string = 'none'
+): string[] {
+    const entries = section.preview.map((entry) => formatFinalUserReportInlineText(entry));
+    if (section.totalEntries > section.preview.length) {
+        entries.push(formatFinalUserReportInlineText(
+            `${section.totalEntries - section.preview.length} more ${entryLabel}(s); `
+            + 'see machine-readable closeout evidence.'
+        ));
     }
-    if (summary.validation_failures.length > 0 || summary.remediation_cycles.length > 0) {
-        lines.push(
-            `ReviewDiagnostics: validation_failures=${summary.validation_failures.length}; ` +
-            `remediation_cycles=${summary.remediation_cycles.length}`
-        );
+    return entries.length > 0 ? entries : [emptyEntry];
+}
+
+function pushReportSection(
+    lines: string[],
+    title: string,
+    section: FinalUserReportSection,
+    entryLabel: string
+): void {
+    lines.push('');
+    lines.push(`${title}:`);
+    lines.push(...formatFinalUserReportSectionEntries(section, entryLabel));
+}
+
+function selectFinalUserReportReviewEntries(
+    verdicts: Readonly<Record<string, string>>
+): { preview: Array<[string, string]>; totalEntries: number } {
+    const preview: Array<[string, string]> = [];
+    let totalEntries = 0;
+    for (const reviewType in verdicts) {
+        if (!Object.prototype.hasOwnProperty.call(verdicts, reviewType)) {
+            continue;
+        }
+        totalEntries += 1;
+        const entry: [string, string] = [reviewType, verdicts[reviewType]];
+        const insertionIndex = preview.findIndex(([candidate]) => reviewType.localeCompare(candidate) < 0);
+        if (insertionIndex < 0) {
+            preview.push(entry);
+        } else {
+            preview.splice(insertionIndex, 0, entry);
+        }
+        if (preview.length > MAX_FINAL_USER_REPORT_FINDING_PREVIEW) {
+            preview.pop();
+        }
     }
-    lines.push(`AuditDetails: ${closeout.artifact_paths.json}`);
-    return lines;
+    return { preview, totalEntries };
 }
 
 export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
-    const profile = closeout.implementation_summary.active_profile || 'unknown';
-    const fullSuiteEnabled = closeout.workflow?.mandatory_full_suite_enabled === true ? 'enabled' : 'disabled';
-    const docsUpdated = closeout.implementation_summary.docs_updated ? 'yes' : 'no';
     const taskStatus = closeout.status === 'READY' && closeout.audit_status === 'PASS' ? 'DONE' : 'BLOCKED';
-    const timingEntries = new Map<string, ReviewTimingAuditEntry[]>();
-    for (const entry of closeout.review_timing_audit?.entries || []) {
-        if (entry.review_type) {
-            const entries = timingEntries.get(entry.review_type) || [];
-            entries.push(entry);
-            timingEntries.set(entry.review_type, entries);
-        }
+    const timingEntries = closeout.review_timing_audit?.entries || [];
+    const reviewEntries = selectFinalUserReportReviewEntries(
+        closeout.implementation_summary.review_verdicts || {}
+    );
+    const reviewSection = createFinalUserReportSection();
+    reviewSection.totalEntries = reviewEntries.totalEntries;
+    for (const [reviewType, verdict] of reviewEntries.preview) {
+        reviewSection.preview.push(buildUnescapedFinalUserReportReviewLine(
+            reviewType,
+            verdict,
+            timingEntries,
+            closeout
+        ));
     }
-    const reviewEntries = Object.entries(closeout.implementation_summary.review_verdicts || {})
-        .sort(([left], [right]) => left.localeCompare(right));
     const lines = [
         'GARDA FINAL REPORT',
         '',
-        `Task: ${closeout.task_id}`,
+        `Task: ${formatFinalUserReportInlineText(closeout.task_id)}`,
         `Status: ${taskStatus}`,
-        `Profile: ${profile}`,
-        `MandatoryFullSuite: ${fullSuiteEnabled}`,
-        `DocsUpdated: ${docsUpdated}`,
         '',
-        'Review Result Status:'
+        'Reviews:'
     ];
-    if (reviewEntries.length === 0) {
-        lines.push('none required');
-    } else {
-        for (const [reviewType, verdict] of reviewEntries) {
-            lines.push(buildFinalUserReportReviewLine(reviewType, verdict, timingEntries.get(reviewType) || []));
+    lines.push(...formatFinalUserReportSectionEntries(reviewSection, 'review', 'none required'));
+    lines.push('');
+    lines.push(`Full suite: ${formatFinalUserReportInlineText(buildFullSuiteResult(closeout))}`);
+    const findingSections = buildReviewFindingSections(closeout);
+    pushReportSection(lines, 'Non-blocking findings', findingSections.nonBlocking, 'finding');
+    pushReportSection(lines, 'Follow-ups', findingSections.followUps, 'follow-up');
+    if (closeout.blocker) {
+        appendFinalUserReportSectionEntry(findingSections.blockers, () => closeout.blocker!);
+    }
+    pushReportSection(lines, 'Unresolved blockers', findingSections.blockers, 'blocker');
+    pushReportSection(lines, 'Residual risks', findingSections.residualRisks, 'residual risk');
+    const processWarnings = createFinalUserReportSection();
+    for (const entry of closeout.review_findings_audit?.correction_transports || []) {
+        if (
+            entry.event_type === 'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED'
+            || entry.transport === 'full_reviewer_relaunch'
+        ) {
+            appendFinalUserReportSectionEntry(processWarnings, () => (
+                `WARNING: review-output validation caused a full reviewer relaunch for ${entry.review_type}.`
+            ));
         }
     }
-    lines.push('');
-    lines.push('Review Findings:');
-    lines.push(...buildReviewFindingsLines(closeout));
-    lines.push('');
-    lines.push('Full-suite Timeout Evidence:');
-    lines.push(...buildFullSuiteTimeoutEvidenceLines(closeout));
-    lines.push('');
-    lines.push('Review Timing Warning:');
-    lines.push(buildReviewTimingWarning(closeout, reviewIntegrityAttestation));
-    const advisoryNotes = formatKnownNonBlockingSignalSummaries(closeout.known_non_blocking_signals || []);
-    lines.push('');
-    lines.push('Advisory Notes:');
-    lines.push(advisoryNotes || 'none');
+    const timingWarning = buildReviewTimingWarning(closeout, reviewIntegrityAttestation);
+    if (timingWarning !== 'none') {
+        appendFinalUserReportSectionEntry(processWarnings, () => timingWarning);
+    }
+    appendExceptionalFullSuiteLines(processWarnings, closeout);
+    for (const signal of closeout.known_non_blocking_signals || []) {
+        appendFinalUserReportSectionEntry(
+            processWarnings,
+            () => `Known non-blocking notes: ${signal.summary}`
+        );
+    }
+    if (processWarnings.totalEntries > 0) {
+        pushReportSection(lines, 'Process warnings', processWarnings, 'process warning');
+    }
     return lines.join('\n');
 }

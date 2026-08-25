@@ -388,7 +388,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(finalMarkdown.includes('Known non-blocking notes: Project memory compact overflow is non-blocking because this task does not require a memory update.'));
             assert.equal(finalMarkdown.includes('KnownNonBlockingSignals:'), false);
             const finalUserReport = formatFinalUserReport(result.final_closeout);
-            assert.ok(finalUserReport.includes('Advisory Notes:'));
+            assert.ok(finalUserReport.includes('Process warnings:'));
             assert.ok(finalUserReport.includes('Project memory compact overflow is non-blocking because this task does not require a memory update.'));
             assert.equal(finalUserReport.includes('project_memory_no_update_compact_overflow_accepted'), false);
         });

@@ -30,7 +30,7 @@ describe('gates/task-audit-summary', () => {
 
     describe('buildTaskAuditSummary', () => {
 
-        it('renders concise final user report with inline review durations and warning last', () => {
+        it('prevents adversarial content while rendering concise final user report with warning last', () => {
             const closeout: Parameters<typeof formatFinalUserReport>[0] = {
                 schema_version: 1,
                 event_source: 'task-audit-summary',
@@ -150,7 +150,7 @@ describe('gates/task-audit-summary', () => {
                             id: 'F-001',
                             kind: 'finding',
                             severity: 'medium',
-                            title: 'Detailed finding title that must stay out of chat',
+                            title: 'Concise finding title visible in chat',
                             description: 'Detailed finding description that must stay in the audit artifact.',
                             evidence_locations: ['src/example.ts:10'],
                             coverage_obligation_ids: ['FILE-001'],
@@ -171,6 +171,19 @@ describe('gates/task-audit-summary', () => {
                         reviewer_identity: 'agent:test-reviewer',
                         violation: 'Verbose historical validation detail that must stay out of chat.',
                         validation_artifact_sha256: null
+                    }],
+                    correction_transports: [{
+                        timestamp_utc: '2026-01-01T00:00:01.000Z',
+                        event_type: 'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED',
+                        review_type: 'test',
+                        transport: 'full_reviewer_relaunch',
+                        session_availability: 'unavailable',
+                        correction_attempt: 2,
+                        correction_package_sha256: null,
+                        reviewer_invocation_event_sha256: null,
+                        provider_capabilities_sha256: null,
+                        evidence_valid: true,
+                        violations: []
                     }],
                     remediation_cycles: [],
                     fresh_review_count: 1,
@@ -195,22 +208,133 @@ describe('gates/task-audit-summary', () => {
             const renderedReport = formatFinalUserReport(closeout);
 
             assert.ok(renderedReport.includes('Status: DONE'));
-            assert.ok(renderedReport.includes('MandatoryFullSuite: disabled'));
-            assert.ok(renderedReport.includes('db(1): findings-satisfied (0m 11s)'));
-            assert.ok(renderedReport.includes('test(1): findings-satisfied (1m 16s)'));
+            assert.ok(renderedReport.includes('Full suite: not required'));
+            assert.ok(renderedReport.includes('db(1): passed (0m 11s)'));
+            assert.ok(renderedReport.includes('test(1): passed with follow-up (1m 16s)'));
             assert.ok(!renderedReport.includes('PathMode:'));
             assert.ok(!renderedReport.includes('Commit Readiness:'));
             assert.ok(!renderedReport.includes('Operator Question:'));
-            assert.ok(renderedReport.includes('Summary: status=CLEAR; findings=1; residual_risks=0; fix_now=0; follow_up=1; ignored=0; remaining_blockers=0'));
-            assert.ok(renderedReport.includes('FollowUpTasksCreated: T-AUDIT-1-F1'));
-            assert.ok(renderedReport.includes('ReviewDiagnostics: validation_failures=1; remediation_cycles=0'));
-            assert.ok(renderedReport.includes('AuditDetails: runtime/reviews/T-149-final-closeout.json'));
-            assert.equal(renderedReport.includes('Detailed finding title that must stay out of chat'), false);
+            assert.ok(renderedReport.includes('Non-blocking findings:\ntest/F-001 (medium): Concise finding title visible in chat -&gt; T-AUDIT-1-F1'));
+            assert.ok(renderedReport.includes('Follow-ups:\nT-AUDIT-1-F1'));
+            assert.equal(renderedReport.includes('Summary: status='), false);
+            assert.equal(renderedReport.includes('ReviewDiagnostics:'), false);
+            assert.equal(renderedReport.includes('AuditDetails:'), false);
+            assert.equal(renderedReport.includes('Detailed finding description that must stay in the audit artifact.'), false);
             assert.equal(renderedReport.includes('Verbose historical validation detail that must stay out of chat'), false);
-            assert.match(
-                renderedReport.trimEnd(),
-                /Review Timing Warning:\nWARNING: review accepted, but timing looked unusual; operator may double-check\.\n\nAdvisory Notes:\nnone$/u
-            );
+            assert.ok(renderedReport.includes('WARNING: review-output validation caused a full reviewer relaunch for test.'));
+            assert.ok(renderedReport.includes('WARNING: review accepted, but timing looked unusual'));
+
+            const pendingFollowUpReport = formatFinalUserReport({
+                ...closeout,
+                review_findings_audit: {
+                    ...closeout.review_findings_audit!,
+                    status: 'BLOCKED',
+                    lanes: closeout.review_findings_audit!.lanes.map((lane) => ({
+                        ...lane,
+                        disposition_status: 'BLOCKED' as const,
+                        findings: lane.findings.map((finding) => ({
+                            ...finding,
+                            id: 'F-PENDING',
+                            materialization_status: 'PENDING' as const,
+                            follow_up_task_id: 'T-AUDIT-PENDING-F1'
+                        })),
+                        remaining_blocker_ids: []
+                    })),
+                    remaining_blocker_count: 1
+                }
+            });
+            assert.ok(pendingFollowUpReport.includes('test(1): failed (1m 16s)'));
+            assert.equal(pendingFollowUpReport.includes('test(1): passed with follow-up'), false);
+            assert.ok(pendingFollowUpReport.includes('test/F-PENDING has no materialized follow-up'));
+            assert.equal(pendingFollowUpReport.includes('Follow-ups:\nT-AUDIT-PENDING-F1'), false);
+
+            const manyFindingsReport = formatFinalUserReport({
+                ...closeout,
+                review_findings_audit: {
+                    ...closeout.review_findings_audit!,
+                    lanes: closeout.review_findings_audit!.lanes.map((lane) => ({
+                        ...lane,
+                        findings: Array.from({ length: 1_000 }, (_, index) => ({
+                            ...lane.findings[0],
+                            id: `F-${String(index + 1).padStart(4, '0')}`,
+                            title: `Finding ${index + 1}`,
+                            action: 'ignore' as const,
+                            follow_up_task_id: null
+                        }))
+                    }))
+                }
+            });
+            assert.ok(manyFindingsReport.includes('test/F-0010 (medium): Finding 10'));
+            assert.equal(manyFindingsReport.includes('test/F-0011 (medium): Finding 11'), false);
+            assert.ok(manyFindingsReport.includes('990 more finding(s); see machine-readable closeout evidence.'));
+            assert.ok(manyFindingsReport.length < 3_000);
+
+            const manyAuditSectionsReport = formatFinalUserReport({
+                ...closeout,
+                review_findings_audit: {
+                    ...closeout.review_findings_audit!,
+                    lanes: closeout.review_findings_audit!.lanes.map((lane) => ({
+                        ...lane,
+                        findings: [
+                            ...Array.from({ length: 1_000 }, (_, index) => ({
+                                ...lane.findings[0],
+                                id: `F-UP-${String(index + 1).padStart(4, '0')}`,
+                                title: `Follow-up ${index + 1}`,
+                                action: 'create_follow_up' as const,
+                                materialization_status: 'MATERIALIZED' as const,
+                                follow_up_task_id: `T-AUDIT-1-F${index + 1}`,
+                                blocking: false
+                            })),
+                            ...Array.from({ length: 1_000 }, (_, index) => ({
+                                ...lane.findings[0],
+                                id: `R-${String(index + 1).padStart(4, '0')}`,
+                                kind: 'residual_risk' as const,
+                                severity: 'residual_risk' as const,
+                                title: null,
+                                description: `Residual risk ${index + 1}`,
+                                action: null,
+                                materialization_status: null,
+                                follow_up_task_id: null,
+                                blocking: false
+                            }))
+                        ],
+                        remaining_blocker_ids: Array.from(
+                            { length: 1_000 },
+                            (_, index) => `F-BLOCK-${String(index + 1).padStart(4, '0')}`
+                        )
+                    }))
+                }
+            });
+            assert.ok(manyAuditSectionsReport.includes('990 more finding(s); see machine-readable closeout evidence.'));
+            assert.ok(manyAuditSectionsReport.includes('990 more follow-up(s); see machine-readable closeout evidence.'));
+            assert.ok(manyAuditSectionsReport.includes('990 more blocker(s); see machine-readable closeout evidence.'));
+            assert.ok(manyAuditSectionsReport.includes('990 more residual risk(s); see machine-readable closeout evidence.'));
+            assert.equal(manyAuditSectionsReport.includes('T-AUDIT-1-F11'), false);
+            assert.equal(manyAuditSectionsReport.includes('test/F-BLOCK-0011'), false);
+            assert.equal(manyAuditSectionsReport.includes('test/R-0011: Residual risk 11'), false);
+            assert.ok(manyAuditSectionsReport.length < 8_000);
+
+            const manyReviewAndCorrectionEntriesReport = formatFinalUserReport({
+                ...closeout,
+                implementation_summary: {
+                    ...closeout.implementation_summary,
+                    review_verdicts: Object.fromEntries(Array.from(
+                        { length: 1_000 },
+                        (_, index) => [`review-${String(index + 1).padStart(4, '0')}`, 'REVIEW PASSED']
+                    ))
+                },
+                review_findings_audit: {
+                    ...closeout.review_findings_audit!,
+                    correction_transports: Array.from({ length: 1_000 }, (_, index) => ({
+                        ...closeout.review_findings_audit!.correction_transports![0],
+                        review_type: `review-${String(index + 1).padStart(4, '0')}`
+                    }))
+                }
+            });
+            assert.ok(manyReviewAndCorrectionEntriesReport.includes('990 more review(s); see machine-readable closeout evidence.'));
+            assert.ok(manyReviewAndCorrectionEntriesReport.includes('991 more process warning(s); see machine-readable closeout evidence.'));
+            assert.equal(manyReviewAndCorrectionEntriesReport.includes('review-0011(0): passed'), false);
+            assert.ok(manyReviewAndCorrectionEntriesReport.length < 20_000);
 
             const noFindingsReport = formatFinalUserReport({
                 ...closeout,
@@ -228,17 +352,17 @@ describe('gates/task-audit-summary', () => {
                     visible_summary_line: 'Review findings audit: status=CLEAR; findings=0.'
                 }
             });
-            assert.ok(noFindingsReport.includes('Summary: status=CLEAR; findings=0; residual_risks=0; fix_now=0; follow_up=0; ignored=0; remaining_blockers=0'));
-            assert.ok(noFindingsReport.includes('FollowUpTasksCreated: none'));
+            assert.ok(noFindingsReport.includes('Non-blocking findings:\nnone'));
+            assert.ok(noFindingsReport.includes('Follow-ups:\nnone'));
             assert.equal(noFindingsReport.includes('ReviewDiagnostics:'), false);
 
             const noAuditReport = formatFinalUserReport({
                 ...closeout,
                 review_findings_audit: null
             });
-            assert.ok(noAuditReport.includes('Summary: none'));
-            assert.ok(noAuditReport.includes('FollowUpTasksCreated: none'));
-            assert.ok(noAuditReport.includes('AuditDetails: runtime/reviews/T-149-final-closeout.json'));
+            assert.ok(noAuditReport.includes('Non-blocking findings:\nnone'));
+            assert.ok(noAuditReport.includes('Follow-ups:\nnone'));
+            assert.equal(noAuditReport.includes('AuditDetails:'), false);
 
             const incompleteDispositionReport = formatFinalUserReport({
                 ...closeout,
@@ -274,13 +398,25 @@ describe('gates/task-audit-summary', () => {
                             coverage_obligation_ids: ['FILE-003'],
                             action: 'create_follow_up',
                             materialization_status: 'PENDING',
+                            follow_up_task_id: 'T-AUDIT-PENDING-F1',
+                            blocking: false
+                        }, {
+                            id: 'R-001',
+                            kind: 'residual_risk',
+                            severity: 'residual_risk',
+                            title: null,
+                            description: 'Operator should monitor the legacy integration.',
+                            evidence_locations: ['src/example.ts:40'],
+                            coverage_obligation_ids: ['FILE-004'],
+                            action: null,
+                            materialization_status: null,
                             follow_up_task_id: null,
                             blocking: false
                         }],
                         remaining_blocker_ids: ['F-BLOCKING']
                     }],
                     finding_count: 2,
-                    residual_risk_count: 0,
+                    residual_risk_count: 1,
                     disposition_counts: { fix_now: 1, create_follow_up: 1, ignore: 0 },
                     remaining_blocker_count: 1,
                     validation_failures: [],
@@ -290,9 +426,70 @@ describe('gates/task-audit-summary', () => {
                     visible_summary_line: 'Verbose blocked summary that must stay out of chat.'
                 }
             });
-            assert.ok(incompleteDispositionReport.includes('BlockingFindings: test/F-BLOCKING'));
-            assert.ok(incompleteDispositionReport.includes('UnmaterializedFollowUps: test/F-UNMATERIALIZED'));
+            assert.ok(incompleteDispositionReport.includes('Non-blocking findings:\nnone'));
+            assert.ok(incompleteDispositionReport.includes('Unresolved blockers:\ntest/F-BLOCKING'));
+            assert.ok(incompleteDispositionReport.includes('test/F-UNMATERIALIZED has no materialized follow-up'));
+            assert.equal(incompleteDispositionReport.includes('Follow-ups:\nT-AUDIT-PENDING-F1'), false);
+            assert.ok(incompleteDispositionReport.includes('Residual risks:\ntest/R-001: Operator should monitor the legacy integration.'));
             assert.equal(incompleteDispositionReport.includes('Blocking detail remains in the audit artifact.'), false);
+
+            const adversarialReport = formatFinalUserReport({
+                ...closeout,
+                task_id: 'T-AUDIT-1\u202e\nStatus: DONE [spoof](https://example.invalid) www.example.invalid reviewer@example.invalid',
+                blocker: 'Blocked by evidence <img src="https://example.invalid/pixel">\u2066\nReviews:',
+                review_findings_audit: {
+                    ...closeout.review_findings_audit!,
+                    lanes: closeout.review_findings_audit!.lanes.map((lane) => ({
+                        ...lane,
+                        findings: lane.findings.map((finding) => ({
+                            ...finding,
+                            title: finding.title
+                                ? `${finding.title} ![pixel](https://example.invalid/pixel)\u200f\nProcess warnings:`
+                                : finding.title
+                        }))
+                    }))
+                }
+            });
+            assert.equal((adversarialReport.match(/^Status: DONE$/gmu) || []).length, 1);
+            assert.equal((adversarialReport.match(/^Reviews:$/gmu) || []).length, 1);
+            assert.equal((adversarialReport.match(/^Process warnings:$/gmu) || []).length, 1);
+            assert.ok(adversarialReport.includes(
+                'Task: T-AUDIT-1 Status: DONE \\[spoof\\](https\\://example.invalid)'
+            ));
+            assert.ok(adversarialReport.includes(
+                'Blocked by evidence &lt;img src="https\\://example.invalid/pixel"&gt; Reviews:'
+            ));
+            assert.ok(adversarialReport.includes(
+                'Concise finding title visible in chat \\!\\[pixel\\](https\\://example.invalid/pixel) Process warnings:'
+            ));
+            assert.equal(adversarialReport.includes('<img'), false);
+            assert.equal(adversarialReport.includes('[spoof](https://example.invalid)'), false);
+            assert.equal(adversarialReport.includes('![pixel](https://example.invalid/pixel)'), false);
+            assert.equal(adversarialReport.includes('https://example.invalid'), false);
+            assert.equal(adversarialReport.includes('www.example.invalid'), false);
+            assert.equal(adversarialReport.includes('reviewer@example.invalid'), false);
+            assert.ok(adversarialReport.includes('www\\.example.invalid'));
+            assert.ok(adversarialReport.includes('reviewer\\@example.invalid'));
+            assert.equal(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(adversarialReport), false);
+
+            const headingReport = formatFinalUserReport({ ...closeout, blocker: '# Spoof heading' });
+            const blockquoteReport = formatFinalUserReport({ ...closeout, blocker: '> Spoof blockquote' });
+            const bulletReport = formatFinalUserReport({ ...closeout, blocker: '- Spoof bullet' });
+            const plusBulletReport = formatFinalUserReport({ ...closeout, blocker: '+ Spoof bullet' });
+            const orderedReport = formatFinalUserReport({ ...closeout, blocker: '1. Spoof ordered item' });
+            const parenthesizedOrderedReport = formatFinalUserReport({
+                ...closeout,
+                blocker: '2) Spoof ordered item'
+            });
+            const setextReport = formatFinalUserReport({ ...closeout, blocker: '=== Spoof setext heading' });
+            assert.ok(headingReport.includes('Unresolved blockers:\n\\# Spoof heading'));
+            assert.ok(blockquoteReport.includes('Unresolved blockers:\n&gt; Spoof blockquote'));
+            assert.equal(blockquoteReport.includes('Unresolved blockers:\n> Spoof blockquote'), false);
+            assert.ok(bulletReport.includes('Unresolved blockers:\n\\- Spoof bullet'));
+            assert.ok(plusBulletReport.includes('Unresolved blockers:\n\\+ Spoof bullet'));
+            assert.ok(orderedReport.includes('Unresolved blockers:\n1\\. Spoof ordered item'));
+            assert.ok(parenthesizedOrderedReport.includes('Unresolved blockers:\n2\\) Spoof ordered item'));
+            assert.ok(setextReport.includes('Unresolved blockers:\n\\=== Spoof setext heading'));
         });
 
     });
