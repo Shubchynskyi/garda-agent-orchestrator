@@ -1016,6 +1016,59 @@ describe('cli/commands/gates review launch routing', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-routing ignores review-output correction launch artifacts from prior attempts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904z-correction-launch';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
+        }, null, 2) + '\n', 'utf8');
+        const correctionLaunchArtifactPath = path.join(
+            reviewsRoot,
+            `${taskId}-code-output-correction-launch.json`
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_DELEGATION_STARTED',
+            'INFO',
+            'Review-output correction delegation started by test fixture.',
+            {
+                task_id: taskId,
+                review_type: 'code',
+                invocation_role: 'review_output_correction',
+                reviewer_launch_attempt_id: 'agent:code-correction-reviewer',
+                reviewer_launch_artifact_path: correctionLaunchArtifactPath.replace(/\\/g, '/')
+            },
+            { actor: 'orchestrator' }
+        );
+
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', 'agent:fresh-code-reviewer'
+        ], { cwd: repoRoot });
+
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+        assert.ok(routing.logs.some((line) => line.includes('REVIEW_ROUTING_RECORDED: code')));
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:fresh-code-reviewer');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-routing keeps different review types independent after a review result is recorded', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904z-cross-type-reroute';
