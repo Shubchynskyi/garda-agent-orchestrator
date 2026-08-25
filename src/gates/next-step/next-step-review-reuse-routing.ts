@@ -145,6 +145,7 @@ export interface FailedReviewRemediationRouteOptions {
 function buildAttestedCorrectionRecordResultCommand(options: FailedReviewRemediationRouteOptions): ReviewReuseRoutingCommand {
     const handoff = options.correctionHandoff;
     const providerAction = handoff?.providerAction || null;
+    const providerResponseOutputPath = handoff?.providerResponseOutputPath || null;
     const targetIdentity = handoff?.targetReviewerIdentity || null;
     const launchInputSha256 = handoff?.launchInputSha256 || null;
     const providerInvocationEventSha256 = providerAction === 'launch_correction_only_reviewer'
@@ -166,6 +167,9 @@ function buildAttestedCorrectionRecordResultCommand(options: FailedReviewRemedia
         label: 'After the bound reviewer correction returns, record its attested corrected review result',
         command:
             `${options.commands.recordResult.command} ` +
+            (providerAction === 'launch_correction_only_reviewer' && providerResponseOutputPath
+                ? `--review-output-path ${quoteCommandValue(providerResponseOutputPath)} `
+                : '') +
             `--correction-producer-identity ${quoteCommandValue(correctionProducerIdentity)} ` +
             `--correction-provider-invocation-id ${quoteCommandValue(
                 attestedProviderInvocationId || '<provider-owned correction invocation id>'

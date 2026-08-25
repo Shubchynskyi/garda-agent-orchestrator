@@ -182,6 +182,7 @@ export interface ReviewArtifactState {
 
 export interface ReviewOutputCorrectionHandoffEvidence {
     providerAction: string | null;
+    providerResponseOutputPath?: string | null;
     launchState: string | null;
     targetReviewerIdentity: string | null;
     launchInputSha256: string | null;
@@ -1306,6 +1307,9 @@ export function readReviewArtifactState(
                     }
                     reviewOutputCorrectionHandoff = {
                         providerAction: String(handoff?.provider_action || '').trim() || null,
+                        providerResponseOutputPath: String(
+                            handoff?.provider_response_output_path || ''
+                        ).trim() || null,
                         launchState: reviewOutputCorrectionLaunchState,
                         targetReviewerIdentity: String(handoff?.target_reviewer_identity || '').trim() || null,
                         launchInputSha256: correctionInputSha256 || null,

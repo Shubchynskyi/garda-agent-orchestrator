@@ -355,9 +355,12 @@ export function buildReviewOutputCorrectionHandoff(options: {
             fork_context: false,
             instruction:
                 'Launch one clean-context correction-only reviewer with only ReviewerCorrectionInputArtifactPath. ' +
-                'It may repair the bound validation defects but must not change findings; it must write exactly one corrected JSON object to ' +
-                'ProviderResponseOutputPath, return those same bytes, and stop. ' +
-                'Then pipe that object to the navigator-provided record-review-result command with the resolved correction producer attestation.'
+                'The reviewer must read the rejected review JSON from binding.original_output_path, apply only the bound diagnostics, ' +
+                'and preserve the findings object exactly. It must write exactly one corrected review JSON object, without a wrapper or prose, ' +
+                'to recovery.handoff.provider_response_output_path, return those same bytes, and stop. ' +
+                'The reviewer must not run Garda, invoke workflow gates, or modify any other source, task, review, receipt, or control artifact. ' +
+                'The main agent must wait for the reviewer, rerun next-step, and use the navigator-provided commands; ' +
+                'the reviewer must not record its own result.'
         };
     }
     return {

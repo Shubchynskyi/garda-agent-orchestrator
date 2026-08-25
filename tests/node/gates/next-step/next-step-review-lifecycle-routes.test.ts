@@ -672,6 +672,7 @@ test('correction-only recovery records the result with its attested producer eve
         launchArtifactState: 'launched',
         correctionHandoff: {
             providerAction: 'launch_correction_only_reviewer',
+            providerResponseOutputPath: 'D:/repo/runtime/reviews/corrected-output.json',
             launchState: null,
             targetReviewerIdentity: 'new_correction_only_reviewer',
             launchInputSha256: 'a'.repeat(64),
@@ -701,6 +702,10 @@ test('correction-only recovery records the result with its attested producer eve
         new RegExp(`--correction-provider-invocation-event-sha256 "${producerEventSha256}"`, 'u')
     );
     assert.match(resultCommand, /--correction-attestation-source "codex_collaboration_spawn_agent"/u);
+    assert.match(
+        resultCommand,
+        /--review-output-path "D:\/repo\/runtime\/reviews\/corrected-output\.json"/u
+    );
 });
 
 test('exhausted output correction restarts only the affected lane with a fresh full reviewer', () => {

@@ -738,6 +738,12 @@ describe('review output correction contract', () => {
                 persisted.artifactPath.replace(/\\/gu, '/')
             );
             assert.equal(loaded.artifact!.recovery.handoff?.fork_context, false);
+            const correctionInstruction = loaded.artifact!.recovery.handoff?.instruction || '';
+            assert.match(correctionInstruction, /binding\.original_output_path/u);
+            assert.match(correctionInstruction, /recovery\.handoff\.provider_response_output_path/u);
+            assert.match(correctionInstruction, /without a wrapper or prose/u);
+            assert.match(correctionInstruction, /must not run Garda/u);
+            assert.match(correctionInstruction, /must not record its own result/u);
 
             const correctedOutput = findingsOutput({
                     schema_version: 2,
