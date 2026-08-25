@@ -298,7 +298,7 @@ export function redactSensitiveData(value: unknown, keyHint?: string): unknown {
 }
 
 export function serializeRedactedJson(value: unknown): string {
-    return redactSecretText(`${JSON.stringify(redactSensitiveData(value), null, 2)}\n`);
+    return `${JSON.stringify(redactSensitiveData(value), null, 2)}\n`;
 }
 
 export function sha256RedactedJsonPayload(value: unknown): string {

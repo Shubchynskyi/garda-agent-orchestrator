@@ -545,7 +545,7 @@ describe('review remediation delta classification', () => {
         const sourcePath = path.join(fixture.root, 'src', 'example.ts');
         fs.writeFileSync(
             sourcePath,
-            'export const TOKEN_ECONOMY_FIELDS = <redacted>\n',
+            'const match = html.match(/const actionToken = "([^"]+)";/u);\n',
             'utf8'
         );
         fixture.baseline.delta_base = buildReviewRemediationDeltaBase({

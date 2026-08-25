@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
-import { sha256RedactedJsonPayload } from '../../../src/core/redaction';
+import { redactSecretText, sha256RedactedJsonPayload } from '../../../src/core/redaction';
 import { fileSha256 } from '../../../src/gate-runtime/hash';
 
 import {
@@ -160,6 +160,31 @@ test('writeReviewArtifactJson redacts secret values before persisting artifacts'
             () => assertReviewArtifactFileSha256(artifactPath, '0'.repeat(64), 'Test review artifact'),
             /sha256 mismatch after persistence/
         );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('review artifact JSON writers preserve valid escaping for redacted source assignments', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-json-escaping-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const directPath = path.join(reviewsDir, 'T-001-code-remediation-baseline.json');
+    const transactionalPath = path.join(reviewsDir, 'T-001-code-remediation-baseline-snapshot.json');
+    const sourceLine = 'const match = html.match(/const actionToken = "([^"]+)";/u);\n';
+    const payload = { redacted_lines: [redactSecretText(sourceLine)] };
+
+    try {
+        writeReviewArtifactJson(directPath, payload);
+        await writeReviewArtifactsWithRollback([{
+            artifactPath: transactionalPath,
+            contentType: 'json',
+            payload
+        }], async () => undefined);
+
+        for (const artifactPath of [directPath, transactionalPath]) {
+            assert.deepEqual(JSON.parse(fs.readFileSync(artifactPath, 'utf8')), payload);
+            assert.equal(fileSha256(artifactPath), sha256RedactedJsonPayload(payload));
+        }
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

@@ -563,7 +563,8 @@ function writeReviewArtifactTextUnlocked(
     content: string,
     options: ReviewArtifactLockOptions = {},
     updateIndex: boolean = true,
-    trackRuntimeMutation: boolean = true
+    trackRuntimeMutation: boolean = true,
+    contentAlreadyRedacted: boolean = false
 ): ReviewArtifactWriteResult {
     const orchestratorRoot = trackRuntimeMutation
         ? resolveOrchestratorRootFromRuntimePath(artifactPath, 'reviews')
@@ -576,7 +577,7 @@ function writeReviewArtifactTextUnlocked(
         : beginRuntimeMutationGeneration(orchestratorRoot, 'review-artifact-write');
     let artifactPersisted = false;
     let mutationSettled = false;
-    const redactedContent = redactSecretText(content);
+    const redactedContent = contentAlreadyRedacted ? content : redactSecretText(content);
     try {
         const { lock_path, telemetry } = withReviewArtifactLock(artifactPath, () => {
             writeArtifactFileAtomically(artifactPath, redactedContent);
@@ -658,7 +659,17 @@ export function writeReviewArtifactJson(
     payload: unknown,
     options: ReviewArtifactLockOptions = {}
 ): ReviewArtifactWriteResult {
-    return writeReviewArtifactText(artifactPath, serializeRedactedJson(payload), options);
+    const { result } = withReviewArtifactTransactionLock(path.dirname(artifactPath), () => (
+        writeReviewArtifactTextUnlocked(
+            artifactPath,
+            serializeRedactedJson(payload),
+            options,
+            true,
+            true,
+            true
+        )
+    ), options);
+    return result;
 }
 
 export type ReviewArtifactTransactionalWrite =
@@ -757,7 +768,7 @@ function commitStagedReviewArtifactTransactionEntry(
     writeReviewArtifactTextUnlocked(entry.artifactPath, content, {
         ...entry.options,
         requireIndexUpdate: false
-    }, false, false);
+    }, false, false, true);
 }
 
 function assertTransactionIndexPersisted(reviewsDir: string, phase: string): void {
