@@ -641,7 +641,12 @@ test('correction transport command shell-quotes untrusted reviewer and provider 
 });
 
 test('correction-only recovery records the result with its attested producer event', () => {
-    const command = { label: 'Record corrected result', command: 'record-review-result' };
+    const command = {
+        label: 'Record corrected result',
+        command:
+            "'<paste exact delegated reviewer output here>' | node bin/garda.js gate record-review-result " +
+            '--task-id "T-review" --review-output-stdin'
+    };
     const producerEventSha256 = 'c'.repeat(64);
     const resolved = resolveFailedReviewRemediationRoute({
         taskId: 'T-review',
@@ -706,6 +711,8 @@ test('correction-only recovery records the result with its attested producer eve
         resultCommand,
         /--review-output-path "D:\/repo\/runtime\/reviews\/corrected-output\.json"/u
     );
+    assert.doesNotMatch(resultCommand, /--review-output-stdin/u);
+    assert.doesNotMatch(resultCommand, /<paste exact delegated reviewer output here>/u);
 });
 
 test('exhausted output correction restarts only the affected lane with a fresh full reviewer', () => {

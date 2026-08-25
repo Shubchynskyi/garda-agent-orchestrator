@@ -162,14 +162,14 @@ function buildAttestedCorrectionRecordResultCommand(options: FailedReviewRemedia
     const forkContext = providerAction === 'launch_correction_only_reviewer'
         ? ' --correction-fork-context false'
         : '';
+    const recordResultCommand = providerAction === 'launch_correction_only_reviewer' && providerResponseOutputPath
+        ? bindRecordResultOutputPath(options.commands.recordResult.command, providerResponseOutputPath)
+        : options.commands.recordResult.command;
     return {
         ...options.commands.recordResult,
         label: 'After the bound reviewer correction returns, record its attested corrected review result',
         command:
-            `${options.commands.recordResult.command} ` +
-            (providerAction === 'launch_correction_only_reviewer' && providerResponseOutputPath
-                ? `--review-output-path ${quoteCommandValue(providerResponseOutputPath)} `
-                : '') +
+            `${recordResultCommand} ` +
             `--correction-producer-identity ${quoteCommandValue(correctionProducerIdentity)} ` +
             `--correction-provider-invocation-id ${quoteCommandValue(
                 attestedProviderInvocationId || '<provider-owned correction invocation id>'
@@ -185,6 +185,21 @@ function buildAttestedCorrectionRecordResultCommand(options: FailedReviewRemedia
             )}` +
             forkContext
     };
+}
+
+function bindRecordResultOutputPath(command: string, reviewOutputPath: string): string {
+    const pipedInputPrefix = "'<paste exact delegated reviewer output here>' | ";
+    const unpipedCommand = command.startsWith(pipedInputPrefix)
+        ? command.slice(pipedInputPrefix.length)
+        : command;
+    const outputPathArgument = `--review-output-path ${quoteCommandValue(reviewOutputPath)}`;
+    if (unpipedCommand.includes('--review-output-stdin')) {
+        return unpipedCommand.replace('--review-output-stdin', outputPathArgument);
+    }
+    if (unpipedCommand.includes('--review-output-path')) {
+        return unpipedCommand;
+    }
+    return `${unpipedCommand} ${outputPathArgument}`;
 }
 
 export function resolveFailedReviewRemediationRoute(
