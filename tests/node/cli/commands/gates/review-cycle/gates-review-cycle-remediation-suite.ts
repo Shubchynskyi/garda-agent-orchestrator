@@ -39,7 +39,10 @@ import {
 } from './gates-review-cycle-fixtures';
 import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
 import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-remediation';
-import { buildReviewEvidenceOnlyRestartPlan } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-review-cycle';
+import {
+    buildReviewEvidenceOnlyRestartPlan,
+    resolveRuntimeDecisionInputs
+} from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-review-cycle';
 import {
     bindAuthoritativeRemediationDecisionToPreflight,
     buildAuthenticatedRemediationReviewExecution,
@@ -68,6 +71,9 @@ import {
 import {
     buildDefaultReviewRemediationRerunPolicy
 } from '../../../../../../src/policy/review-remediation-rerun-policy';
+import {
+    buildDefaultReviewRemediationModePolicy
+} from '../../../../../../src/policy/review-remediation-mode-policy';
 import { compileReviewDependencyGraph } from '../../../../../../src/core/review-dependency-graph';
 
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
@@ -83,6 +89,7 @@ function buildLeafTestDeltaClassification(options: {
     preflightPath: string;
     preflightSha256: string;
     profilePolicySnapshot: unknown;
+    modePolicy?: ReturnType<typeof buildDefaultReviewRemediationModePolicy>;
 }): ReviewRemediationDeltaClassification {
     const reviewsRoot = getReviewsRoot(options.repoRoot);
     writeRepoFile(options.repoRoot, options.changedFile, 'assert.equal(actual, expected);\n');
@@ -301,7 +308,8 @@ function buildLeafTestDeltaClassification(options: {
         baselineArtifactPath: baselinePath,
         baselineArtifactSha256: baselineSha256,
         currentChangedFiles: [options.changedFile],
-        structuralTestChangedLinesThreshold: 20
+        structuralTestChangedLinesThreshold: 20,
+        modePolicy: options.modePolicy
     });
 }
 
@@ -424,11 +432,11 @@ describe('cli/commands/gates – authenticated remediation execution persistence
         fs.writeFileSync(preflightPath, `${JSON.stringify(preflightPayload)}\n`, 'utf8');
         const preflightSha256 = fileSha256(preflightPath);
         assert.ok(preflightSha256);
-        const profilePolicySnapshot = {
+        const legacyProfilePolicySnapshot = {
             review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
             review_remediation_rerun_policy_diagnostics: ['persisted DELTA fixture policy']
         };
-        const classification = {
+        const legacyClassification = {
             source: 'delta' as const,
             delta: buildLeafTestDeltaClassification({
                 repoRoot,
@@ -437,16 +445,16 @@ describe('cli/commands/gates – authenticated remediation execution persistence
                 changedFile,
                 preflightPath,
                 preflightSha256,
-                profilePolicySnapshot
+                profilePolicySnapshot: legacyProfilePolicySnapshot
             }),
-            profilePolicySnapshot,
-            baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            profilePolicySnapshot: legacyProfilePolicySnapshot,
+            baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(legacyProfilePolicySnapshot)
         };
-        const decision = bindAuthoritativeRemediationDecisionToPreflight(
+        const legacyDecision = bindAuthoritativeRemediationDecisionToPreflight(
             resolveAuthoritativeReviewRemediationDecision({
                 taskId,
                 currentReviewType: reviewType,
-                classification,
+                classification: legacyClassification,
                 requiredReviews: { test: true },
                 reviewExecutionPolicyMode: 'strict_sequential'
             }),
@@ -459,10 +467,68 @@ describe('cli/commands/gates – authenticated remediation execution persistence
                 event_type: 'REVIEW_CYCLE_RESTARTED',
                 status: 'PASSED',
                 preflight_sha256: preflightSha256,
+                authoritative_review_decision: legacyDecision,
+                authoritative_review_classification: legacyClassification
+            });
+            const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
+            const legacyPersisted = resolvePersistedRemediationReusePolicy({
+                events: readTaskTimelineEvents(repoRoot, taskId),
+                taskId,
+                reviewType,
+                preflightPath,
+                timelinePath,
+                preflightPayload
+            });
+            assert.match(legacyPersisted.blockedReason, /FULL review.*legacy remediation evidence/iu);
+            assert.equal(legacyPersisted.reviewExecutionContract?.mode, 'FULL');
+            assert.equal(legacyPersisted.reviewExecutionContract?.source, 'remediation_full');
+
+            const modePolicy = buildDefaultReviewRemediationModePolicy();
+            const profilePolicySnapshot = {
+                ...legacyProfilePolicySnapshot,
+                review_remediation_mode_policy: modePolicy,
+                review_remediation_mode_policy_diagnostics: ['persisted DELTA fixture mode policy']
+            };
+            const classification = {
+                source: 'delta' as const,
+                delta: buildLeafTestDeltaClassification({
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    changedFile,
+                    preflightPath,
+                    preflightSha256,
+                    profilePolicySnapshot,
+                    modePolicy
+                }),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            };
+            const decision = bindAuthoritativeRemediationDecisionToPreflight(
+                resolveAuthoritativeReviewRemediationDecision({
+                    taskId,
+                    currentReviewType: reviewType,
+                    classification,
+                    modePolicyValidationInputs: {
+                        consecutiveDeltaReviews: 0,
+                        protectedBoundarySignals: [],
+                        taskCriteriaChanged: false,
+                        policyChanged: false,
+                        uncertainCrossFileImpact: false
+                    },
+                    requiredReviews: { test: true },
+                    reviewExecutionPolicyMode: 'strict_sequential'
+                }),
+                preflightSha256
+            );
+            appendTaskEvent(bundleRoot, taskId, 'REVIEW_CYCLE_RESTARTED', 'PASS', 'Authenticated review cycle restarted.', {
+                task_id: taskId,
+                event_type: 'REVIEW_CYCLE_RESTARTED',
+                status: 'PASSED',
+                preflight_sha256: preflightSha256,
                 authoritative_review_decision: decision,
                 authoritative_review_classification: classification
             });
-            const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
             const events = readTaskTimelineEvents(repoRoot, taskId);
             const persisted = resolvePersistedRemediationReusePolicy({
                 events,
@@ -512,6 +578,86 @@ describe('cli/commands/gates – authenticated remediation execution persistence
             });
             assert.equal(forged.failClosed, true);
             assert.match(forged.blockedReason, /persisted authoritative remediation decision failed validation/iu);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('forces a lane-local FULL fallback for unsupported authenticated review execution telemetry', () => {
+        const repoRoot = createTempRepo();
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskId = 'T-1013-4-2-unsupported-review-mode';
+        const reviewType = 'test';
+        const changedFile = 'tests/node/example.test.ts';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const preflightPayload = { changed_files: [changedFile] };
+        const profilePolicySnapshot = {
+            review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
+            review_remediation_rerun_policy_diagnostics: ['fixture rerun policy'],
+            review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
+            review_remediation_mode_policy_diagnostics: ['fixture mode policy']
+        };
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(preflightPath, `${JSON.stringify(preflightPayload)}\n`, 'utf8');
+        const preflightSha256 = fileSha256(preflightPath);
+        assert.ok(preflightSha256);
+        buildLeafTestDeltaClassification({
+            repoRoot,
+            taskId,
+            reviewType,
+            changedFile,
+            preflightPath,
+            preflightSha256,
+            profilePolicySnapshot
+        });
+        const mutableBaselinePath = path.join(
+            reviewsRoot,
+            `${taskId}-${reviewType}-remediation-baseline.json`
+        );
+        const baselineSha256 = fileSha256(mutableBaselinePath);
+        assert.ok(baselineSha256);
+        const immutableBaselinePath = path.join(
+            reviewsRoot,
+            `${taskId}-${reviewType}-remediation-baseline-${baselineSha256}.json`
+        );
+        fs.copyFileSync(mutableBaselinePath, immutableBaselinePath);
+        appendTaskEvent(bundleRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'Unsupported mode fixture.', {
+            review_type: reviewType,
+            review_execution_mode: 'UNKNOWN',
+            remediation_baseline_snapshot_path: immutableBaselinePath,
+            remediation_baseline_snapshot_sha256: baselineSha256
+        });
+
+        try {
+            const result = resolveRuntimeDecisionInputs({
+                repoRoot,
+                taskId,
+                remediationReviewType: reviewType,
+                requiredReviewTypes: ['code', 'test'],
+                remediationFixClassification: {
+                    category: 'leaf_test',
+                    reason: 'fixture leaf-test remediation',
+                    blocked_before_reuse: false,
+                    invalidated_review_types: [reviewType]
+                },
+                profilePolicySnapshot,
+                currentChangedFiles: [changedFile],
+                reviewTriggerPolicy: {
+                    test_path_regexes: ['(^|/)tests?/'],
+                    test_refactor_structural_path_regexes: ['(^|/)tests?/helpers?/'],
+                    test_refactor_changed_lines_threshold: 20
+                },
+                allowAuthenticatedDelta: true,
+                preflightPayload
+            });
+            const classification = result.classification as {
+                source: 'runtime_fix';
+                classification: { reason: string; invalidated_review_types: string[] };
+            };
+            assert.equal(classification.source, 'runtime_fix');
+            assert.deepEqual(classification.classification.invalidated_review_types, [reviewType]);
+            assert.match(classification.classification.reason, /unsupported review execution mode.*FULL/iu);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

@@ -56,7 +56,7 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
         classification: { reason: string; invalidated_review_types: string[] };
     };
     assert.equal(missingRuntime.source, 'runtime_fix');
-    assert.deepEqual(missingRuntime.classification.invalidated_review_types, ['code', 'security']);
+    assert.deepEqual(missingRuntime.classification.invalidated_review_types, ['code']);
     assert.match(missingRuntime.classification.reason, /does not bind an immutable remediation snapshot/iu);
 
     const failedSnapshotPath = path.join(
@@ -82,7 +82,7 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
         classification: { reason: string; invalidated_review_types: string[] };
     };
     assert.equal(failedRuntime.source, 'runtime_fix');
-    assert.deepEqual(failedRuntime.classification.invalidated_review_types, ['code', 'security']);
+    assert.deepEqual(failedRuntime.classification.invalidated_review_types, ['code']);
     assert.match(failedRuntime.classification.reason, /does not bind an immutable remediation snapshot/iu);
 
     const externalSnapshotPath = path.join(repoRoot, 'external-remediation-baseline.json');
@@ -95,6 +95,7 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
         'external fixture snapshot recorded',
         {
             review_type: 'code',
+            review_execution_mode: 'FULL',
             remediation_baseline_snapshot_path: externalSnapshotPath,
             remediation_baseline_snapshot_sha256: fileSha256(externalSnapshotPath)
         }
@@ -105,7 +106,7 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
         classification: { reason: string; invalidated_review_types: string[] };
     };
     assert.equal(externalRuntime.source, 'runtime_fix');
-    assert.deepEqual(externalRuntime.classification.invalidated_review_types, ['code', 'security']);
+    assert.deepEqual(externalRuntime.classification.invalidated_review_types, ['code']);
     assert.match(externalRuntime.classification.reason, /unsafe or invalid remediation snapshot binding/iu);
 
     const mismatchedDigestSnapshotPath = path.join(
@@ -121,6 +122,7 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
         'mismatched filename digest fixture snapshot recorded',
         {
             review_type: 'code',
+            review_execution_mode: 'FULL',
             remediation_baseline_snapshot_path: mismatchedDigestSnapshotPath,
             remediation_baseline_snapshot_sha256: fileSha256(mismatchedDigestSnapshotPath)
         }
@@ -131,7 +133,7 @@ it('forces FULL when immutable remediation snapshot lineage is replaced or inval
         classification: { reason: string; invalidated_review_types: string[] };
     };
     assert.equal(mismatchedDigestRuntime.source, 'runtime_fix');
-    assert.deepEqual(mismatchedDigestRuntime.classification.invalidated_review_types, ['code', 'security']);
+    assert.deepEqual(mismatchedDigestRuntime.classification.invalidated_review_types, ['code']);
     assert.match(mismatchedDigestRuntime.classification.reason, /unsafe or invalid remediation snapshot binding/iu);
 
     fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -198,7 +200,7 @@ it('rejects untrusted legacy-prefix snapshot binding and forces FULL', () => {
         classification: { reason: string; invalidated_review_types: string[] };
     };
     assert.equal(runtime.source, 'runtime_fix');
-    assert.deepEqual(runtime.classification.invalidated_review_types, ['code', 'security']);
+    assert.deepEqual(runtime.classification.invalidated_review_types, ['code']);
     assert.match(runtime.classification.reason, /cannot authenticate remediation snapshot lineage \(PASS_WITH_LEGACY_PREFIX\)/iu);
 
     fs.rmSync(repoRoot, { recursive: true, force: true });

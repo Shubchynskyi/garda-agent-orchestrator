@@ -702,6 +702,126 @@ describe('review remediation selective recovery routing', () => {
         );
     });
 
+    it('authenticates FULL assessments and keeps lane-local FULL floors from invalidating unrelated lanes', () => {
+        const modePolicy = buildDefaultReviewRemediationModePolicy();
+        modePolicy.delta_eligible_review_types = modePolicy.delta_eligible_review_types.filter((entry) => (
+            entry !== 'code'
+        ));
+        const profilePolicySnapshot = {
+            ...makeSnapshot(),
+            review_remediation_mode_policy: modePolicy
+        };
+        const disabledLaneDelta = makeDelta('production', 'code', 'src/app.ts');
+        const disabledLaneAssessment = evaluateReviewRemediationMode({
+            policy: modePolicy,
+            reviewType: 'code',
+            category: 'production',
+            changedFilesCount: 1,
+            changedLinesTotal: 1,
+            consecutiveDeltaReviews: 0
+        });
+        disabledLaneDelta.mode_policy_assessment = disabledLaneAssessment;
+        disabledLaneDelta.full_review_required = true;
+        disabledLaneDelta.full_review_reasons = disabledLaneAssessment.full_review_reasons;
+
+        const decision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'code',
+            classification: {
+                source: 'delta',
+                delta: rehashDelta(disabledLaneDelta),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            },
+            requiredReviews: { code: true, security: true },
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reusableReceipts: [acceptedReceipt('security')]
+        });
+
+        assert.equal(decision.status, 'READY');
+        assert.deepEqual(decision.invalidated_review_types, ['code']);
+        assert.deepEqual(decision.preserved_review_types, ['security']);
+        assert.deepEqual(decision.lane_decisions.map((entry) => ({
+            review_type: entry.review_type,
+            mode: entry.mode,
+            reason_code: entry.reason_code
+        })), [
+            {
+                review_type: 'code',
+                mode: 'FULL',
+                reason_code: 'authenticated_snapshot_requires_full_fallback'
+            },
+            {
+                review_type: 'security',
+                mode: 'REUSE',
+                reason_code: 'authoritative_reuse_accepted'
+            }
+        ]);
+        assert.match(decision.lane_decisions[0].reason, /not DELTA-eligible/iu);
+
+        const externalFullReason = 'remediation file content is unavailable for a trustworthy delta';
+        const externallyFlooredDelta = makeDelta('production', 'code', 'src/app.ts');
+        const externallyFlooredAssessment = evaluateReviewRemediationMode({
+            policy: buildDefaultReviewRemediationModePolicy(),
+            reviewType: 'code',
+            category: 'production',
+            changedFilesCount: 1,
+            changedLinesTotal: 1,
+            consecutiveDeltaReviews: 0,
+            existingFullReviewReasons: [externalFullReason]
+        });
+        externallyFlooredDelta.mode_policy_assessment = externallyFlooredAssessment;
+        externallyFlooredDelta.full_review_required = true;
+        externallyFlooredDelta.full_review_reasons = externallyFlooredAssessment.full_review_reasons;
+        const externallyFlooredDecision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'code',
+            classification: {
+                source: 'delta',
+                delta: rehashDelta(externallyFlooredDelta),
+                profilePolicySnapshot: makeSnapshot(),
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(makeSnapshot())
+            },
+            requiredReviews: { code: true, security: true },
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reusableReceipts: [acceptedReceipt('security')]
+        });
+        assert.equal(externallyFlooredDecision.status, 'READY');
+        assert.deepEqual(externallyFlooredDecision.invalidated_review_types, ['code']);
+        assert.equal(externallyFlooredDecision.lane_decisions[0].mode, 'FULL');
+        assert.match(externallyFlooredDecision.lane_decisions[0].reason, new RegExp(externalFullReason, 'iu'));
+
+        const periodicDelta = makeDelta('production', 'code', 'src/app.ts');
+        const periodicAssessment = evaluateReviewRemediationMode({
+            policy: buildDefaultReviewRemediationModePolicy(),
+            reviewType: 'code',
+            category: 'production',
+            changedFilesCount: 1,
+            changedLinesTotal: 1,
+            consecutiveDeltaReviews: modePolicy.max_consecutive_delta_reviews
+        });
+        periodicDelta.mode_policy_assessment = periodicAssessment;
+        periodicDelta.full_review_required = true;
+        periodicDelta.full_review_reasons = periodicAssessment.full_review_reasons;
+        const forgedPeriodicDecision = resolveFixtureAuthoritativeDecision({
+            taskId: TASK_ID,
+            currentReviewType: 'code',
+            classification: {
+                source: 'delta',
+                delta: rehashDelta(periodicDelta),
+                profilePolicySnapshot: makeSnapshot(),
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(makeSnapshot())
+            },
+            requiredReviews: { code: true },
+            reviewExecutionPolicyMode: 'strict_sequential'
+        });
+        assert.equal(forgedPeriodicDecision.status, 'BLOCKED');
+        assert.match(
+            forgedPeriodicDecision.blocked_reasons.join(' '),
+            /does not match authenticated timeline and preflight mode-policy inputs/iu
+        );
+    });
+
     it('rejects self-consistent DELTA assessments that weaken legacy or protected FULL floors', () => {
         const legacyDelta = makeDelta('production', 'code');
         const legacyAssessment = legacyDelta.mode_policy_assessment!;

@@ -565,55 +565,52 @@ export function resolveAuthoritativeReviewRemediationDecision(
                     changedFilesCount: delta.changed_files.length,
                     changedLinesTotal: delta.changed_lines_total
                 }));
-                if (delta.mode_policy_assessment.mode === 'DELTA') {
-                    const validationInputs = options.modePolicyValidationInputs;
-                    if (!validationInputs) {
+                const validationInputs = options.modePolicyValidationInputs;
+                if (!validationInputs) {
+                    blockedReasons.push(
+                        'authenticated remediation mode assessment is missing timeline and preflight validation inputs.'
+                    );
+                } else {
+                    const expectedAssessment = evaluateReviewRemediationMode({
+                        policy: modePolicyResolution.policy,
+                        legacyFallback: modePolicyResolution.legacy_fallback,
+                        reviewType: delta.review_type,
+                        category: delta.category,
+                        changedFilesCount: delta.changed_files.length,
+                        changedLinesTotal: delta.changed_lines_total,
+                        consecutiveDeltaReviews: validationInputs.consecutiveDeltaReviews,
+                        protectedBoundarySignals: validationInputs.protectedBoundarySignals,
+                        taskCriteriaChanged: validationInputs.taskCriteriaChanged,
+                        policyChanged: validationInputs.policyChanged,
+                        scopeMembershipChanged: !delta.scope.membership_unchanged,
+                        uncertainCrossFileImpact: validationInputs.uncertainCrossFileImpact,
+                        existingFullReviewReasons: delta.full_review_reasons
+                    });
+                    if (
+                        delta.mode_policy_assessment.assessment_sha256
+                        !== expectedAssessment.assessment_sha256
+                    ) {
                         blockedReasons.push(
-                            'authenticated remediation DELTA is missing timeline and preflight mode-policy validation inputs.'
+                            'remediation mode assessment does not match authenticated timeline and preflight mode-policy inputs.'
                         );
-                    } else {
-                        const expectedAssessment = evaluateReviewRemediationMode({
-                            policy: modePolicyResolution.policy,
-                            legacyFallback: modePolicyResolution.legacy_fallback,
-                            reviewType: delta.review_type,
-                            category: delta.category,
-                            changedFilesCount: delta.changed_files.length,
-                            changedLinesTotal: delta.changed_lines_total,
-                            consecutiveDeltaReviews: validationInputs.consecutiveDeltaReviews,
-                            protectedBoundarySignals: validationInputs.protectedBoundarySignals,
-                            taskCriteriaChanged: validationInputs.taskCriteriaChanged,
-                            policyChanged: validationInputs.policyChanged,
-                            scopeMembershipChanged: !delta.scope.membership_unchanged,
-                            uncertainCrossFileImpact: validationInputs.uncertainCrossFileImpact,
-                            existingFullReviewReasons: []
-                        });
-                        if (
-                            delta.mode_policy_assessment.assessment_sha256
-                            !== expectedAssessment.assessment_sha256
-                        ) {
-                            blockedReasons.push(
-                                'remediation DELTA assessment does not match authenticated timeline and preflight mode-policy inputs.'
-                            );
-                        }
                     }
                 }
             }
             if (blockedReasons.length === 0) {
+                const selection = resolveReviewRemediationRerunLanes({
+                    policy: policyResolution.policy,
+                    category: delta.category,
+                    currentReviewType,
+                    requiredReviews: options.requiredReviews,
+                    reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
+                    reviewDependencyGraph: options.reviewDependencyGraph
+                });
+                invalidatedReviewTypes = selection.ordered_rerun_lanes;
                 if (delta.full_review_required || fullFallbackFromDelta) {
-                    invalidatedReviewTypes = [...requiredReviewTypes];
                     fullFallbackFromDelta = true;
                     fullFallbackReason = fullFallbackReason || delta.full_review_reasons.join('; ')
                         || 'authenticated remediation snapshot requires FULL review';
                 } else {
-                    const selection = resolveReviewRemediationRerunLanes({
-                        policy: policyResolution.policy,
-                        category: delta.category,
-                        currentReviewType,
-                        requiredReviews: options.requiredReviews,
-                        reviewExecutionPolicyMode: options.reviewExecutionPolicyMode,
-                        reviewDependencyGraph: options.reviewDependencyGraph
-                    });
-                    invalidatedReviewTypes = selection.ordered_rerun_lanes;
                     authenticatedDeltaEligibleReviewTypes = new Set(
                         selection.ordered_rerun_lanes.filter((reviewType) => (
                             reviewType === currentReviewType
@@ -633,6 +630,7 @@ export function resolveAuthoritativeReviewRemediationDecision(
             requiredReviewTypes
         );
         category = runtimeFix.category || category;
+        fullFallbackReason = runtimeFix.reason;
         classificationSha256 = runtimeFix.classificationSha256;
         invalidatedReviewTypes = runtimeFix.invalidatedReviewTypes;
         blockedReasons.push(...runtimeFix.violations);
@@ -710,7 +708,9 @@ export function resolveAuthoritativeReviewRemediationDecision(
                     ? `Authenticated remediation snapshot requires FULL review for '${reviewType}': ${fullFallbackReason}.`
                     : options.classification.source === 'delta'
                         ? `Frozen remediation mode policy does not permit DELTA for invalidated lane '${reviewType}'; FULL review is required.`
-                        : `Runtime remediation classification '${category}' invalidated '${reviewType}', but no authenticated delta classification is bound; FULL review is required.`;
+                        : `Runtime remediation classification '${category}' invalidated '${reviewType}': `
+                            + `${fullFallbackReason || 'authenticated DELTA authority is unavailable'}; `
+                            + 'FULL review is required.';
             if (acceptedEvidence && evidenceKind === 'FRESH') {
                 satisfied = true;
                 satisfactionSource = 'FRESH';

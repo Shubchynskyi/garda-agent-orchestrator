@@ -179,19 +179,25 @@ export function resolveRuntimeDecisionInputs(options: {
         currentReviewType: string;
         classification: ReviewRemediationDecisionClassification;
         modePolicyValidationInputs: null;
-    } => ({
-        currentReviewType,
-        modePolicyValidationInputs: null,
-        classification: {
-            source: 'runtime_fix',
+    } => {
+        const invalidatedReviewTypes = [...new Set([
+            ...options.remediationFixClassification.invalidated_review_types,
+            currentReviewType
+        ])];
+        return {
+            currentReviewType,
+            modePolicyValidationInputs: null,
             classification: {
-                category: 'ambiguous',
-                reason,
-                blocked_before_reuse: false,
-                invalidated_review_types: [...options.requiredReviewTypes]
+                source: 'runtime_fix',
+                classification: {
+                    category: options.remediationFixClassification.category,
+                    reason,
+                    blocked_before_reuse: options.remediationFixClassification.blocked_before_reuse,
+                    invalidated_review_types: invalidatedReviewTypes
+                }
             }
-        }
-    });
+        };
+    };
     if (options.allowAuthenticatedDelta && options.remediationReviewType) {
         const reviewArtifactPath = resolveDefaultReviewsPath(
             options.repoRoot,
@@ -215,16 +221,11 @@ export function resolveRuntimeDecisionInputs(options: {
                     && String(event.outcome || '').trim().toUpperCase() === 'PASS'
                     && String(details?.review_type || '').trim().toLowerCase() === currentReviewType
                 ) {
+                    recordedEvent.details = details;
                     const recordedMode = String(details?.review_execution_mode || '').trim().toUpperCase();
                     consecutiveDeltaReviews = recordedMode === 'DELTA'
                         ? consecutiveDeltaReviews + 1
                         : 0;
-                    if (
-                        String(details?.remediation_baseline_snapshot_path || '').trim()
-                        && String(details?.remediation_baseline_snapshot_sha256 || '').trim()
-                    ) {
-                        recordedEvent.details = details;
-                    }
                 }
             }
         });
@@ -237,6 +238,24 @@ export function resolveRuntimeDecisionInputs(options: {
         if (!recordedEventDetails) {
             return buildFullFallback(
                 'Review telemetry does not bind an immutable remediation snapshot; FULL review is required.'
+            );
+        }
+        const recordedReviewExecutionMode = String(
+            recordedEventDetails.review_execution_mode || ''
+        ).trim().toUpperCase();
+        if (!['FULL', 'DELTA'].includes(recordedReviewExecutionMode)) {
+            return buildFullFallback(
+                `Review telemetry contains unsupported review execution mode `
+                + `'${recordedReviewExecutionMode || 'missing'}'; FULL review is required.`
+            );
+        }
+        if (
+            !String(recordedEventDetails.remediation_baseline_snapshot_path || '').trim()
+            || !String(recordedEventDetails.remediation_baseline_snapshot_sha256 || '').trim()
+        ) {
+            return buildFullFallback(
+                'Latest authenticated review telemetry does not bind an immutable remediation snapshot; '
+                + 'FULL review is required.'
             );
         }
         const baselineSnapshotPath = path.resolve(
