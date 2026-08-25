@@ -117,13 +117,17 @@ test('bounded mode matrix admits leaf-test and local-code repairs and determinis
     }
 });
 
-test('policy migration surface rejects tampered or weakened explicit policies', () => {
+test('policy migration surface permits explicit disables and custom lanes while rejecting malformed identifiers', () => {
     const policy = buildDefaultReviewRemediationModePolicy() as unknown as Record<string, unknown>;
     assert.deepEqual(getReviewRemediationModePolicyViolations(policy), []);
 
-    const weakened = structuredClone(policy);
-    weakened.delta_eligible_review_types = ['code', 'security'];
-    assert.ok(getReviewRemediationModePolicyViolations(weakened).some((entry) => entry.includes('protected lane floor')));
+    const allDisabled = structuredClone(policy);
+    allDisabled.delta_eligible_review_types = [];
+    assert.deepEqual(getReviewRemediationModePolicyViolations(allDisabled), []);
+
+    const unsupported = structuredClone(policy);
+    unsupported.delta_eligible_review_types = ['custom_lane'];
+    assert.ok(getReviewRemediationModePolicyViolations(unsupported).some((entry) => entry.includes('unsupported')));
 
     const oversized = structuredClone(policy);
     oversized.max_delta_changed_lines = 401;

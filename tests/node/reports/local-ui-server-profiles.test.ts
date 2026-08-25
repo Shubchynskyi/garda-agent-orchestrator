@@ -101,7 +101,7 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(balancedProfile.review_remediation_mode_policy.legacy_full_only, false);
         assert.deepEqual(
             balancedProfile.review_remediation_mode_policy.delta_eligible_review_types,
-            ['code', 'refactor', 'test']
+            ['api', 'code', 'db', 'dependency', 'infra', 'performance', 'refactor', 'security', 'test']
         );
         assert.ok([
             'explicit_profile_config',

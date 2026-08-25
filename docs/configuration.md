@@ -262,10 +262,10 @@ New shipped profiles declare an explicit conservative policy:
 ```json
 {
   "review_remediation_mode_policy": {
-    "schema_version": 1,
+    "schema_version": 2,
     "policy_id": "conservative_review_remediation_mode_v1",
     "initial_review_mode": "FULL",
-    "delta_eligible_review_types": ["code", "refactor", "test"],
+    "delta_eligible_review_types": ["api", "code", "db", "dependency", "infra", "performance", "refactor", "security", "test"],
     "force_full_categories": ["ambiguous", "generated_churn", "global"],
     "max_delta_changed_files": 4,
     "max_delta_changed_lines": 240,
@@ -273,6 +273,14 @@ New shipped profiles declare an explicit conservative policy:
   }
 }
 ```
+
+Schema 2 enables every review lane present in the current catalog for bounded DELTA remediation when a profile
+is created or a schema-1 policy is migrated. Custom lanes use their stable lowercase kebab-case ID and must be
+registered in `review-catalog.json`.
+Profile validation and effective-policy resolution reject syntactically valid but unregistered lane IDs. Remove a lane from `delta_eligible_review_types`
+to force only that lane to FULL; an empty array disables DELTA for every lane. Existing schema-2 allowlists are
+preserved so explicit removals remain stable. Valid schema-1 policies are upgraded
+once during init. An unresolved schema-1 policy and a profile with no policy both keep legacy FULL-only behavior.
 
 The first review for every lane remains `FULL`. Eligible remediation may use
 `DELTA` only while the immutable task snapshot, exhaustive baseline lineage,

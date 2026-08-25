@@ -19,6 +19,8 @@ import {
     collectReviewRemediationProtectedBoundarySignals,
     evaluateReviewRemediationMode,
     hasReviewRemediationPolicySourceChange,
+    migrateReviewRemediationModePolicyLaneDefaults,
+    resolveReviewRemediationModePolicyFromProfile,
     resolveReviewRemediationModePolicyFromSnapshot,
     validateReviewRemediationModePolicy
 } from '../../../src/policy/review-remediation-mode-policy';
@@ -89,7 +91,7 @@ test('maps every remediation delta category to the snapshotted minimal affected-
     }
 });
 
-test('allows only bounded non-protected code, refactor, and test remediation to use DELTA', () => {
+test('allows every configured lane to use bounded DELTA while preserving per-lane disable fallback', () => {
     const policy = buildDefaultReviewRemediationModePolicy();
     const localCode = evaluateReviewRemediationMode({
         policy,
@@ -100,9 +102,19 @@ test('allows only bounded non-protected code, refactor, and test remediation to 
         consecutiveDeltaReviews: 0
     });
     assert.equal(localCode.mode, 'DELTA');
-    assert.deepEqual(localCode.delta_eligible_review_types, ['code', 'refactor', 'test']);
+    assert.deepEqual(localCode.delta_eligible_review_types, [
+        'api',
+        'code',
+        'db',
+        'dependency',
+        'infra',
+        'performance',
+        'refactor',
+        'security',
+        'test'
+    ]);
 
-    const protectedLane = evaluateReviewRemediationMode({
+    const securityLane = evaluateReviewRemediationMode({
         policy,
         reviewType: 'security',
         category: 'production',
@@ -110,8 +122,43 @@ test('allows only bounded non-protected code, refactor, and test remediation to 
         changedLinesTotal: 12,
         consecutiveDeltaReviews: 0
     });
-    assert.equal(protectedLane.mode, 'FULL');
-    assert.match(protectedLane.full_review_reasons.join(' '), /security.*not DELTA-eligible/iu);
+    assert.equal(securityLane.mode, 'DELTA');
+
+    for (const reviewType of policy.delta_eligible_review_types) {
+        assert.equal(evaluateReviewRemediationMode({
+            policy,
+            reviewType,
+            category: 'production',
+            changedFilesCount: 1,
+            changedLinesTotal: 12,
+            consecutiveDeltaReviews: 0
+        }).mode, 'DELTA', reviewType);
+    }
+
+    const securityDisabledPolicy = {
+        ...policy,
+        delta_eligible_review_types: policy.delta_eligible_review_types.filter(
+            (reviewType) => reviewType !== 'security'
+        )
+    };
+    const securityDisabled = evaluateReviewRemediationMode({
+        policy: securityDisabledPolicy,
+        reviewType: 'security',
+        category: 'production',
+        changedFilesCount: 1,
+        changedLinesTotal: 12,
+        consecutiveDeltaReviews: 0
+    });
+    assert.equal(securityDisabled.mode, 'FULL');
+    assert.match(securityDisabled.full_review_reasons.join(' '), /security.*not DELTA-eligible/iu);
+    assert.equal(evaluateReviewRemediationMode({
+        policy: securityDisabledPolicy,
+        reviewType: 'code',
+        category: 'production',
+        changedFilesCount: 1,
+        changedLinesTotal: 12,
+        consecutiveDeltaReviews: 0
+    }).mode, 'DELTA');
 
     const periodicFull = evaluateReviewRemediationMode({
         policy,
@@ -241,15 +288,46 @@ test('recovery mode guards force taskCriteriaChanged for authenticated criteria 
     assert.equal(missing.taskCriteriaChanged, true);
 });
 
-test('rejects mode policies that weaken protected lane, category, size, or periodic FULL floors', () => {
-    const weakenedLane = buildDefaultReviewRemediationModePolicy();
-    weakenedLane.delta_eligible_review_types.push('security');
-    weakenedLane.delta_eligible_review_types.sort();
-    assert.throws(() => validateReviewRemediationModePolicy(weakenedLane), /protected lane floor/iu);
+test('accepts stable custom review lanes, rejects malformed identifiers, and preserves mandatory FULL floors', () => {
+    const customLane = buildDefaultReviewRemediationModePolicy({
+        allowedReviewTypeIds: ['custom-quality']
+    });
+    const allowedReviewTypeIds = [...customLane.delta_eligible_review_types];
+    const validatedCustomLane = validateReviewRemediationModePolicy(customLane, { allowedReviewTypeIds });
+    assert.equal(evaluateReviewRemediationMode({
+        policy: validatedCustomLane,
+        reviewType: 'custom-quality',
+        category: 'production',
+        changedFilesCount: 1,
+        changedLinesTotal: 12,
+        consecutiveDeltaReviews: 0
+    }).mode, 'DELTA');
+
+    assert.throws(
+        () => validateReviewRemediationModePolicy(customLane, {
+            allowedReviewTypeIds: allowedReviewTypeIds.filter((reviewType) => reviewType !== 'custom-quality')
+        }),
+        /absent from the review catalog: custom-quality/iu
+    );
+
+    const malformedLane = buildDefaultReviewRemediationModePolicy();
+    malformedLane.delta_eligible_review_types.push('custom_quality');
+    malformedLane.delta_eligible_review_types.sort();
+    assert.throws(
+        () => validateReviewRemediationModePolicy(malformedLane),
+        /invalid or unsupported.*review lane identifiers/iu
+    );
 
     const weakenedCategory = buildDefaultReviewRemediationModePolicy();
     weakenedCategory.force_full_categories = ['global'];
     assert.throws(() => validateReviewRemediationModePolicy(weakenedCategory), /mandatory floors/iu);
+
+    const migratedCustomLane = migrateReviewRemediationModePolicyLaneDefaults({
+        ...buildDefaultReviewRemediationModePolicy(),
+        schema_version: 1,
+        delta_eligible_review_types: ['code']
+    }, { allowedReviewTypeIds: ['custom-quality'] }) as { delta_eligible_review_types: string[] };
+    assert.ok(migratedCustomLane.delta_eligible_review_types.includes('custom-quality'));
 
     const extendedCategory = buildDefaultReviewRemediationModePolicy() as unknown as Record<string, unknown>;
     extendedCategory.force_full_categories = ['ambiguous', 'generated_churn', 'global', 'local'];
@@ -273,6 +351,64 @@ test('rejects mode policies that weaken protected lane, category, size, or perio
         consecutiveDeltaReviews: 0
     });
     assert.equal(legacyAssessment.mode, 'FULL');
+});
+
+test('migrates valid schema-1 lane selections once while preserving explicit schema-2 disables', () => {
+    const migrated = migrateReviewRemediationModePolicyLaneDefaults({
+        ...buildDefaultReviewRemediationModePolicy(),
+        schema_version: 1,
+        delta_eligible_review_types: ['code', 'test']
+    }) as ReturnType<typeof buildDefaultReviewRemediationModePolicy>;
+    assert.equal(migrated.schema_version, 2);
+    assert.deepEqual(migrated.delta_eligible_review_types, [
+        'api',
+        'code',
+        'db',
+        'dependency',
+        'infra',
+        'performance',
+        'security',
+        'test'
+    ]);
+
+    const explicitlyDisabled = {
+        ...migrated,
+        delta_eligible_review_types: ['code', 'test']
+    };
+    assert.deepEqual(
+        migrateReviewRemediationModePolicyLaneDefaults(explicitlyDisabled),
+        explicitlyDisabled
+    );
+    assert.deepEqual(validateReviewRemediationModePolicy({
+        ...explicitlyDisabled,
+        delta_eligible_review_types: []
+    }).delta_eligible_review_types, []);
+});
+
+test('keeps unresolved schema-1 profile and snapshot policies FULL-only until init migration', () => {
+    const legacyPolicy = {
+        ...buildDefaultReviewRemediationModePolicy(),
+        schema_version: 1 as const,
+        delta_eligible_review_types: ['code', 'test']
+    };
+    const profileResolution = resolveReviewRemediationModePolicyFromProfile(legacyPolicy, 'legacy');
+    const snapshotResolution = resolveReviewRemediationModePolicyFromSnapshot({
+        review_remediation_mode_policy: legacyPolicy
+    });
+
+    for (const resolution of [profileResolution, snapshotResolution]) {
+        assert.equal(resolution.legacy_fallback, true);
+        assert.ok(resolution.diagnostics.some((entry) => entry.includes('schema version 1')));
+        assert.equal(evaluateReviewRemediationMode({
+            policy: resolution.policy,
+            legacyFallback: resolution.legacy_fallback,
+            reviewType: 'code',
+            category: 'production',
+            changedFilesCount: 1,
+            changedLinesTotal: 12,
+            consecutiveDeltaReviews: 0
+        }).mode, 'FULL');
+    }
 });
 
 test('filters configured affected lanes to required reviews and fails closed when current review is unavailable', () => {

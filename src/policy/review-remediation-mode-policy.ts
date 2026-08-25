@@ -1,13 +1,26 @@
 import { sha256RedactedJsonPayload } from '../core/redaction';
 import { isPlainRecord } from '../core/records';
+import { BUILT_IN_REVIEW_TYPE_IDS } from '../core/review-catalog';
 import { normalizePath } from '../gates/shared/helpers';
 import type { ReviewRemediationDeltaCategory } from './review-remediation-rerun-policy';
 
-export const REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES = Object.freeze([
+export const LEGACY_REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES = Object.freeze([
     'code',
     'refactor',
     'test'
 ] as const);
+
+export const REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES = Object.freeze([
+    ...BUILT_IN_REVIEW_TYPE_IDS
+].sort());
+
+export const REVIEW_REMEDIATION_REVIEW_TYPE_ID_PATTERN =
+    '^(?=.{1,48}$)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$';
+
+const REVIEW_REMEDIATION_REVIEW_TYPE_ID_REGEX = new RegExp(
+    REVIEW_REMEDIATION_REVIEW_TYPE_ID_PATTERN,
+    'u'
+);
 
 export const REVIEW_REMEDIATION_FORCE_FULL_CATEGORIES = Object.freeze([
     'ambiguous',
@@ -33,7 +46,7 @@ export type ReviewRemediationProtectedBoundarySignal =
     typeof REVIEW_REMEDIATION_PROTECTED_BOUNDARY_SIGNALS[number];
 
 export interface ReviewRemediationModePolicy {
-    schema_version: 1;
+    schema_version: 1 | 2;
     policy_id: 'conservative_review_remediation_mode_v1';
     initial_review_mode: 'FULL';
     delta_eligible_review_types: string[];
@@ -47,6 +60,10 @@ export interface ReviewRemediationModePolicyResolution {
     policy: ReviewRemediationModePolicy;
     diagnostics: string[];
     legacy_fallback: boolean;
+}
+
+export interface ReviewRemediationModePolicyValidationOptions {
+    allowedReviewTypeIds?: readonly string[];
 }
 
 export interface ReviewRemediationModePolicySummary {
@@ -89,7 +106,7 @@ const MAX_DELTA_CHANGED_LINES_SAFETY_CEILING = 400;
 const MAX_CONSECUTIVE_DELTA_REVIEWS_SAFETY_CEILING = 3;
 
 const DEFAULT_POLICY: ReviewRemediationModePolicy = {
-    schema_version: 1,
+    schema_version: 2,
     policy_id: 'conservative_review_remediation_mode_v1',
     initial_review_mode: 'FULL',
     delta_eligible_review_types: [...REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES],
@@ -104,6 +121,9 @@ const LEGACY_FALLBACK_DIAGNOSTIC =
 
 const LEGACY_PROFILE_FALLBACK_DIAGNOSTIC =
     'is missing review_remediation_mode_policy; remediation reviews remain FULL-only until an explicit compatible policy is configured.';
+
+const LEGACY_SCHEMA_FALLBACK_DIAGNOSTIC =
+    'uses review_remediation_mode_policy schema version 1; remediation reviews remain FULL-only until init migrates the policy to schema version 2.';
 
 const DENY_ONLY_PATH_SIGNALS: ReadonlyArray<{
     signal: ReviewRemediationProtectedBoundarySignal;
@@ -156,8 +176,32 @@ function isPositiveInteger(value: unknown): value is number {
     return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
 
-export function buildDefaultReviewRemediationModePolicy(): ReviewRemediationModePolicy {
-    return clonePolicy(DEFAULT_POLICY);
+function resolveDefaultReviewTypeIds(
+    options: ReviewRemediationModePolicyValidationOptions
+): string[] {
+    if (!options.allowedReviewTypeIds) {
+        return [...REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES];
+    }
+    const reviewTypeIds = [...new Set([
+        ...REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES,
+        ...options.allowedReviewTypeIds.map((reviewType) => reviewType.trim().toLowerCase())
+    ])].filter(Boolean).sort();
+    const invalid = reviewTypeIds.filter((reviewType) => (
+        !REVIEW_REMEDIATION_REVIEW_TYPE_ID_REGEX.test(reviewType)
+    ));
+    if (invalid.length > 0) {
+        throw new Error(`Review catalog contains invalid review lane identifiers: ${invalid.join(', ')}.`);
+    }
+    return reviewTypeIds;
+}
+
+export function buildDefaultReviewRemediationModePolicy(
+    options: ReviewRemediationModePolicyValidationOptions = {}
+): ReviewRemediationModePolicy {
+    return {
+        ...clonePolicy(DEFAULT_POLICY),
+        delta_eligible_review_types: resolveDefaultReviewTypeIds(options)
+    };
 }
 
 export function hasReviewRemediationPolicySourceChange(changedFiles: readonly string[]): boolean {
@@ -167,7 +211,10 @@ export function hasReviewRemediationPolicySourceChange(changedFiles: readonly st
     });
 }
 
-export function getReviewRemediationModePolicyViolations(value: unknown): string[] {
+export function getReviewRemediationModePolicyViolations(
+    value: unknown,
+    options: ReviewRemediationModePolicyValidationOptions = {}
+): string[] {
     if (!isPlainRecord(value)) {
         return ['review_remediation_mode_policy must be a JSON object.'];
     }
@@ -182,8 +229,8 @@ export function getReviewRemediationModePolicyViolations(value: unknown): string
             violations.push(`review_remediation_mode_policy.${key} is not allowed.`);
         }
     }
-    if (value.schema_version !== 1) {
-        violations.push('review_remediation_mode_policy.schema_version must be 1.');
+    if (value.schema_version !== 1 && value.schema_version !== 2) {
+        violations.push('review_remediation_mode_policy.schema_version must be 1 or 2.');
     }
     if (value.policy_id !== 'conservative_review_remediation_mode_v1') {
         violations.push(
@@ -194,18 +241,39 @@ export function getReviewRemediationModePolicyViolations(value: unknown): string
         violations.push('review_remediation_mode_policy.initial_review_mode must be FULL.');
     }
     const eligibleReviewTypes = normalizedStringList(value.delta_eligible_review_types);
-    if (!eligibleReviewTypes || eligibleReviewTypes.length === 0) {
+    if (!eligibleReviewTypes) {
         violations.push(
-            'review_remediation_mode_policy.delta_eligible_review_types must be a canonical non-empty array.'
+            'review_remediation_mode_policy.delta_eligible_review_types must be a canonical array.'
         );
     } else {
-        const weakened = eligibleReviewTypes.filter((reviewType) => (
-            !(REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES as readonly string[]).includes(reviewType)
-        ));
-        if (weakened.length > 0) {
+        if (value.schema_version === 1 && eligibleReviewTypes.length === 0) {
             violations.push(
-                `review_remediation_mode_policy.delta_eligible_review_types cannot weaken the protected lane floor: ${weakened.join(', ')}.`
+                'review_remediation_mode_policy.delta_eligible_review_types must be non-empty for schema version 1.'
             );
+        }
+        const structurallyUnsupported = eligibleReviewTypes.filter((reviewType) => (
+            value.schema_version === 1
+                ? !(LEGACY_REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES as readonly string[]).includes(reviewType)
+                : !REVIEW_REMEDIATION_REVIEW_TYPE_ID_REGEX.test(reviewType)
+        ));
+        if (structurallyUnsupported.length > 0) {
+            violations.push(
+                'review_remediation_mode_policy.delta_eligible_review_types contains invalid or unsupported ' +
+                `schema-${String(value.schema_version)} review lane identifiers: ${structurallyUnsupported.join(', ')}.`
+            );
+        }
+        if (value.schema_version === 2 && options.allowedReviewTypeIds) {
+            const allowedReviewTypeIds = new Set(options.allowedReviewTypeIds);
+            const absentFromCatalog = eligibleReviewTypes.filter((reviewType) => (
+                REVIEW_REMEDIATION_REVIEW_TYPE_ID_REGEX.test(reviewType)
+                && !allowedReviewTypeIds.has(reviewType)
+            ));
+            if (absentFromCatalog.length > 0) {
+                violations.push(
+                    'review_remediation_mode_policy.delta_eligible_review_types contains review lanes ' +
+                    `absent from the review catalog: ${absentFromCatalog.join(', ')}.`
+                );
+            }
         }
     }
     const forceFullCategories = normalizedStringList(value.force_full_categories);
@@ -248,17 +316,45 @@ export function getReviewRemediationModePolicyViolations(value: unknown): string
     return violations;
 }
 
-export function validateReviewRemediationModePolicy(value: unknown): ReviewRemediationModePolicy {
-    const violations = getReviewRemediationModePolicyViolations(value);
+export function validateReviewRemediationModePolicy(
+    value: unknown,
+    options: ReviewRemediationModePolicyValidationOptions = {}
+): ReviewRemediationModePolicy {
+    const violations = getReviewRemediationModePolicyViolations(value, options);
     if (violations.length > 0) {
         throw new Error(`Review remediation mode policy is invalid: ${violations.join(' ')}`);
     }
     return clonePolicy(value as unknown as ReviewRemediationModePolicy);
 }
 
+export function migrateReviewRemediationModePolicyLaneDefaults(
+    value: unknown,
+    options: ReviewRemediationModePolicyValidationOptions = {}
+): unknown {
+    if (!isPlainRecord(value) || value.schema_version !== 1) {
+        return value;
+    }
+    if (getReviewRemediationModePolicyViolations(value).length > 0) {
+        return value;
+    }
+    const legacyEligibleReviewTypes = normalizedStringList(value.delta_eligible_review_types) ?? [];
+    const newlyEligibleReviewTypes = resolveDefaultReviewTypeIds(options).filter((reviewType) => (
+        !(LEGACY_REVIEW_REMEDIATION_DELTA_ELIGIBLE_REVIEW_TYPES as readonly string[]).includes(reviewType)
+    ));
+    return {
+        ...value,
+        schema_version: 2,
+        delta_eligible_review_types: [...new Set([
+            ...legacyEligibleReviewTypes,
+            ...newlyEligibleReviewTypes
+        ])].sort()
+    };
+}
+
 export function resolveReviewRemediationModePolicyFromProfile(
     value: unknown,
-    profileName: string
+    profileName: string,
+    options: ReviewRemediationModePolicyValidationOptions = {}
 ): ReviewRemediationModePolicyResolution {
     if (value === undefined) {
         return {
@@ -267,7 +363,14 @@ export function resolveReviewRemediationModePolicyFromProfile(
             legacy_fallback: true
         };
     }
-    const policy = validateReviewRemediationModePolicy(value);
+    const policy = validateReviewRemediationModePolicy(value, options);
+    if (policy.schema_version === 1) {
+        return {
+            policy,
+            diagnostics: [`Profile '${profileName}' ${LEGACY_SCHEMA_FALLBACK_DIAGNOSTIC}`],
+            legacy_fallback: true
+        };
+    }
     return {
         policy,
         diagnostics: [
@@ -291,8 +394,16 @@ export function resolveReviewRemediationModePolicyFromSnapshot(
     const diagnostics = Array.isArray(snapshot.review_remediation_mode_policy_diagnostics)
         ? snapshot.review_remediation_mode_policy_diagnostics.map((entry) => String(entry))
         : [];
+    const policy = validateReviewRemediationModePolicy(snapshot.review_remediation_mode_policy);
+    if (policy.schema_version === 1) {
+        return {
+            policy,
+            diagnostics: [...diagnostics, `Task profile snapshot ${LEGACY_SCHEMA_FALLBACK_DIAGNOSTIC}`],
+            legacy_fallback: true
+        };
+    }
     return {
-        policy: validateReviewRemediationModePolicy(snapshot.review_remediation_mode_policy),
+        policy,
         diagnostics,
         legacy_fallback: false
     };

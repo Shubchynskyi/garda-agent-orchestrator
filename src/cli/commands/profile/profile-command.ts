@@ -121,6 +121,9 @@ function handleUse(positionals: string[], options: ParsedOptionsRecord, bundleRo
 
 function handleCreate(positionals: string[], options: ParsedOptionsRecord, bundleRoot: string): MaybePromise<void> {
     const profilesPath = resolveProfilesPath(bundleRoot);
+    const reviewTypeIds = readReviewCatalogConfigFile(
+        resolveConfigPaths(bundleRoot).reviewCatalog
+    ).review_types.map(({ id }) => id);
     const name = String(positionals[0] || '').trim();
     if (!name) {
         if (options.json === true) {
@@ -135,7 +138,7 @@ function handleCreate(positionals: string[], options: ParsedOptionsRecord, bundl
         }
         const promptData = readProfilesData(profilesPath);
         return (async () => {
-            const interactiveInput = await resolveInteractiveCreateInput(promptData, options);
+            const interactiveInput = await resolveInteractiveCreateInput(promptData, options, reviewTypeIds);
             withProfilesDataLock(profilesPath, () => {
                 const currentData = readProfilesData(profilesPath);
                 recoverPendingProfileFindingPolicyAudits(bundleRoot, currentData);
@@ -195,7 +198,7 @@ function handleCreate(positionals: string[], options: ParsedOptionsRecord, bundl
             if (typeof options.depth === 'string') {
                 depth = parseStrictDepth(options.depth);
             }
-            entry = buildDefaultProfileEntry(description, depth);
+            entry = buildDefaultProfileEntry(description, depth, reviewTypeIds);
         }
 
         data.user_profiles[name] = entry;

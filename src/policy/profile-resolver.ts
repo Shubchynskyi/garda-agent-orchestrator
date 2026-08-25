@@ -1285,7 +1285,8 @@ export function resolveEffectivePolicy(
     );
     const reviewRemediationModePolicy = resolveReviewRemediationModePolicyFromProfile(
         entry.review_remediation_mode_policy,
-        profileName
+        profileName,
+        { allowedReviewTypeIds: reviewCatalog.review_types.map(({ id }) => id) }
     );
     const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(
         entry.task_decomposition,

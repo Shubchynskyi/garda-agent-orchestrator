@@ -98,7 +98,9 @@ export function validateProfilesIntegrity(
             );
         }
         if (entry.review_remediation_mode_policy !== undefined) {
-            issues.push(...getReviewRemediationModePolicyViolations(entry.review_remediation_mode_policy)
+            issues.push(...getReviewRemediationModePolicyViolations(entry.review_remediation_mode_policy, {
+                allowedReviewTypeIds: options?.reviewCatalog.review_types.map(({ id }) => id)
+            })
                 .map((issue) => `Profile '${name}' ${issue}`));
         }
         if (options) {
@@ -139,7 +141,11 @@ export function cloneProfileEntry(entry: ProfileEntry): ProfileEntry {
     return JSON.parse(JSON.stringify(entry)) as ProfileEntry;
 }
 
-export function buildDefaultProfileEntry(description: string, depth: number): ProfileEntry {
+export function buildDefaultProfileEntry(
+    description: string,
+    depth: number,
+    allowedReviewTypeIds?: readonly string[]
+): ProfileEntry {
     return {
         description,
         depth,
@@ -164,7 +170,7 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
             materialization_mode: 'grouped_by_parent',
             task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
         },
-        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
+        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy({ allowedReviewTypeIds }),
         token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
         skills: { auto_suggest: true }
     };

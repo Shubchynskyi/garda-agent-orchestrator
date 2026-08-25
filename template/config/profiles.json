@@ -39,12 +39,18 @@
         }
       },
       "review_remediation_mode_policy": {
-        "schema_version": 1,
+        "schema_version": 2,
         "policy_id": "conservative_review_remediation_mode_v1",
         "initial_review_mode": "FULL",
         "delta_eligible_review_types": [
+          "api",
           "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
           "refactor",
+          "security",
           "test"
         ],
         "force_full_categories": [
@@ -104,12 +110,18 @@
         }
       },
       "review_remediation_mode_policy": {
-        "schema_version": 1,
+        "schema_version": 2,
         "policy_id": "conservative_review_remediation_mode_v1",
         "initial_review_mode": "FULL",
         "delta_eligible_review_types": [
+          "api",
           "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
           "refactor",
+          "security",
           "test"
         ],
         "force_full_categories": [
@@ -169,12 +181,18 @@
         }
       },
       "review_remediation_mode_policy": {
-        "schema_version": 1,
+        "schema_version": 2,
         "policy_id": "conservative_review_remediation_mode_v1",
         "initial_review_mode": "FULL",
         "delta_eligible_review_types": [
+          "api",
           "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
           "refactor",
+          "security",
           "test"
         ],
         "force_full_categories": [
@@ -234,12 +252,18 @@
         }
       },
       "review_remediation_mode_policy": {
-        "schema_version": 1,
+        "schema_version": 2,
         "policy_id": "conservative_review_remediation_mode_v1",
         "initial_review_mode": "FULL",
         "delta_eligible_review_types": [
+          "api",
           "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
           "refactor",
+          "security",
           "test"
         ],
         "force_full_categories": [

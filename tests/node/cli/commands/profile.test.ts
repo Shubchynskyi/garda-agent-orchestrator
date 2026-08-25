@@ -21,7 +21,10 @@ import {
 import type { ProfileEntry } from '../../../../src/cli/commands/profile/profile-types';
 import { handleUiProfileRequest } from '../../../../src/reports/ui/actions/profile-actions';
 import { buildHelpText } from '../../../../src/cli/commands/cli-help-output';
-import { resolveReviewRemediationModePolicyFromProfile } from '../../../../src/policy/review-remediation-mode-policy';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    resolveReviewRemediationModePolicyFromProfile
+} from '../../../../src/policy/review-remediation-mode-policy';
 
 const PACKAGE_JSON = { name: 'test-pkg', version: '1.0.0' };
 
@@ -766,6 +769,29 @@ test('profile validate rejects review ids that are absent from the catalog', () 
     const validation = result as { passed: boolean; issues: string[] };
     assert.equal(validation.passed, false);
     assert.match(validation.issues.join('\n'), /unknown catalog review id 'ghost'/u);
+});
+
+test('profile validate accepts registered remediation lanes and rejects unregistered remediation lanes', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.built_in_profiles.balanced.review_remediation_mode_policy = buildDefaultReviewRemediationModePolicy();
+    const policy = data.built_in_profiles.balanced.review_remediation_mode_policy;
+    policy.delta_eligible_review_types.push('architecture-boundary');
+    policy.delta_eligible_review_types.sort();
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+
+    const accepted = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    assert.equal((accepted.result as { passed: boolean }).passed, true);
+
+    policy.delta_eligible_review_types.push('ghost');
+    policy.delta_eligible_review_types.sort();
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+    const rejected = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const validation = rejected.result as { passed: boolean; issues: string[] };
+    assert.equal(validation.passed, false);
+    assert.match(validation.issues.join('\n'), /absent from the review catalog: ghost/iu);
 });
 
 test('profile validate rejects a required custom lane whose capability is disabled', () => {
@@ -2585,6 +2611,24 @@ test('profile create accepts valid kebab-case names', () => {
         data.user_profiles['my-profile-2'].review_remediation_mode_policy.policy_id,
         'conservative_review_remediation_mode_v1'
     );
+    assert.deepEqual(
+        data.user_profiles['my-profile-2'].review_remediation_mode_policy.delta_eligible_review_types,
+        ['api', 'code', 'db', 'dependency', 'infra', 'performance', 'refactor', 'security', 'test']
+    );
+});
+
+test('profile create defaults every registered catalog lane to DELTA eligibility', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    captureConsole(() => handleProfile([
+        'create', 'catalog-defaults',
+        '--bundle-root', bundleRoot,
+        '--description', 'Catalog defaults'
+    ], PACKAGE_JSON));
+
+    const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
+    assert.ok(data.user_profiles['catalog-defaults'].review_remediation_mode_policy
+        .delta_eligible_review_types.includes('architecture-boundary'));
 });
 
 test('profile create accepts localized lowercase profile names', () => {

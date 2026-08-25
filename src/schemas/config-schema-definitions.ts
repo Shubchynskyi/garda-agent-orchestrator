@@ -12,6 +12,7 @@ import {
     COLLECTED_VIA_VALUES
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
+import { REVIEW_REMEDIATION_REVIEW_TYPE_ID_PATTERN } from '../policy/review-remediation-mode-policy';
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
@@ -807,41 +808,56 @@ const REVIEW_FINDING_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
+function reviewRemediationModePolicySchemaVariant(
+    schemaVersion: 1 | 2,
+    eligibleReviewTypes: readonly string[],
+    minEligibleReviewTypes: number
+): Record<string, unknown> {
+    return {
+        type: 'object',
+        properties: {
+            schema_version: { type: 'integer', const: schemaVersion },
+            policy_id: { type: 'string', const: 'conservative_review_remediation_mode_v1' },
+            initial_review_mode: { type: 'string', const: 'FULL' },
+            delta_eligible_review_types: {
+                type: 'array',
+                minItems: minEligibleReviewTypes,
+                uniqueItems: true,
+                items: schemaVersion === 1
+                    ? { type: 'string', enum: [...eligibleReviewTypes] }
+                    : { type: 'string', pattern: REVIEW_REMEDIATION_REVIEW_TYPE_ID_PATTERN }
+            },
+            force_full_categories: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 3,
+                uniqueItems: true,
+                items: { type: 'string', enum: ['ambiguous', 'generated_churn', 'global'] }
+            },
+            max_delta_changed_files: { type: 'integer', minimum: 1, maximum: 5 },
+            max_delta_changed_lines: { type: 'integer', minimum: 1, maximum: 400 },
+            max_consecutive_delta_reviews: { type: 'integer', minimum: 1, maximum: 3 }
+        },
+        required: [
+            'schema_version',
+            'policy_id',
+            'initial_review_mode',
+            'delta_eligible_review_types',
+            'force_full_categories',
+            'max_delta_changed_files',
+            'max_delta_changed_lines',
+            'max_consecutive_delta_reviews'
+        ],
+        additionalProperties: false
+    };
+}
+
 const REVIEW_REMEDIATION_MODE_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
-    type: 'object',
     description: 'Explicit conservative FULL/DELTA remediation policy. A missing policy preserves legacy FULL-only behavior.',
-    properties: {
-        schema_version: { type: 'integer', const: 1 },
-        policy_id: { type: 'string', const: 'conservative_review_remediation_mode_v1' },
-        initial_review_mode: { type: 'string', const: 'FULL' },
-        delta_eligible_review_types: {
-            type: 'array',
-            minItems: 1,
-            uniqueItems: true,
-            items: { type: 'string', enum: ['code', 'refactor', 'test'] }
-        },
-        force_full_categories: {
-            type: 'array',
-            minItems: 3,
-            maxItems: 3,
-            uniqueItems: true,
-            items: { type: 'string', enum: ['ambiguous', 'generated_churn', 'global'] }
-        },
-        max_delta_changed_files: { type: 'integer', minimum: 1, maximum: 5 },
-        max_delta_changed_lines: { type: 'integer', minimum: 1, maximum: 400 },
-        max_consecutive_delta_reviews: { type: 'integer', minimum: 1, maximum: 3 }
-    },
-    required: [
-        'schema_version',
-        'policy_id',
-        'initial_review_mode',
-        'delta_eligible_review_types',
-        'force_full_categories',
-        'max_delta_changed_files',
-        'max_delta_changed_lines',
-        'max_consecutive_delta_reviews'
-    ],
-    additionalProperties: false
+    oneOf: [
+        reviewRemediationModePolicySchemaVariant(1, ['code', 'refactor', 'test'], 1),
+        reviewRemediationModePolicySchemaVariant(2, [...REVIEW_CAPABILITY_KEYS].sort(), 0)
+    ]
 });
 
 const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({

@@ -910,6 +910,10 @@ test('validateProfilesConfig validates template profiles.json', () => {
         (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
         'conservative_review_remediation_mode_v1'
     );
+    assert.deepEqual(
+        (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).delta_eligible_review_types,
+        ['api', 'code', 'db', 'dependency', 'infra', 'performance', 'refactor', 'security', 'test']
+    );
     assert.deepEqual(builtIn.balanced.task_decomposition, { enabled: true });
 
     const user = normalized.user_profiles as Record<string, unknown>;
@@ -996,15 +1000,30 @@ test('validateProfilesConfig allows legacy profiles without review_finding_polic
     assert.equal(builtIn.legacy.review_remediation_mode_policy, undefined);
 });
 
-test('validateProfilesConfig rejects weakened remediation mode policy', () => {
+test('validateProfilesConfig accepts explicit disables and stable custom lanes while rejecting malformed lane ids', () => {
     const profiles = structuredClone(readTemplateConfig('profiles'));
     const policy = (
         profiles.built_in_profiles as Record<string, Record<string, unknown>>
     ).balanced.review_remediation_mode_policy as Record<string, unknown>;
-    policy.delta_eligible_review_types = ['code', 'security'];
+    policy.delta_eligible_review_types = [];
+    const normalized = validateProfilesConfig(profiles);
+    assert.deepEqual(
+        (normalized.built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy,
+        policy
+    );
+
+    policy.delta_eligible_review_types = ['custom-quality'];
+    assert.deepEqual(
+        ((validateProfilesConfig(profiles).built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy as Record<string, unknown>).delta_eligible_review_types,
+        ['custom-quality']
+    );
+
+    policy.delta_eligible_review_types = ['custom_lane'];
     assert.throws(
         () => validateProfilesConfig(profiles),
-        /cannot weaken the protected lane floor/u
+        /invalid or unsupported.*review lane identifiers/u
     );
 });
 

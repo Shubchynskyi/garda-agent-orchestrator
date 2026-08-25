@@ -787,6 +787,38 @@ test('resolveEffectivePolicy rejects unknown catalog review ids', () => {
     }
 });
 
+test('resolveEffectivePolicy accepts registered remediation lanes and rejects unregistered remediation lanes', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': true }
+    });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+        profiles.built_in_profiles.balanced.review_remediation_mode_policy =
+            buildDefaultReviewRemediationModePolicy();
+        const remediationPolicy = profiles.built_in_profiles.balanced.review_remediation_mode_policy;
+        remediationPolicy.delta_eligible_review_types.push('architecture-boundary');
+        remediationPolicy.delta_eligible_review_types.sort();
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        const policy = resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false });
+        assert.ok(policy.review_remediation_mode_policy.policy.delta_eligible_review_types.includes(
+            'architecture-boundary'
+        ));
+
+        remediationPolicy.delta_eligible_review_types.push('ghost');
+        remediationPolicy.delta_eligible_review_types.sort();
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false }),
+            /absent from the review catalog: ghost/iu
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
 test('resolveEffectivePolicy rejects a required lane with a disabled capability', () => {
     const bundleRoot = makeTempBundle({
         reviewCatalog: customReviewCatalog(),

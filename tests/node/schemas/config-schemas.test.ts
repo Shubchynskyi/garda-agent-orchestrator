@@ -305,7 +305,36 @@ test('profiles schema requires exact conservative remediation policy when explic
     policy.force_full_categories = ['ambiguous', 'global'];
     const invalidResult = validateAgainstSchema(invalid, profilesSchema);
     assert.equal(invalidResult.valid, false);
-    assert.ok(invalidResult.errors.some((error) => error.path.includes('force_full_categories')));
+    assert.ok(invalidResult.errors.some((error) => error.message.includes('oneOf schemas')));
+
+    const allDisabled = structuredClone(template);
+    const allDisabledPolicy = (
+        allDisabled.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    allDisabledPolicy.delta_eligible_review_types = [];
+    assert.equal(validateAgainstSchema(allDisabled, profilesSchema).valid, true);
+
+    const customLane = structuredClone(template);
+    const customLanePolicy = (
+        customLane.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    customLanePolicy.delta_eligible_review_types = ['custom-quality'];
+    assert.equal(validateAgainstSchema(customLane, profilesSchema).valid, true);
+
+    const malformedCustomLane = structuredClone(template);
+    const malformedCustomLanePolicy = (
+        malformedCustomLane.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    malformedCustomLanePolicy.delta_eligible_review_types = ['custom_lane'];
+    assert.equal(validateAgainstSchema(malformedCustomLane, profilesSchema).valid, false);
+
+    const legacyWithNewLane = structuredClone(template);
+    const legacyPolicy = (
+        legacyWithNewLane.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    legacyPolicy.schema_version = 1;
+    legacyPolicy.delta_eligible_review_types = ['code', 'security'];
+    assert.equal(validateAgainstSchema(legacyWithNewLane, profilesSchema).valid, false);
 
     const legacy = structuredClone(template);
     delete (
