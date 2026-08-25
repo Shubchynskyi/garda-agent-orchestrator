@@ -1047,6 +1047,10 @@ function resolveAuthenticatedReviewOutputCorrectionCapabilities(options: {
         && !/^(?:garda_prepare_reviewer_launch|orchestrator_mock|manual|mock|test|placeholder)$/iu.test(
             attestationSource
         )
+        // multi_agent_v1 can continue a reviewer conversation, but it does not
+        // expose a provider response receipt that Garda can bind to corrected
+        // output bytes. Keep that controller on the correction-only fallback.
+        && attestationSource.toLowerCase() !== 'multi_agent_v1.spawn_agent'
         && Number.isFinite(Date.parse(launchCompletedAtUtc))
     );
     return {

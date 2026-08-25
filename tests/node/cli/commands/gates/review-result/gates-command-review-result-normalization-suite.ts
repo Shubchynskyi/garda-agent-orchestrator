@@ -217,6 +217,7 @@ function rebindCompletedLaunchAttemptForTest(options: {
     reviewOutputPath?: string;
     recordCompletion?: boolean;
     provider?: string;
+    attestationSource?: string;
 }): void {
     const invocationEvent = [...readTaskTimelineEvents(options.repoRoot, options.taskId)]
         .reverse()
@@ -347,6 +348,9 @@ function rebindCompletedLaunchAttemptForTest(options: {
     if (options.provider) {
         launchArtifact.provider = options.provider;
     }
+    if (options.attestationSource) {
+        launchArtifact.attestation_source = options.attestationSource;
+    }
     const reboundLaunchCompletedAtUtc = options.recordCompletion ? new Date().toISOString() : null;
     if (reboundLaunchCompletedAtUtc) {
         launchArtifact.launch_completed_at_utc = reboundLaunchCompletedAtUtc;
@@ -368,6 +372,12 @@ function rebindCompletedLaunchAttemptForTest(options: {
         prepared_launch_event_task_sequence: preparedLaunchEventTaskSequence,
         launch_binding_sha256: launchBindingSha256,
         review_context_sha256: reviewContextSha256,
+        ...(options.attestationSource
+            ? {
+                reviewer_launch_attestation_source: options.attestationSource,
+                attestation_source: options.attestationSource
+            }
+            : {}),
         ...(reboundLaunchCompletedAtUtc ? { launch_completed_at_utc: reboundLaunchCompletedAtUtc } : {})
     };
     if (options.recordCompletion) {
@@ -3332,6 +3342,71 @@ describe('gates command review result - normalization', () => {
             originalInvocationEventSha256
         );
         fs.rmSync(outsideResponseRoot, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('routes multi_agent_v1 Codex corrections through a clean correction-only reviewer', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-multi-agent-correction-only';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        fs.writeFileSync(outputPath, `${JSON.stringify(rejectedReport, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'multi-agent-correction-only-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true,
+            provider: 'Codex',
+            attestationSource: 'multi_agent_v1.spawn_agent'
+        });
+
+        const rejected = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(rejected.exitCode, 0);
+        const correctionArtifact = readReviewOutputCorrectionArtifact(path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        )).artifact!;
+        assert.equal(correctionArtifact.recovery.selected_transport, 'correction_only_invocation');
+        assert.equal(
+            correctionArtifact.recovery.available_transports.includes('live_reviewer_continuation'),
+            false
+        );
+        assert.equal(correctionArtifact.recovery.handoff?.provider_action, 'launch_correction_only_reviewer');
+        assert.equal(correctionArtifact.transport_binding?.session_availability, 'stateless');
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
