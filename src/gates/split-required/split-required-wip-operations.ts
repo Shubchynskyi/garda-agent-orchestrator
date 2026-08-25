@@ -33,7 +33,6 @@ import type {
 import {
     applyAdvancedRestorePlan,
     buildGitApplyIncludeArgs,
-    ensureCleanTrackedWorkspace,
     gitFailureMessage,
     hasPatchContent,
     normalizeSelectedPaths,
@@ -43,6 +42,7 @@ import {
     validateAdvancedManifestBlobs,
     validateManifestFileReferences,
     validateNoSymlinkPaths,
+    validateSequentialRestoreWorkspace,
     validateSelectedTargetsClean,
     validateTrackedTargetObstructions
 } from './split-required-wip-restore-plan';
@@ -157,7 +157,7 @@ export function restoreSplitRequiredWip(params: {
             violations.push(...validateTrackedTargetObstructions(repoRoot, selectedTrackedFiles));
             violations.push(...validateAdvancedManifestBlobs(repoRoot, manifest, selectedTrackedFiles));
         } else {
-            violations.push(...ensureCleanTrackedWorkspace(repoRoot));
+            violations.push(...validateSequentialRestoreWorkspace(repoRoot, manifest));
         }
         violations.push(...validateManifestFileReferences(repoRoot, manifest));
         for (const entry of selectedUntrackedFiles) {
