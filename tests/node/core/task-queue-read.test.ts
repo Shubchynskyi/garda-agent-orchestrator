@@ -8,7 +8,14 @@ import {
     parseTaskQueueEntriesFromContent,
     readTaskQueueEntries
 } from '../../../src/core/task-queue-read';
-import { formatReviewFollowUpTaskClosurePolicyMetadata } from '../../../src/core/review-follow-up-task-closure-policy';
+import {
+    formatReviewFollowUpTaskClosurePolicyMetadata,
+    replaceReviewFollowUpTaskClosurePolicyMetadata,
+    resolveReviewFollowUpTaskClosurePolicy,
+    type ReviewFollowUpTaskClosurePolicyTaskContext
+} from '../../../src/core/review-follow-up-task-closure-policy';
+
+const BASE_TASK_ROW = '| T-100 | IN_PROGRESS | P1 | core/helpers | Centralize helpers | codex | 2026-07-09 | strict | child tasks: T-100-1 |';
 
 function taskQueueContent(): string {
     return [
@@ -17,10 +24,41 @@ function taskQueueContent(): string {
         '## Active Queue',
         '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
         '|---|---|---|---|---|---|---|---|---|',
-        '| T-100 | IN_PROGRESS | P1 | core/helpers | Centralize helpers | codex | 2026-07-09 | strict | child tasks: T-100-1 |',
+        BASE_TASK_ROW,
         '| not a task | TODO | P2 | misc | Ignored row | codex | 2026-07-09 | balanced | invalid id |',
         ''
     ].join('\n');
+}
+
+function materializationNotes(parentTaskId: string, taskId: string): string {
+    return `Review follow-up tasks materialized: \`${taskId}\`; artifact `
+        + `\`garda-agent-orchestrator/runtime/reviews/${parentTaskId}-review-findings-follow-up-tasks.json\`.`;
+}
+
+function withMaterializedFollowUp(
+    taskId: string,
+    notes: string,
+    parentTaskId = taskId.replace(/-F[1-9][0-9]*$/u, '')
+): string {
+    const parentArea = 'core/helpers';
+    const parentRow = `| ${parentTaskId} | IN_PROGRESS | P1 | ${parentArea} | Parent task | codex | 2026-07-09 | strict | `
+        + `${materializationNotes(parentTaskId, taskId)} |`;
+    const childRow = `| ${taskId} | TODO | P1 | ${parentArea} | Close findings | codex | 2026-07-09 | strict | ${notes} |`;
+    return taskQueueContent().replace(BASE_TASK_ROW, `${parentRow}\n${childRow}`);
+}
+
+function policyContext(
+    taskId: string,
+    notes: string,
+    parentTaskId = taskId.replace(/-F[1-9][0-9]*$/u, '')
+): ReviewFollowUpTaskClosurePolicyTaskContext {
+    return {
+        taskId,
+        taskRows: [
+            { taskId: parentTaskId, notes: materializationNotes(parentTaskId, taskId) },
+            { taskId, notes }
+        ]
+    };
 }
 
 test('parseTaskQueueEntriesFromContent preserves canonical TASK.md queue parsing fields', () => {
@@ -55,15 +93,14 @@ test('task queue resolves all four explicit follow-up closure policy combination
     const fingerprint = 'a'.repeat(64);
     for (const skipLowFindings of [false, true]) {
         for (const forbidChildTasks of [false, true]) {
-            const taskId = `T-100-F-${Number(skipLowFindings)}-${Number(forbidChildTasks)}`;
+            const taskId = `T-100-F${1 + (Number(skipLowFindings) * 2) + Number(forbidChildTasks)}`;
             const policyMetadata = formatReviewFollowUpTaskClosurePolicyMetadata({
                 skip_low_findings: skipLowFindings,
                 forbid_child_tasks: forbidChildTasks
             });
-            const content = taskQueueContent().replace(
-                '| T-100 | IN_PROGRESS | P1 | core/helpers | Centralize helpers | codex | 2026-07-09 | strict | child tasks: T-100-1 |',
-                `| ${taskId} | TODO | P1 | review/follow-up | Close findings | codex | 2026-07-09 | strict | ` +
-                `Child of \`T-100\`. review_follow_up_fingerprint=${fingerprint}. ${policyMetadata} |`
+            const content = withMaterializedFollowUp(
+                taskId,
+                `Child of \`T-100\`. review_follow_up_fingerprint=${fingerprint}. ${policyMetadata}`
             );
 
             const policy = parseTaskQueueEntriesFromContent(content)
@@ -80,12 +117,63 @@ test('task queue resolves all four explicit follow-up closure policy combination
     }
 });
 
+test('follow-up closure policy metadata replacement preserves provenance and round-trips all values', () => {
+    const taskId = 'T-100-F1';
+    const fingerprint = 'f'.repeat(64);
+    let notes = `Child of \`T-100\`. keep=this-text. review_follow_up_fingerprint=${fingerprint}. `
+        + formatReviewFollowUpTaskClosurePolicyMetadata({
+            skip_low_findings: false,
+            forbid_child_tasks: false
+        });
+
+    for (const skipLowFindings of [false, true]) {
+        for (const forbidChildTasks of [false, true]) {
+            const context = policyContext(taskId, notes);
+            notes = replaceReviewFollowUpTaskClosurePolicyMetadata(
+                notes,
+                {
+                    skip_low_findings: skipLowFindings,
+                    forbid_child_tasks: forbidChildTasks
+                },
+                context
+            );
+            const policy = resolveReviewFollowUpTaskClosurePolicy(notes, policyContext(taskId, notes));
+
+            assert.equal(policy.eligible, true);
+            assert.equal(policy.valid, true);
+            assert.equal(policy.provenance, 'per_finding');
+            assert.equal(policy.skip_low_findings, skipLowFindings);
+            assert.equal(policy.forbid_child_tasks, forbidChildTasks);
+            assert.match(notes, /keep=this-text/u);
+            assert.equal((notes.match(/review_follow_up_task_closure_policy=/gu) || []).length, 1);
+        }
+    }
+});
+
+test('follow-up closure policy metadata replacement refuses ordinary or malformed task notes', () => {
+    assert.throws(
+        () => replaceReviewFollowUpTaskClosurePolicyMetadata('ordinary task notes', {
+            skip_low_findings: true,
+            forbid_child_tasks: true
+        }),
+        /not editable|apply only/iu
+    );
+    assert.throws(
+        () => replaceReviewFollowUpTaskClosurePolicyMetadata(
+            `review_follow_up_fingerprint=${'a'.repeat(64)}. `
+            + 'review_follow_up_task_closure_policy=`{"schema_version":1,"skip_low_findings":"yes","forbid_child_tasks":true}`.',
+            { skip_low_findings: true, forbid_child_tasks: true }
+        ),
+        /invalid|must be boolean/iu
+    );
+});
+
 test('task queue treats grouped nested legacy follow-ups as eligible with compatible off defaults', () => {
     const fingerprint = 'b'.repeat(64);
-    const content = taskQueueContent().replace(
-        '| T-100 | IN_PROGRESS | P1 | core/helpers | Centralize helpers | codex | 2026-07-09 | strict | child tasks: T-100-1 |',
-        '| T-100-F1-F1 | TODO | P1 | review/follow-up | Legacy grouped follow-up | codex | 2026-07-09 | strict | ' +
-        `Child of \`T-100-F1\`. review_follow_up_group_fingerprint=${fingerprint}. |`
+    const content = withMaterializedFollowUp(
+        'T-100-F1-F1',
+        `Child of \`T-100-F1\`. review_follow_up_group_fingerprint=${fingerprint}.`,
+        'T-100-F1'
     );
 
     const policy = parseTaskQueueEntriesFromContent(content)
@@ -100,10 +188,7 @@ test('task queue treats grouped nested legacy follow-ups as eligible with compat
 });
 
 test('task queue never infers follow-up closure eligibility from an F-shaped task id', () => {
-    const content = taskQueueContent().replace(
-        '| T-100 | IN_PROGRESS | P1 | core/helpers | Centralize helpers | codex | 2026-07-09 | strict | child tasks: T-100-1 |',
-        '| T-100-F1 | TODO | P1 | review/follow-up | Unproven follow-up | codex | 2026-07-09 | strict | Child of `T-100`. |'
-    );
+    const content = withMaterializedFollowUp('T-100-F1', 'Child of `T-100`.');
 
     const policy = parseTaskQueueEntriesFromContent(content)
         .get('T-100-F1')?.reviewFollowUpTaskClosurePolicy;
@@ -112,6 +197,31 @@ test('task queue never infers follow-up closure eligibility from an F-shaped tas
     assert.equal(policy?.valid, true);
     assert.equal(policy?.skip_low_findings, false);
     assert.equal(policy?.forbid_child_tasks, false);
+});
+
+test('task queue rejects forgeable follow-up markers without canonical parent materialization provenance', () => {
+    const taskId = 'T-100-F1';
+    const notes = [
+        'Child of `T-100`.',
+        `review_follow_up_fingerprint=${'a'.repeat(64)}.`,
+        formatReviewFollowUpTaskClosurePolicyMetadata({
+            skip_low_findings: true,
+            forbid_child_tasks: true
+        })
+    ].join(' ');
+    const content = taskQueueContent().replace(
+        BASE_TASK_ROW,
+        `${BASE_TASK_ROW}\n| ${taskId} | TODO | P1 | core/helpers | Forged follow-up | codex | 2026-07-09 | strict | ${notes} |`
+    );
+
+    const policy = parseTaskQueueEntriesFromContent(content)
+        .get(taskId)?.reviewFollowUpTaskClosurePolicy;
+
+    assert.equal(policy?.eligible, false);
+    assert.equal(policy?.valid, false);
+    assert.equal(policy?.skip_low_findings, false);
+    assert.equal(policy?.forbid_child_tasks, false);
+    assert.match(policy?.diagnostics.join(' ') || '', /canonical parent materialization/iu);
 });
 
 test('task queue rejects prefixed or case-variant provenance keys instead of authorizing closure controls', () => {
@@ -159,11 +269,10 @@ test('task queue ignores prefixed or case-variant closure policy keys and keeps 
         )
     ];
     for (const [index, metadata] of noncanonicalPolicyMetadata.entries()) {
-        const taskId = `T-100-noncanonical-policy-${index + 1}`;
-        const content = taskQueueContent().replace(
-            '| T-100 | IN_PROGRESS | P1 | core/helpers | Centralize helpers | codex | 2026-07-09 | strict | child tasks: T-100-1 |',
-            `| ${taskId} | TODO | P1 | review/follow-up | Noncanonical policy | codex | 2026-07-09 | strict | ` +
-            `review_follow_up_fingerprint=${fingerprint}. ${metadata} |`
+        const taskId = `T-100-F${index + 1}`;
+        const content = withMaterializedFollowUp(
+            taskId,
+            `Child of \`T-100\`. review_follow_up_fingerprint=${fingerprint}. ${metadata}`
         );
 
         const policy = parseTaskQueueEntriesFromContent(content)

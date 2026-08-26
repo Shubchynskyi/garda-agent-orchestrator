@@ -7,12 +7,17 @@ import {
     processUiActionRequest,
     readJsonBody,
     sendApiError,
+    sendJson,
     type LocalUiServerRuntimeOptions
 } from './action-http-common';
 import {
     isTaskResetOneShotActionId,
     processTaskResetOneShotActionRequest
 } from './task-reset-one-shot-http';
+import {
+    processUiTaskClosurePolicyRequest,
+    TASK_CLOSURE_POLICY_ACTION_ID
+} from '../task-closure-policy-actions';
 
 export async function handleUiTaskActionRequest(
     request: http.IncomingMessage,
@@ -30,6 +35,11 @@ export async function handleUiTaskActionRequest(
         return;
     }
     const payload = normalizeActionRequest(await readJsonBody(request));
+    if (payload.action_id === TASK_CLOSURE_POLICY_ACTION_ID) {
+        const result = processUiTaskClosurePolicyRequest(repoRoot, taskId, payload);
+        sendJson(response, result.http_status, result);
+        return;
+    }
     const actions = buildUiTaskActionDefinitions(repoRoot, taskId);
     if (isTaskResetOneShotActionId(payload.action_id)) {
         const action = findAction(actions, payload.action_id);

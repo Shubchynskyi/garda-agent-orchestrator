@@ -15,6 +15,7 @@ import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 import {
     LOCAL_UI_LANGUAGES,
     LOCAL_UI_SETTING_TEXT,
+    LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
     LOCAL_UI_TEXT
 } from '../../../src/reports/ui/ui-i18n';
 
@@ -95,7 +96,8 @@ function renderQualityGateHtml(
 
 function renderTaskDetailHtml(
     detail: Record<string, unknown>,
-    initialLanguage = 'ru'
+    initialLanguage = 'ru',
+    actionsEnabled = false
 ): string {
     const detailNode = {
         innerHTML: '',
@@ -113,10 +115,11 @@ function renderTaskDetailHtml(
         languageMetadata: LOCAL_UI_LANGUAGES,
         languagePacks: LOCAL_UI_TEXT,
         settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        taskClosurePolicyTextPacks: LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
         fallbackLanguage: 'en',
         initialLanguage,
         detailNode,
-        actionsEnabled: false,
+        actionsEnabled,
         actionToken: 'asset-test-token',
         currentTaskDetail: null,
         loadedTaskDetails: {},
@@ -134,6 +137,79 @@ function renderTaskDetailHtml(
     vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_TASK_DETAIL}\nrenderTaskDetail(${JSON.stringify(detail)});`, context);
     return detailNode.innerHTML;
 }
+
+test('task detail renders independent guarded F-task closure controls and effective diagnostics', () => {
+    const html = renderTaskDetailHtml({
+        task_id: 'T-1014-F1',
+        stats: {},
+        audit: {
+            blockers: [],
+            review_attempt_summary: { by_type: [] },
+            review_findings_audit: {
+                review_follow_up_task_closure_policy: {
+                    ignored_low_findings_count: 2,
+                    retained_current_task_count: 1,
+                    prohibited_descendant_creation_count: 1,
+                    remaining_blocker_count: 1
+                }
+            }
+        },
+        review_follow_up_task_closure_policy: {
+            stored: { skip_low_findings: true, forbid_child_tasks: false },
+            effective: { skip_low_findings: false, forbid_child_tasks: true },
+            effective_source: 'task_mode_profile_policy_snapshot',
+            state: 'pending_next_cycle',
+            editable: true,
+            editable_reason: null,
+            drift_detected: true,
+            diagnostics: ['Stored values apply on the next task-mode entry.']
+        },
+        full_suite_validation: {},
+        quality_checklist: { latest: null, action_required_history: [] },
+        latest_cycle_events: {},
+        artifact_links: []
+    }, 'ru', true);
+
+    assert.match(html, /Политика закрытия F-задачи/u);
+    assert.match(html, /Сохранённые значения/u);
+    assert.match(html, /Эффективные значения/u);
+    assert.match(html, /ignored_low=2/u);
+    assert.match(html, /retained_current_task=1/u);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'task-closure-skip-low')), true);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'task-closure-forbid-children')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'task-closure-skip-low')), false);
+    assert.match(UI_DASHBOARD_CLIENT_TASK_DETAIL, /expected_notes_sha256/u);
+    assert.match(UI_DASHBOARD_CLIENT_TASK_DETAIL, /currentTaskClosurePolicyPreview = null/u);
+    assert.match(UI_DASHBOARD_CLIENT_TASK_DETAIL, /UPDATE F-TASK POLICY/u);
+});
+
+test('task detail disables F-task closure controls for inapplicable ordinary tasks', () => {
+    const html = renderTaskDetailHtml({
+        task_id: 'T-1014',
+        stats: {},
+        audit: {},
+        review_follow_up_task_closure_policy: {
+            stored: { skip_low_findings: false, forbid_child_tasks: false },
+            effective: { skip_low_findings: false, forbid_child_tasks: false },
+            effective_source: 'task_metadata',
+            state: 'inapplicable',
+            editable: false,
+            editable_reason: 'Closure controls apply only to review-generated follow-up tasks.',
+            drift_detected: false,
+            diagnostics: []
+        },
+        full_suite_validation: {},
+        quality_checklist: { latest: null, action_required_history: [] },
+        latest_cycle_events: {},
+        artifact_links: []
+    }, 'en', true);
+
+    assert.match(html, /Available only for review-generated follow-up tasks/u);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'task-closure-skip-low')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'task-closure-forbid-children')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'button', 'task-closure-policy-preview')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'button', 'task-closure-policy-apply')), true);
+});
 
 function renderProfilesHtml(
     profilesTab: Record<string, unknown>,

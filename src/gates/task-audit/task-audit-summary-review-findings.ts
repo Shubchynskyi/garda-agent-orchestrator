@@ -48,6 +48,7 @@ export interface ReviewFindingsAuditItem {
     evidence_locations: string[];
     coverage_obligation_ids: string[];
     action: ReviewFindingDispositionAction | null;
+    source_rule?: string | null;
     materialization_status: string | null;
     follow_up_task_id: string | null;
     blocking: boolean;
@@ -123,6 +124,22 @@ export interface ReviewFindingsAuditSummary {
     correction_transports?: ReviewOutputCorrectionTransportAudit[];
     fresh_review_count: number;
     reused_review_count: number;
+    review_follow_up_task_closure_policy?: {
+        source: 'preflight_profile_policy_snapshot' | 'legacy_default';
+        eligible: boolean;
+        configured: boolean;
+        valid: boolean;
+        provenance: string | null;
+        source_notes_sha256: string | null;
+        skip_low_findings: boolean;
+        forbid_child_tasks: boolean;
+        ignored_low_findings_count: number;
+        retained_current_task_count: number;
+        prohibited_descendant_creation_count: number;
+        remaining_blocker_count: number;
+        diagnostics: string[];
+        visible_summary_line: string;
+    } | null;
     visible_summary_line: string;
 }
 
@@ -178,6 +195,7 @@ function buildFindingItem(
         evidence_locations: [...finding.evidence_locations],
         coverage_obligation_ids: [...finding.coverage_obligation_ids],
         action: disposition?.action ?? null,
+        source_rule: disposition?.source_rule ?? null,
         materialization_status: disposition?.materialization_status ?? null,
         follow_up_task_id: followUpTaskId,
         blocking: disposition?.blocking === true
@@ -198,6 +216,7 @@ function buildResidualRiskItem(
         evidence_locations: [...risk.evidence_locations],
         coverage_obligation_ids: [],
         action: disposition?.action ?? null,
+        source_rule: disposition?.source_rule ?? null,
         materialization_status: disposition?.materialization_status ?? null,
         follow_up_task_id: followUpTaskId,
         blocking: disposition?.blocking === true
@@ -1920,6 +1939,10 @@ export function buildReviewFindingsAuditSummary(options: {
         ) => void;
     };
 }): ReviewFindingsAuditSummary | null {
+    const closurePolicyResolution = resolveLockedReviewFindingPolicyFromPreflight(
+        options.currentPreflight
+    );
+    const closurePolicy = closurePolicyResolution.follow_up_task_closure_policy;
     const validationFailures = collectValidationFailures(options.timelineEvents);
     const remediationCycles = collectRemediationCycles(options.timelineEvents);
     const requiredReviewTypes = collectKnownRequiredReviewTypes(
@@ -1942,6 +1965,7 @@ export function buildReviewFindingsAuditSummary(options: {
         && validationFailures.length === 0
         && remediationCycles.length === 0
         && correctionTransports.length === 0
+        && !closurePolicy.eligible
     ) {
         return null;
     }
@@ -1967,6 +1991,48 @@ export function buildReviewFindingsAuditSummary(options: {
     const status: ReviewFindingsAuditSummary['status'] = remainingBlockerCount > 0
         ? hasIncompleteLane ? 'INCOMPLETE' : 'BLOCKED'
         : 'CLEAR';
+    const ignoredLowFindingsCount = findings.filter((item) => (
+        item.kind === 'finding'
+        && item.severity === 'low'
+        && item.action === 'ignore'
+        && item.source_rule === 'review_follow_up_task_closure_policy.skip_low_findings'
+    )).length;
+    const retainedCurrentTaskCount = findings.filter((item) => (
+        item.action === 'fix_now'
+        && item.source_rule === 'review_follow_up_task_closure_policy.forbid_child_tasks'
+    )).length;
+    const closurePolicySource: 'preflight_profile_policy_snapshot' | 'legacy_default' =
+        closurePolicyResolution.follow_up_task_closure_policy_source
+        === 'preflight_profile_policy_snapshot'
+        ? 'preflight_profile_policy_snapshot'
+        : 'legacy_default';
+    const closurePolicySummary = closurePolicy.eligible
+        ? {
+            source: closurePolicySource,
+            eligible: closurePolicy.eligible,
+            configured: closurePolicy.configured,
+            valid: closurePolicy.valid,
+            provenance: closurePolicy.provenance,
+            source_notes_sha256: closurePolicy.source_notes_sha256,
+            skip_low_findings: closurePolicy.skip_low_findings,
+            forbid_child_tasks: closurePolicy.forbid_child_tasks,
+            ignored_low_findings_count: ignoredLowFindingsCount,
+            retained_current_task_count: retainedCurrentTaskCount,
+            prohibited_descendant_creation_count: retainedCurrentTaskCount,
+            remaining_blocker_count: findings.filter((item) => (
+                item.blocking
+                && item.source_rule === 'review_follow_up_task_closure_policy.forbid_child_tasks'
+            )).length,
+            diagnostics: [...closurePolicy.diagnostics],
+            visible_summary_line:
+                `F-task closure policy: source=${closurePolicySource}; `
+                + `provenance=${closurePolicy.provenance || 'none'}; valid=${closurePolicy.valid}; `
+                + `skip_low_findings=${closurePolicy.skip_low_findings}; `
+                + `forbid_child_tasks=${closurePolicy.forbid_child_tasks}; `
+                + `ignored_low=${ignoredLowFindingsCount}; retained_current_task=${retainedCurrentTaskCount}; `
+                + `prohibited_descendants=${retainedCurrentTaskCount}.`
+        }
+        : null;
     return {
         status,
         lanes,
@@ -1979,6 +2045,7 @@ export function buildReviewFindingsAuditSummary(options: {
         correction_transports: correctionTransports,
         fresh_review_count: freshReviewCount,
         reused_review_count: reusedReviewCount,
+        review_follow_up_task_closure_policy: closurePolicySummary,
         visible_summary_line:
             `Review findings audit: status=${status}; lanes=${lanes.length}; findings=${findings.filter((item) => item.kind === 'finding').length}; ` +
             `residual_risks=${findings.filter((item) => item.kind === 'residual_risk').length}; ` +

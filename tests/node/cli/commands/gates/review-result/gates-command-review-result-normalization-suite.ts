@@ -150,10 +150,14 @@ function softProfilePolicySnapshot(): Record<string, unknown> {
 }
 
 function followUpClosureScenarioInput(
+    taskId: string,
     skipLowFindings: boolean,
     forbidChildTasks: boolean
 ): { taskNotes: string; profilePolicySnapshot: Record<string, unknown> } {
-    const taskNotes = `review_follow_up_fingerprint=${'a'.repeat(64)}. `
+    const parentTaskId = taskId.replace(/-F[1-9][0-9]*$/u, '');
+    const parentNotes = `Review follow-up tasks materialized: \`${taskId}\`; artifact `
+        + `\`garda-agent-orchestrator/runtime/reviews/${parentTaskId}-review-findings-follow-up-tasks.json\`.`;
+    const taskNotes = `Child of \`${parentTaskId}\`. review_follow_up_fingerprint=${'a'.repeat(64)}. `
         + formatReviewFollowUpTaskClosurePolicyMetadata({
             skip_low_findings: skipLowFindings,
             forbid_child_tasks: forbidChildTasks
@@ -162,7 +166,13 @@ function followUpClosureScenarioInput(
         taskNotes,
         profilePolicySnapshot: {
             ...balancedProfilePolicySnapshot(),
-            review_follow_up_task_closure_policy: resolveReviewFollowUpTaskClosurePolicy(taskNotes)
+            review_follow_up_task_closure_policy: resolveReviewFollowUpTaskClosurePolicy(taskNotes, {
+                taskId,
+                taskRows: [
+                    { taskId: parentTaskId, notes: parentNotes },
+                    { taskId, notes: taskNotes }
+                ]
+            })
         }
     };
 }
@@ -1938,8 +1948,9 @@ describe('gates command review result - normalization', () => {
     });
 
     it('record-review-result applies locked balanced dispositions before deriving the gate verdict', async () => {
-        const skipLowClosure = followUpClosureScenarioInput(true, false);
-        const forbidChildClosure = followUpClosureScenarioInput(false, true);
+        const skipLowClosure = followUpClosureScenarioInput('T-979-10-F1', true, false);
+        const forbidChildClosure = followUpClosureScenarioInput('T-979-11-F1', false, true);
+        const forbidChildResidualClosure = followUpClosureScenarioInput('T-979-12-F1', false, true);
         const scenarios = [
             {
                 taskId: 'T-979-9-balanced-low-follow-up',
@@ -2024,8 +2035,8 @@ describe('gates command review result - normalization', () => {
             },
             {
                 taskId: 'T-979-12-F1',
-                profilePolicySnapshot: forbidChildClosure.profilePolicySnapshot,
-                taskNotes: forbidChildClosure.taskNotes,
+                profilePolicySnapshot: forbidChildResidualClosure.profilePolicySnapshot,
+                taskNotes: forbidChildResidualClosure.taskNotes,
                 subject: 'residual_risk' as const,
                 severity: null,
                 expectedVerdict: 'REVIEW FAILED',

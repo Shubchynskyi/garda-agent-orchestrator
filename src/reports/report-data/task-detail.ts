@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { buildTaskStats, type TaskStatsResult } from '../../cli/commands/stats';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
 import {
@@ -21,6 +22,11 @@ import {
     type FullSuiteValidationResult
 } from '../../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence, readOptionalMarkdownWorkingPlan } from '../../gates/task-mode';
+import {
+    getReviewFollowUpTaskClosurePolicySnapshotViolations,
+    resolveReviewFollowUpTaskClosurePolicy,
+    type ReviewFollowUpTaskClosurePolicySnapshot
+} from '../../core/review-follow-up-task-closure-policy';
 import { readCanonicalActiveQueueRows } from './task-queue';
 import { buildTaskQualityChecklist, withQualityChecklistArtifactLink } from './task-quality-checklist';
 import type {
@@ -98,6 +104,7 @@ function summarizeTaskAudit(audit: TaskAuditSummaryResult): ReportTaskDetail['au
         required_reviews: audit.required_reviews,
         changed_files: audit.changed_files,
         review_attempt_summary: audit.review_attempt_summary,
+        review_findings_audit: audit.review_findings_audit,
         final_report_contract_status: audit.final_report_contract.status,
         final_closeout_artifact_state: audit.final_closeout.artifact_state
     };
@@ -461,8 +468,12 @@ function readPlanMarkdown(repoRoot: string, planPath: string | null): string | n
     return fs.readFileSync(resolvedPath, 'utf8');
 }
 
-function buildTaskPlanDetail(repoRoot: string, taskId: string, taskRow: ReportTaskQueueRow | null): ReportTaskDetail['plan'] {
-    const evidence = getTaskModeEvidence(repoRoot, taskId);
+function buildTaskPlanDetail(
+    repoRoot: string,
+    taskId: string,
+    taskRow: ReportTaskQueueRow | null,
+    evidence: ReturnType<typeof getTaskModeEvidence>
+): ReportTaskDetail['plan'] {
     const fallbackMarkdownPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
     const markdownPath = evidence.markdown_working_plan?.working_plan_path || fallbackMarkdownPlan?.working_plan_path || null;
     const planPath = evidence.plan?.plan_path || null;
@@ -476,6 +487,96 @@ function buildTaskPlanDetail(repoRoot: string, taskId: string, taskRow: ReportTa
         plan_path: planPath,
         markdown_path: markdownPath,
         markdown
+    };
+}
+
+function readFrozenTaskClosurePolicy(
+    taskModeEvidence: ReturnType<typeof getTaskModeEvidence>
+): ReviewFollowUpTaskClosurePolicySnapshot | null {
+    if (
+        taskModeEvidence.evidence_status !== 'PASS'
+        || taskModeEvidence.profile_policy_snapshot_status !== 'PASS'
+    ) {
+        return null;
+    }
+    const profilePolicySnapshot = taskModeEvidence.profile_policy_snapshot;
+    if (!profilePolicySnapshot || typeof profilePolicySnapshot !== 'object' || Array.isArray(profilePolicySnapshot)) {
+        return null;
+    }
+    const candidate = profilePolicySnapshot.review_follow_up_task_closure_policy;
+    if (getReviewFollowUpTaskClosurePolicySnapshotViolations(candidate).length > 0) {
+        return null;
+    }
+    const policy = candidate as ReviewFollowUpTaskClosurePolicySnapshot;
+    return {
+        ...policy,
+        diagnostics: [...policy.diagnostics]
+    };
+}
+
+function buildTaskClosurePolicyDetail(
+    taskRow: ReportTaskQueueRow | null,
+    taskRows: readonly ReportTaskQueueRow[],
+    taskModeEvidence: ReturnType<typeof getTaskModeEvidence>
+): ReportTaskDetail['review_follow_up_task_closure_policy'] {
+    const stored = resolveReviewFollowUpTaskClosurePolicy(
+        taskRow?.notes,
+        taskRow
+            ? {
+                taskId: taskRow.task_id,
+                taskRows: taskRows.map((candidate) => ({
+                    taskId: candidate.task_id,
+                    notes: candidate.notes || null
+                }))
+            }
+            : undefined
+    );
+    const frozen = readFrozenTaskClosurePolicy(taskModeEvidence);
+    const effective = frozen || stored;
+    const driftDetected = Boolean(
+        frozen
+        && (
+            frozen.eligible !== stored.eligible
+            || frozen.configured !== stored.configured
+            || frozen.valid !== stored.valid
+            || frozen.provenance !== stored.provenance
+            || frozen.skip_low_findings !== stored.skip_low_findings
+            || frozen.forbid_child_tasks !== stored.forbid_child_tasks
+        )
+    );
+    const completed = taskRow?.status_token === 'DONE';
+    const state: ReportTaskDetail['review_follow_up_task_closure_policy']['state'] = !stored.eligible
+        ? 'inapplicable'
+        : !stored.valid
+            ? 'invalid'
+            : completed
+                ? 'completed'
+                : driftDetected
+                    ? 'pending_next_cycle'
+                    : 'editable';
+    const editable = stored.eligible && stored.valid && !completed;
+    const editableReason = editable
+        ? null
+        : completed
+            ? 'Completed tasks cannot be changed retroactively.'
+            : stored.diagnostics.join(' ') || 'Closure policy metadata is unavailable.';
+    const diagnostics = [...new Set([
+        ...stored.diagnostics,
+        ...(frozen?.diagnostics || []),
+        ...(driftDetected
+            ? ['Stored task metadata differs from the frozen current-cycle policy; the persisted values apply on the next task-mode entry.']
+            : [])
+    ])];
+    return {
+        stored,
+        effective,
+        effective_source: frozen ? 'task_mode_profile_policy_snapshot' : 'task_metadata',
+        state,
+        editable,
+        editable_reason: editableReason,
+        metadata_path: TASK_QUEUE_FILENAME,
+        drift_detected: driftDetected,
+        diagnostics
     };
 }
 
@@ -493,7 +594,9 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const taskId = options.taskId;
     const unavailable: ReportDataUnavailableEntry[] = [];
-    const queueRow = readCanonicalActiveQueueRows(repoRoot).rows.find((row) => row.task_id === taskId) || null;
+    const queueState = readCanonicalActiveQueueRows(repoRoot);
+    const queueRow = queueState.rows.find((row) => row.task_id === taskId) || null;
+    const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
     let stats: TaskStatsResult | null = null;
     try {
         stats = buildTaskStats(taskId, repoRoot, eventsRoot, reviewsRoot, {
@@ -527,8 +630,13 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         stats,
         latest_cycle_events: readLatestCycleEvents(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable),
         full_suite_validation: buildFullSuiteSummary(taskId, repoRoot, eventsRoot, reviewsRoot),
+        review_follow_up_task_closure_policy: buildTaskClosurePolicyDetail(
+            queueRow,
+            queueState.rows,
+            taskModeEvidence
+        ),
         audit: audit ? summarizeTaskAudit(audit) : null,
-        plan: buildTaskPlanDetail(repoRoot, taskId, queueRow),
+        plan: buildTaskPlanDetail(repoRoot, taskId, queueRow, taskModeEvidence),
         artifact_links: withQualityChecklistArtifactLink(buildArtifactLinksFromAudit(audit), taskId, reviewsRoot),
         quality_checklist: qualityChecklist,
         unavailable
@@ -595,6 +703,17 @@ export function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number)
                 warning: null
             },
             timeout_forecast_label: ''
+        },
+        review_follow_up_task_closure_policy: {
+            stored: resolveReviewFollowUpTaskClosurePolicy(undefined),
+            effective: resolveReviewFollowUpTaskClosurePolicy(undefined),
+            effective_source: 'task_metadata',
+            state: 'inapplicable',
+            editable: false,
+            editable_reason: 'Task details must be loaded before closure policy controls are available.',
+            metadata_path: TASK_QUEUE_FILENAME,
+            drift_detected: false,
+            diagnostics: ['Task details must be loaded before closure policy controls are available.']
         },
         audit: null,
         plan: {

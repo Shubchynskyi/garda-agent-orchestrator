@@ -287,7 +287,13 @@ function buildReviewFindingSections(closeout: FinalCloseoutArtifact): {
     }
     for (const lane of summary.lanes) {
         for (const id of lane.remaining_blocker_ids) {
-            appendFinalUserReportSectionEntry(sections.blockers, () => `${lane.review_type}/${id}`);
+            const retainedItem = lane.findings.find((item) => (
+                item.id === id
+                && item.source_rule === 'review_follow_up_task_closure_policy.forbid_child_tasks'
+            ));
+            appendFinalUserReportSectionEntry(sections.blockers, () => retainedItem
+                ? `${lane.review_type}/${id} retained in the current F task; descendant creation prohibited`
+                : `${lane.review_type}/${id}`);
         }
         for (const item of lane.findings) {
             const requiresFollowUp = item.action === 'create_follow_up';
@@ -298,6 +304,9 @@ function buildReviewFindingSections(closeout: FinalCloseoutArtifact): {
             if (item.kind === 'finding' && !item.blocking && !missingRequiredFollowUp) {
                 appendFinalUserReportSectionEntry(sections.nonBlocking, () => (
                     `${lane.review_type}/${item.id} (${item.severity}): ${item.title || item.description}`
+                    + (item.source_rule === 'review_follow_up_task_closure_policy.skip_low_findings'
+                        ? ' [ignored by F-task skip-low policy]'
+                        : '')
                     + (item.follow_up_task_id ? ` -> ${item.follow_up_task_id}` : '')
                 ));
             }
@@ -397,6 +406,17 @@ export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
         'Reviews:'
     ];
     lines.push(...formatFinalUserReportSectionEntries(reviewSection, 'review', 'none required'));
+    const closurePolicy = closeout.review_findings_audit?.review_follow_up_task_closure_policy;
+    if (closurePolicy) {
+        lines.push('');
+        lines.push(
+            `F-task closure policy: skip_low_findings=${closurePolicy.skip_low_findings}; `
+            + `forbid_child_tasks=${closurePolicy.forbid_child_tasks}; `
+            + `ignored_low=${closurePolicy.ignored_low_findings_count}; `
+            + `retained_current_task=${closurePolicy.retained_current_task_count}; `
+            + `prohibited_descendants=${closurePolicy.prohibited_descendant_creation_count}`
+        );
+    }
     lines.push('');
     lines.push(`Full suite: ${formatFinalUserReportInlineText(buildFullSuiteResult(closeout))}`);
     const findingSections = buildReviewFindingSections(closeout);

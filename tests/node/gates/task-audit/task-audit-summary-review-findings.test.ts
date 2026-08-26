@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { formatReviewFollowUpTaskClosurePolicyMetadata } from '../../../../src/core/review-follow-up-task-closure-policy';
 import {
     buildTaskAuditSummary,
     formatFinalCloseoutMarkdown,
@@ -19,6 +20,7 @@ import {
     runEnterTaskMode,
     seedInitAnswers,
     seedTaskQueue,
+    writeBalancedProfilesConfig,
     writePreflight,
     writeReceiptBackedReviewArtifact
 } from '../../cli/commands/gate-test-helpers';
@@ -78,6 +80,76 @@ function seedFindingsReview(
         findingSeverity ? 'REVIEW FAILED' : 'REVIEW PASSED',
         undefined,
         { findingSeverity, residualRisk }
+    );
+    return {
+        repoRoot,
+        reviewsRoot: getReviewsRoot(repoRoot),
+        preflight: readJson(preflightPath)
+    };
+}
+
+function seedFollowUpClosurePolicyReview(
+    taskId: string,
+    closurePolicy: { skip_low_findings: boolean; forbid_child_tasks: boolean }
+): { repoRoot: string; reviewsRoot: string; preflight: Record<string, unknown> } {
+    const repoRoot = createTempRepo();
+    seedTaskQueue(repoRoot, taskId, 'IN_PROGRESS');
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const parentTaskId = taskId.replace(/-F[1-9][0-9]*$/u, '');
+    const taskNotes = [
+        `Child of \`${parentTaskId}\`.`,
+        `review_follow_up_fingerprint=${'f'.repeat(64)}.`,
+        formatReviewFollowUpTaskClosurePolicyMetadata(closurePolicy)
+    ].join(' ');
+    const taskContent = fs.readFileSync(taskPath, 'utf8');
+    const taskRow = taskContent.split(/\r?\n/u).find((line) => line.includes(`| ${taskId} |`));
+    assert.ok(taskRow);
+    const parentNotes = `Review follow-up tasks materialized: \`${taskId}\`; artifact `
+        + `\`garda-agent-orchestrator/runtime/reviews/${parentTaskId}-review-findings-follow-up-tasks.json\`.`;
+    const parentRow = `| ${parentTaskId} | IN_PROGRESS | P1 | core | Parent task | unassigned | 2026-03-28 | default | ${parentNotes} |`;
+    const rewrittenTaskRow = taskRow
+        .replace('| fixture |', `| ${taskNotes} |`);
+    fs.writeFileSync(
+        taskPath,
+        taskContent.replace(taskRow, `${parentRow}\n${rewrittenTaskRow}`),
+        'utf8'
+    );
+    seedInitAnswers(repoRoot, 'Codex');
+    writeBalancedProfilesConfig(repoRoot);
+    runEnterTaskMode({
+        repoRoot,
+        taskId,
+        taskSummary: 'Audit F-task closure policy finding disposition.',
+        provider: 'Codex',
+        routedTo: 'AGENTS.md'
+    });
+    const taskMode = readJson(path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`));
+    const preflightPath = writePreflight(repoRoot, taskId, {
+        scope_category: 'code',
+        required_reviews: {
+            code: true,
+            db: false,
+            security: false,
+            refactor: false,
+            api: false,
+            test: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        },
+        profile_selection: {
+            task_profile: 'balanced',
+            effective_profile: 'balanced'
+        },
+        profile_policy_snapshot: taskMode.profile_policy_snapshot
+    });
+    writeReceiptBackedReviewArtifact(
+        repoRoot,
+        taskId,
+        'code',
+        'REVIEW FAILED',
+        undefined,
+        { findingSeverity: 'low' }
     );
     return {
         repoRoot,
@@ -228,5 +300,60 @@ describe('gates/task-audit-summary structured review findings', () => {
         const finalUserReport = formatFinalUserReport(result.final_closeout);
         assert.match(finalUserReport, /Residual risks:\ncode\/R-001: Seeded residual-risk fixture/u);
         assert.doesNotMatch(finalUserReport, /src\/app\.ts:1/u);
+    });
+
+    it('reports ignored low findings and prohibited descendants from the frozen F-task closure policy', () => {
+        const ignoredTaskId = 'T-AUDIT-CLOSURE-IGNORE-F1';
+        const ignoredFixture = seedFollowUpClosurePolicyReview(ignoredTaskId, {
+            skip_low_findings: true,
+            forbid_child_tasks: false
+        });
+        tempRoots.push(ignoredFixture.repoRoot);
+        const ignoredResult = buildTaskAuditSummary({
+            taskId: ignoredTaskId,
+            repoRoot: ignoredFixture.repoRoot,
+            reviewsRoot: ignoredFixture.reviewsRoot
+        });
+        const ignoredAudit = ignoredResult.review_findings_audit;
+
+        assert.equal(ignoredAudit?.status, 'CLEAR');
+        assert.equal(ignoredAudit?.lanes[0].findings[0].action, 'ignore');
+        assert.equal(
+            ignoredAudit?.lanes[0].findings[0].source_rule,
+            'review_follow_up_task_closure_policy.skip_low_findings'
+        );
+        assert.equal(ignoredAudit?.review_follow_up_task_closure_policy?.source, 'preflight_profile_policy_snapshot');
+        assert.equal(ignoredAudit?.review_follow_up_task_closure_policy?.ignored_low_findings_count, 1);
+        assert.equal(ignoredAudit?.review_follow_up_task_closure_policy?.retained_current_task_count, 0);
+        assert.match(formatTaskAuditSummaryText(ignoredResult), /ignored_low=1/u);
+        assert.match(formatFinalUserReport(ignoredResult.final_closeout), /ignored by F-task skip-low policy/u);
+
+        const retainedTaskId = 'T-AUDIT-CLOSURE-RETAIN-F1';
+        const retainedFixture = seedFollowUpClosurePolicyReview(retainedTaskId, {
+            skip_low_findings: false,
+            forbid_child_tasks: true
+        });
+        tempRoots.push(retainedFixture.repoRoot);
+        const retainedResult = buildTaskAuditSummary({
+            taskId: retainedTaskId,
+            repoRoot: retainedFixture.repoRoot,
+            reviewsRoot: retainedFixture.reviewsRoot
+        });
+        const retainedAudit = retainedResult.review_findings_audit;
+
+        assert.equal(retainedAudit?.status, 'BLOCKED');
+        assert.equal(retainedAudit?.lanes[0].findings[0].action, 'fix_now');
+        assert.equal(
+            retainedAudit?.lanes[0].findings[0].source_rule,
+            'review_follow_up_task_closure_policy.forbid_child_tasks'
+        );
+        assert.equal(retainedAudit?.review_follow_up_task_closure_policy?.retained_current_task_count, 1);
+        assert.equal(retainedAudit?.review_follow_up_task_closure_policy?.prohibited_descendant_creation_count, 1);
+        assert.equal(retainedAudit?.review_follow_up_task_closure_policy?.remaining_blocker_count, 1);
+        assert.match(formatTaskAuditSummaryText(retainedResult), /prohibited_descendants=1/u);
+        assert.match(
+            formatFinalUserReport(retainedResult.final_closeout),
+            /retained in the current F task; descendant creation prohibited/u
+        );
     });
 });

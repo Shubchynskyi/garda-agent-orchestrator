@@ -23,6 +23,14 @@ export interface ReviewFollowUpTaskClosurePolicyValue {
     forbid_child_tasks: boolean;
 }
 
+export interface ReviewFollowUpTaskClosurePolicyTaskContext {
+    taskId: string;
+    taskRows: readonly {
+        taskId: string;
+        notes: string | null;
+    }[];
+}
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const POLICY_VALUE_KEYS = [
     'schema_version',
@@ -107,7 +115,7 @@ function resolveProvenance(notes: string): {
             valid: true,
             provenance: null,
             diagnostics: [
-                'Task metadata has no explicit review follow-up provenance; closure controls are inapplicable and disabled.'
+                'Closure controls apply only to review-generated follow-up tasks with explicit provenance; this task is not editable.'
             ]
         };
     }
@@ -167,7 +175,7 @@ function parsePolicyValue(rawValue: string): ReviewFollowUpTaskClosurePolicyValu
     }
 }
 
-export function resolveReviewFollowUpTaskClosurePolicy(
+function resolveReviewFollowUpTaskClosurePolicyFromNotes(
     taskNotes: unknown
 ): ReviewFollowUpTaskClosurePolicySnapshot {
     const notes = typeof taskNotes === 'string' ? taskNotes.trim() : '';
@@ -180,7 +188,7 @@ export function resolveReviewFollowUpTaskClosurePolicy(
             valid: true,
             provenance: null,
             diagnostics: [
-                'Task metadata has no explicit review follow-up provenance; closure controls are inapplicable and disabled.'
+                'Closure controls apply only to review-generated follow-up tasks with explicit provenance; this task is not editable.'
             ]
         });
     }
@@ -247,7 +255,7 @@ export function resolveReviewFollowUpTaskClosurePolicy(
             valid: false,
             provenance: provenance.provenance,
             diagnostics: [
-                'Review follow-up task closure policy must be exact schema-1 JSON with two boolean settings; settings fail closed.'
+                'Review follow-up task closure policy is invalid: exact schema-1 JSON is required and both settings must be boolean; settings fail closed.'
             ]
         });
     }
@@ -263,6 +271,75 @@ export function resolveReviewFollowUpTaskClosurePolicy(
             `Review follow-up task closure policy resolved from explicit ${provenance.provenance} task metadata.`
         ]
     };
+}
+
+function resolveBoundParentTaskId(taskId: string): string | null {
+    const match = String(taskId || '').match(/^(.+)-F[1-9][0-9]*$/u);
+    return match?.[1] || null;
+}
+
+function hasCanonicalChildOfBinding(notes: string, parentTaskId: string): boolean {
+    const bindings = [...notes.matchAll(/(?:^|\s)Child of `([^`\r\n]+)`\.(?=$|\s)/gu)];
+    return bindings.length === 1 && bindings[0][1] === parentTaskId;
+}
+
+function parentMaterializationReferencesTask(notes: string, taskId: string): boolean {
+    let referenceCount = 0;
+    const records = notes.matchAll(
+        /(?:^|\s)Review follow-up tasks materialized: (`[^`\r\n]+`(?:, `[^`\r\n]+`)*); artifact `[^`\r\n]+`\.(?=$|\s)/gu
+    );
+    for (const record of records) {
+        const taskIds = [...record[1].matchAll(/`([^`\r\n]+)`/gu)].map((match) => match[1]);
+        referenceCount += taskIds.filter((candidate) => candidate === taskId).length;
+    }
+    return referenceCount === 1;
+}
+
+function bindPolicyToCanonicalTask(
+    snapshot: ReviewFollowUpTaskClosurePolicySnapshot,
+    notes: string,
+    context: ReviewFollowUpTaskClosurePolicyTaskContext | undefined
+): ReviewFollowUpTaskClosurePolicySnapshot {
+    if (!snapshot.eligible || !snapshot.valid) {
+        return snapshot;
+    }
+    const parentTaskId = context ? resolveBoundParentTaskId(context.taskId) : null;
+    const parentRows = parentTaskId
+        ? context?.taskRows.filter((row) => row.taskId === parentTaskId) || []
+        : [];
+    const bindingValid = Boolean(
+        context
+        && parentTaskId
+        && hasCanonicalChildOfBinding(notes, parentTaskId)
+        && parentRows.length === 1
+        && parentMaterializationReferencesTask(String(parentRows[0].notes || ''), context.taskId)
+    );
+    if (bindingValid) {
+        return snapshot;
+    }
+    return {
+        ...snapshot,
+        eligible: false,
+        valid: false,
+        provenance: null,
+        skip_low_findings: false,
+        forbid_child_tasks: false,
+        diagnostics: [
+            'Review follow-up provenance is not bound to one canonical parent materialization record; closure controls fail closed.'
+        ]
+    };
+}
+
+export function resolveReviewFollowUpTaskClosurePolicy(
+    taskNotes: unknown,
+    context?: ReviewFollowUpTaskClosurePolicyTaskContext
+): ReviewFollowUpTaskClosurePolicySnapshot {
+    const notes = typeof taskNotes === 'string' ? taskNotes.trim() : '';
+    return bindPolicyToCanonicalTask(
+        resolveReviewFollowUpTaskClosurePolicyFromNotes(notes),
+        notes,
+        context
+    );
 }
 
 export function buildLegacyReviewFollowUpTaskClosurePolicySnapshot(): ReviewFollowUpTaskClosurePolicySnapshot {
@@ -286,6 +363,28 @@ export function formatReviewFollowUpTaskClosurePolicyMetadata(
         skip_low_findings: value.skip_low_findings,
         forbid_child_tasks: value.forbid_child_tasks
     })}\`.`;
+}
+
+export function replaceReviewFollowUpTaskClosurePolicyMetadata(
+    taskNotes: string,
+    value: ReviewFollowUpTaskClosurePolicyValue,
+    context?: ReviewFollowUpTaskClosurePolicyTaskContext
+): string {
+    const notes = String(taskNotes || '').trim();
+    const current = resolveReviewFollowUpTaskClosurePolicy(notes, context);
+    if (!current.eligible || !current.valid) {
+        throw new Error(
+            current.diagnostics.join(' ')
+            || 'Review follow-up task closure policy metadata is not editable.'
+        );
+    }
+    const withoutCurrentPolicy = current.configured
+        ? notes.replace(POLICY_METADATA_PATTERN, ' ').replace(/\s+/gu, ' ').trim()
+        : notes;
+    return [
+        withoutCurrentPolicy,
+        formatReviewFollowUpTaskClosurePolicyMetadata(value)
+    ].filter(Boolean).join(' ');
 }
 
 export function getReviewFollowUpTaskClosurePolicySnapshotViolations(value: unknown): string[] {

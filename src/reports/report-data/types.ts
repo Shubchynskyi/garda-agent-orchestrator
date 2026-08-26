@@ -29,6 +29,7 @@ import type {
 } from '../../policy/profile-resolver';
 import type { ReviewTriggerPolicy } from '../../policy/review-trigger-policy';
 import type { ReviewRemediationModePolicySummary } from '../../policy/review-remediation-mode-policy';
+import type { ReviewFollowUpTaskClosurePolicySnapshot } from '../../core/review-follow-up-task-closure-policy';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -130,6 +131,17 @@ export interface ReportTaskDetail {
     stats: TaskStatsResult | null;
     latest_cycle_events: CompactLatestCycleTaskEventsSummary | null;
     full_suite_validation: ReportFullSuiteSummary;
+    review_follow_up_task_closure_policy: {
+        stored: ReviewFollowUpTaskClosurePolicySnapshot;
+        effective: ReviewFollowUpTaskClosurePolicySnapshot;
+        effective_source: 'task_metadata' | 'task_mode_profile_policy_snapshot';
+        state: 'editable' | 'inapplicable' | 'invalid' | 'completed' | 'pending_next_cycle';
+        editable: boolean;
+        editable_reason: string | null;
+        metadata_path: string;
+        drift_detected: boolean;
+        diagnostics: string[];
+    };
     audit: {
         status: TaskAuditSummaryResult['status'];
         gates: TaskAuditSummaryResult['gates'];
@@ -137,6 +149,7 @@ export interface ReportTaskDetail {
         required_reviews: TaskAuditSummaryResult['required_reviews'];
         changed_files: string[];
         review_attempt_summary: TaskAuditSummaryResult['review_attempt_summary'];
+        review_findings_audit: TaskAuditSummaryResult['review_findings_audit'];
         final_report_contract_status: TaskAuditSummaryResult['final_report_contract']['status'];
         final_closeout_artifact_state: TaskAuditSummaryResult['final_closeout']['artifact_state'];
     } | null;

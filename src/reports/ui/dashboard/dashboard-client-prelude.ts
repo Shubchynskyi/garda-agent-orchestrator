@@ -9,6 +9,7 @@ import {
     LOCAL_UI_PROJECT_MEMORY_STATUS_TEXT,
     LOCAL_UI_PROJECT_MEMORY_TEXT,
     LOCAL_UI_SETTING_TEXT,
+    LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
     LOCAL_UI_TEXT,
     type LocalUiLanguage
 } from '../ui-i18n';
@@ -33,6 +34,7 @@ const projectMemoryStatusTextPacks = ${JSON.stringify(LOCAL_UI_PROJECT_MEMORY_ST
 const projectMemoryTextPacks = ${JSON.stringify(LOCAL_UI_PROJECT_MEMORY_TEXT)};
 const actionCategoryTextPacks = ${JSON.stringify(LOCAL_UI_ACTION_CATEGORY_TEXT)};
 const instructionTextPacks = ${JSON.stringify(LOCAL_UI_INSTRUCTION_TEXT)};
+const taskClosurePolicyTextPacks = ${JSON.stringify(LOCAL_UI_TASK_CLOSURE_POLICY_TEXT)};
 const languageMetadata = ${JSON.stringify(LOCAL_UI_LANGUAGES)};
 const fallbackLanguage = 'en';
 const initialLanguage = ${JSON.stringify(initialLanguage)};
@@ -89,6 +91,7 @@ let currentProfilesPayload = null;
 let currentProfileActionResult = null;
 let currentMemorySettingResult = null;
 let currentTaskDetail = null;
+let currentTaskClosurePolicyPreview = null;
 let currentWorkflowSettingGroup = 'validation';
 let selectedTaskId = null;
 let lastActivityPingAt = 0;

@@ -30,6 +30,7 @@ export interface ImportedUiLanguagePack {
     readonly LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<string, LocalUiLocalizedText>>;
     readonly LOCAL_UI_ACTION_CATEGORY_TEXT: Readonly<Record<string, string>>;
     readonly LOCAL_UI_INSTRUCTION_TEXT: Readonly<Record<string, LocalUiLocalizedText>>;
+    readonly LOCAL_UI_TASK_CLOSURE_POLICY_TEXT: Readonly<Record<string, string>>;
 }
 
 interface UiLanguagePackFile {
@@ -41,6 +42,7 @@ interface UiLanguagePackFile {
     LOCAL_UI_PROJECT_MEMORY_TEXT?: Record<string, LocalUiLocalizedText>;
     LOCAL_UI_ACTION_CATEGORY_TEXT?: Record<string, string>;
     LOCAL_UI_INSTRUCTION_TEXT?: Record<string, LocalUiLocalizedText>;
+    LOCAL_UI_TASK_CLOSURE_POLICY_TEXT?: Record<string, string>;
 }
 
 function resolveLangPacksDirectory(): string {
@@ -99,7 +101,10 @@ function normalizePack(pack: UiLanguagePackFile): ImportedUiLanguagePack {
         LOCAL_UI_INIT_SETTING_TEXT: Object.freeze({ ...(pack.LOCAL_UI_INIT_SETTING_TEXT || {}) }),
         LOCAL_UI_PROJECT_MEMORY_TEXT: Object.freeze({ ...(pack.LOCAL_UI_PROJECT_MEMORY_TEXT || {}) }),
         LOCAL_UI_ACTION_CATEGORY_TEXT: Object.freeze({ ...(pack.LOCAL_UI_ACTION_CATEGORY_TEXT || {}) }),
-        LOCAL_UI_INSTRUCTION_TEXT: Object.freeze({ ...(pack.LOCAL_UI_INSTRUCTION_TEXT || {}) })
+        LOCAL_UI_INSTRUCTION_TEXT: Object.freeze({ ...(pack.LOCAL_UI_INSTRUCTION_TEXT || {}) }),
+        LOCAL_UI_TASK_CLOSURE_POLICY_TEXT: Object.freeze({
+            ...(pack.LOCAL_UI_TASK_CLOSURE_POLICY_TEXT || {})
+        })
     });
 }
 
