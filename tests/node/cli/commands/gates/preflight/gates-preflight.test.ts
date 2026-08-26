@@ -21,6 +21,7 @@ import {
 } from '../../gate-test-helpers';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
+import { formatReviewFollowUpTaskClosurePolicyMetadata } from '../../../../../../src/core/review-follow-up-task-closure-policy';
 import {
     computeTaskProfilePolicySnapshotHash,
     type TaskProfilePolicySnapshot
@@ -980,6 +981,96 @@ describe('cli/commands/gates — preflight', () => {
                 test_refactor_structural_path_regexes: ['(^|/)quality/helpers?/'],
                 test_refactor_changed_lines_threshold: 7
             });
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('freezes explicit follow-up task closure policy across completed-task re-entry and preflight evidence', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-follow-up-closure-policy';
+        try {
+            const profilesPath = seedSnapshotFreezeProfiles(repoRoot);
+            writeSnapshotFreezeTriggerConfig(repoRoot);
+            const notes = [
+                'Child of `T-979`.',
+                `review_follow_up_group_fingerprint=${'d'.repeat(64)}.`,
+                formatReviewFollowUpTaskClosurePolicyMetadata({
+                    skip_low_findings: true,
+                    forbid_child_tasks: false
+                })
+            ].join(' ');
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default', notes);
+            seedInitAnswers(repoRoot);
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Freeze explicit follow-up task closure policy',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+            const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+            const taskModeSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+            assert.deepEqual(taskModeSnapshot.review_follow_up_task_closure_policy, {
+                schema_version: 1,
+                eligible: true,
+                configured: true,
+                valid: true,
+                provenance: 'grouped_by_parent',
+                source_notes_sha256: createHash('sha256').update(notes, 'utf8').digest('hex'),
+                skip_low_findings: true,
+                forbid_child_tasks: false,
+                diagnostics: [
+                    'Review follow-up task closure policy resolved from explicit grouped_by_parent task metadata.'
+                ]
+            });
+
+            mutateActiveProfileToStrict(profilesPath);
+            const driftedNotes = [
+                'Child of `T-979`.',
+                `review_follow_up_group_fingerprint=${'e'.repeat(64)}.`,
+                formatReviewFollowUpTaskClosurePolicyMetadata({
+                    skip_low_findings: false,
+                    forbid_child_tasks: true
+                })
+            ].join(' ');
+            seedTaskQueue(repoRoot, taskId, 'DONE', 'strict', driftedNotes);
+            initializeGitRepo(repoRoot);
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Re-enter completed task without mutating frozen follow-up closure policy',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            const reenteredTaskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+            const reenteredTaskModeSnapshot = reenteredTaskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+            assert.deepEqual(reenteredTaskModeSnapshot, taskModeSnapshot);
+
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/special.ts'],
+                taskId,
+                taskIntent: 'Freeze explicit follow-up task closure policy',
+                outputPath: path.join(repoRoot, 'preflight-follow-up-closure-policy.json'),
+                emitMetrics: false
+            });
+            const payload = JSON.parse(result.outputText) as Record<string, unknown>;
+            const preflightSnapshot = payload.profile_policy_snapshot as Record<string, unknown>;
+
+            assert.deepEqual(
+                preflightSnapshot.review_follow_up_task_closure_policy,
+                taskModeSnapshot.review_follow_up_task_closure_policy
+            );
+            assert.equal(preflightSnapshot.snapshot_hash, taskModeSnapshot.snapshot_hash);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

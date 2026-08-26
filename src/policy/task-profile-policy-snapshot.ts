@@ -52,6 +52,11 @@ import {
     type ReviewTriggerPolicy
 } from './review-trigger-policy';
 import {
+    buildLegacyReviewFollowUpTaskClosurePolicySnapshot,
+    getReviewFollowUpTaskClosurePolicySnapshotViolations,
+    type ReviewFollowUpTaskClosurePolicySnapshot
+} from '../core/review-follow-up-task-closure-policy';
+import {
     buildDefaultReviewRemediationRerunPolicy,
     getReviewRemediationRerunPolicyViolations,
     resolveReviewRemediationRerunPolicyFromSnapshot,
@@ -128,6 +133,7 @@ export interface TaskProfilePolicySnapshot {
     review_follow_up_policy?: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics?: string[];
     review_follow_up_task_profile_assignment?: ReviewFollowUpTaskProfileAssignment;
+    review_follow_up_task_closure_policy?: ReviewFollowUpTaskClosurePolicySnapshot;
     review_remediation_rerun_policy?: ReviewRemediationRerunPolicy;
     review_remediation_rerun_policy_diagnostics?: string[];
     review_remediation_mode_policy?: ReviewRemediationModePolicy;
@@ -153,6 +159,7 @@ export interface BuildTaskProfilePolicySnapshotOptions {
     fullSuiteValidationEnabled?: boolean;
     fullSuiteValidationPlacement?: FullSuiteValidationPlacement;
     lockTimestampUtc?: string;
+    reviewFollowUpTaskClosurePolicy?: ReviewFollowUpTaskClosurePolicySnapshot;
 }
 
 export interface TaskProfilePolicySnapshotValidationResult {
@@ -176,6 +183,7 @@ export interface TaskProfilePolicySnapshotSummary {
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
     review_follow_up_task_profile_assignment: ReviewFollowUpTaskProfileAssignment;
+    review_follow_up_task_closure_policy: ReviewFollowUpTaskClosurePolicySnapshot;
     review_remediation_rerun_policy: ReviewRemediationRerunPolicy;
     review_remediation_rerun_policy_diagnostics: string[];
     review_remediation_mode_policy: ReviewRemediationModePolicy;
@@ -1212,6 +1220,12 @@ export function buildTaskProfilePolicySnapshot(
         },
         review_follow_up_policy_diagnostics: [...resolvedProfile.effective_policy.review_follow_up_policy_diagnostics],
         review_follow_up_task_profile_assignment: followUpTaskProfileAssignment,
+        ...(options.reviewFollowUpTaskClosurePolicy ? {
+            review_follow_up_task_closure_policy: {
+                ...options.reviewFollowUpTaskClosurePolicy,
+                diagnostics: [...options.reviewFollowUpTaskClosurePolicy.diagnostics]
+            }
+        } : {}),
         review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
         review_remediation_rerun_policy_diagnostics: [REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC],
         ...(remediationModePolicy.legacy_fallback ? {} : {
@@ -1289,6 +1303,11 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
     }
     if (value.review_follow_up_task_profile_assignment !== undefined) {
         validateReviewFollowUpTaskProfileAssignment(value.review_follow_up_task_profile_assignment, violations);
+    }
+    if (value.review_follow_up_task_closure_policy !== undefined) {
+        violations.push(...getReviewFollowUpTaskClosurePolicySnapshotViolations(
+            value.review_follow_up_task_closure_policy
+        ).map((violation) => `Task profile policy snapshot ${violation}`));
     }
     if (
         value.review_remediation_rerun_policy !== undefined
@@ -1448,6 +1467,12 @@ export function summarizeTaskProfilePolicySnapshot(
         review_follow_up_policy: resolveSnapshotReviewFollowUpPolicy(snapshot),
         review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
         review_follow_up_task_profile_assignment: resolveSnapshotReviewFollowUpTaskProfileAssignment(snapshot),
+        review_follow_up_task_closure_policy: snapshot.review_follow_up_task_closure_policy
+            ? {
+                ...snapshot.review_follow_up_task_closure_policy,
+                diagnostics: [...snapshot.review_follow_up_task_closure_policy.diagnostics]
+            }
+            : buildLegacyReviewFollowUpTaskClosurePolicySnapshot(),
         review_remediation_rerun_policy: resolveSnapshotReviewRemediationRerunPolicy(snapshot),
         review_remediation_rerun_policy_diagnostics:
             resolveSnapshotReviewRemediationRerunPolicyDiagnostics(snapshot),

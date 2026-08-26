@@ -4,6 +4,10 @@ import * as path from 'node:path';
 
 import { TASK_ID_ALLOWED_PATTERN } from './task-ids';
 import { parseCanonicalActiveTaskQueue } from './task-md-table';
+import {
+    resolveReviewFollowUpTaskClosurePolicy,
+    type ReviewFollowUpTaskClosurePolicySnapshot
+} from './review-follow-up-task-closure-policy';
 
 export interface TaskQueueEntry {
     taskId: string;
@@ -12,6 +16,7 @@ export interface TaskQueueEntry {
     title: string | null;
     profile: string | null;
     notes: string | null;
+    reviewFollowUpTaskClosurePolicy?: ReviewFollowUpTaskClosurePolicySnapshot;
 }
 
 export interface ReadTaskQueueEntriesOptions {
@@ -36,7 +41,8 @@ export function parseTaskQueueEntriesFromContent(content: string): Map<string, T
             area: row.area || null,
             title: row.title || null,
             profile: row.profile || null,
-            notes: row.notes || null
+            notes: row.notes || null,
+            reviewFollowUpTaskClosurePolicy: resolveReviewFollowUpTaskClosurePolicy(row.notes)
         });
     }
     return entries;

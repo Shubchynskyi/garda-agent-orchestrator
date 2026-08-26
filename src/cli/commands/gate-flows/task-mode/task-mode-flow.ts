@@ -47,6 +47,7 @@ import {
     loadReviewExecutionPolicyConfig
 } from '../../../../core/review-execution-policy';
 import { loadFullSuiteValidationConfig } from '../../../../core/full-suite-validation-config';
+import { resolveReviewFollowUpTaskClosurePolicy } from '../../../../core/review-follow-up-task-closure-policy';
 import {
     normalizeOptionalPath,
     removeArtifactIfExists,
@@ -428,7 +429,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             reviewExecutionPolicyMode: reviewExecutionPolicy.mode,
             reviewExecutionPolicyConfigured: reviewExecutionPolicy.configured,
             fullSuiteValidationEnabled: fullSuiteValidation.enabled,
-            fullSuiteValidationPlacement: fullSuiteValidation.placement
+            fullSuiteValidationPlacement: fullSuiteValidation.placement,
+            reviewFollowUpTaskClosurePolicy: resolveReviewFollowUpTaskClosurePolicy(taskQueueMetadata?.notes)
         });
         if (
             Number.isInteger(resolvedProfile.effective_policy.depth)
