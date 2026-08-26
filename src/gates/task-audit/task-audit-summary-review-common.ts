@@ -24,7 +24,10 @@ export function collectEffectiveReviewTypeIds(
     if (!currentPreflight) {
         return [...REVIEW_TRUST_COMPATIBILITY_TYPES];
     }
-    return [...resolveEffectiveReviewLaneSetOrLegacy(currentPreflight).all_review_ids];
+    const laneSetPreflight = currentPreflight.effective_review_snapshot === undefined
+        ? {}
+        : currentPreflight;
+    return [...resolveEffectiveReviewLaneSetOrLegacy(laneSetPreflight).all_review_ids];
 }
 
 export function normalizeKnownReviewType(
