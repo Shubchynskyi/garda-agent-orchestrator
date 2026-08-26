@@ -4,6 +4,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { buildNextStepTaskStartGuidance } from '../../../../src/gates/next-step/next-step-task-start-guidance';
 
 import {
     buildEventIntegrityHash,
@@ -550,7 +551,118 @@ afterEach(() => {
     }
 });
 
+function buildTaskStartReviewSnapshot(options: { zeroDiff?: boolean; requireCode?: boolean } = {}) {
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const capabilities = Object.fromEntries(
+        catalog.review_types.map((lane) => [lane.id, true])
+    ) as ReviewCapabilitiesConfigMap;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        'balanced',
+        options.requireCode ? { code: true } : {},
+        capabilities,
+        catalog
+    );
+    return buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: 'a'.repeat(64),
+        legacyRequiredReviews: Object.fromEntries(catalog.review_types.map((lane) => [lane.id, false])),
+        scopeCategory: options.zeroDiff ? 'empty' : 'code',
+        taskIntent: TASK_TITLE,
+        changedFiles: options.zeroDiff ? [] : ['src/gates/next-step/next-step.ts'],
+        taskTriggers: {},
+        optionalSkillIds: ['node-backend'],
+        zeroDiffBaselineOnly: options.zeroDiff === true
+    });
+}
+
 describe('next-step refactor contract baseline', () => {
+    it('builds direct task-start suggestions from current skill and required review snapshots', () => {
+        const repoRoot = makeContractRepo();
+        const guidance = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: ['node-backend'],
+                activation_commands: ['node bin/garda.js gate activate-optional-skill --skill-id "node-backend"'],
+                skill_catalog_path: 'garda-agent-orchestrator/live/config/skills-headlines.json'
+            },
+            preflight: {
+                effective_review_snapshot: buildTaskStartReviewSnapshot({ requireCode: true })
+            }
+        });
+
+        assert.equal(guidance?.skill.mode, 'direct');
+        assert.deepEqual(guidance?.skill.suggested_skill_ids, ['node-backend']);
+        assert.equal(guidance?.review?.mode, 'direct');
+        assert.deepEqual(guidance?.review?.lanes.map((lane) => lane.id), ['code']);
+        assert.equal(guidance?.review?.lanes[0]?.selection, 'required');
+        assert.equal(guidance?.review?.advisory_only, true);
+        const text = formatNextStepText({
+            ...resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            task_start_guidance: guidance
+        });
+        assert.match(text, /^TaskStartSkillSuggestion: node-backend; guarded activation command\(s\) are listed above$/mu);
+        assert.match(text, /^TaskStartReviewSuggestion: code:Code review:required:profile_required; advisory_only=true$/mu);
+        assert.match(text, /^TaskStartReviewPolicy: guidance never makes a lane mandatory;/mu);
+    });
+
+    it('falls back to bounded review catalog guidance without making lanes mandatory', () => {
+        const repoRoot = makeContractRepo();
+        const guidance = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: [],
+                activation_commands: [],
+                skill_catalog_path: 'garda-agent-orchestrator/live/config/skills-headlines.json'
+            },
+            preflight: {
+                effective_review_snapshot: buildTaskStartReviewSnapshot({ zeroDiff: true })
+            }
+        });
+
+        assert.equal(guidance?.skill.mode, 'catalog');
+        assert.equal(guidance?.review?.mode, 'catalog');
+        assert.equal(guidance?.review?.lanes.length, 9);
+        assert.ok(guidance?.review?.lanes.every((lane) => lane.selection === 'available'));
+        assert.equal(guidance?.review?.omitted_lane_count, 0);
+        const text = formatNextStepText({
+            ...resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            task_start_guidance: guidance
+        });
+        assert.match(
+            text,
+            /^TaskStartSkillCatalog: relevant=none; catalog=garda-agent-orchestrator\/live\/config\/skills-headlines\.json$/mu
+        );
+        assert.match(text, /^TaskStartReviewCatalog: code:Code review:available:profile_auto,/mu);
+    });
+
+    it('keeps malformed review guidance non-blocking and omits post-diff task-start guidance', () => {
+        const malformed = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: [],
+                activation_commands: [],
+                skill_catalog_path: null
+            },
+            preflight: { effective_review_snapshot: { schema_version: 1 } }
+        });
+        const postDiff = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'post_diff',
+                selected_skill_ids: ['node-backend'],
+                activation_commands: [],
+                skill_catalog_path: null
+            },
+            preflight: null
+        });
+
+        assert.equal(malformed?.review, null);
+        assert.equal(postDiff, null);
+    });
+
     it('keeps the fresh-task JSON contract and enter-task-mode command shape stable', () => {
         const repoRoot = makeContractRepo();
 

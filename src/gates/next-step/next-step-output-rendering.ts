@@ -14,6 +14,9 @@ import type {
     NextStepStatus
 } from './next-step';
 import type {
+    NextStepTaskStartGuidanceSummary
+} from './next-step-task-start-guidance';
+import type {
     KnownNonBlockingSignal
 } from '../shared/known-nonblocking-signals';
 import type {
@@ -43,6 +46,7 @@ export interface RenderNextStepOutputParams {
     profile: NextStepProfileSummary | null;
     markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     optionalSkillSelection?: NextStepOptionalSkillSelectionSummary | null;
+    taskStartGuidance?: NextStepTaskStartGuidanceSummary | null;
     qualityChecklist?: NextStepQualityChecklistSummary | null;
     warnings?: string[];
     invalidationImpact: NextStepInvalidationImpactSummary | null;
@@ -73,6 +77,7 @@ export function renderNextStepOutput(params: RenderNextStepOutputParams): NextSt
         profile: params.profile,
         markdown_working_plan: params.markdownWorkingPlan || null,
         optional_skill_selection: params.optionalSkillSelection || null,
+        task_start_guidance: params.taskStartGuidance || null,
         quality_checklist: params.qualityChecklist || null,
         warnings: params.warnings || [],
         invalidation_impact: params.invalidationImpact,

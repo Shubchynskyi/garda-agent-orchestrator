@@ -149,6 +149,10 @@ import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
 import {
+    buildNextStepTaskStartGuidance,
+    type NextStepTaskStartGuidanceSummary
+} from './next-step-task-start-guidance';
+import {
     selectTaskEntryRulePackFileNames
 } from '../rule-pack/rule-pack-selection';
 import { readTaskModeProtectedManifestRecoveryRoute } from './next-step-startup-routing';
@@ -568,6 +572,7 @@ export interface NextStepResult {
     profile: NextStepProfileSummary | null;
     markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     optional_skill_selection: NextStepOptionalSkillSelectionSummary | null;
+    task_start_guidance: NextStepTaskStartGuidanceSummary | null;
     quality_checklist: NextStepQualityChecklistSummary | null;
     warnings: string[];
     invalidation_impact: NextStepInvalidationImpactSummary | null;
@@ -1883,6 +1888,7 @@ function buildResult(params: {
     profile: NextStepProfileSummary | null;
     markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     optionalSkillSelection?: NextStepOptionalSkillSelectionSummary | null;
+    taskStartGuidance?: NextStepTaskStartGuidanceSummary | null;
     qualityChecklist?: NextStepQualityChecklistSummary | null;
     warnings?: string[];
     reviewCycleBlock?: NextStepReviewCycleBlock | null;
@@ -2850,6 +2856,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         profile: profileSummary,
         markdownWorkingPlan,
         optionalSkillSelection: optionalSkillSelectionSummary,
+        taskStartGuidance: buildNextStepTaskStartGuidance({
+            optionalSkillSelection: optionalSkillSelectionSummary,
+            preflight
+        }),
         qualityChecklist: qualityChecklistReadiness
             ? buildNextStepQualityChecklistSummary(qualityChecklistReadiness)
             : null,

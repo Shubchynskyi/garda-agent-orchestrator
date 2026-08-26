@@ -315,6 +315,38 @@ export function formatNextStepText(result: NextStepResult): string {
             }
         }
     }
+    if (result.task_start_guidance) {
+        const guidance = result.task_start_guidance;
+        if (guidance.skill.mode === 'direct') {
+            const activationState = guidance.skill.activation_commands.length > 0
+                ? 'guarded activation command(s) are listed above'
+                : 'current-cycle activation is already recorded';
+            lines.push(
+                `TaskStartSkillSuggestion: ${guidance.skill.suggested_skill_ids.join(', ')}; ${activationState}`
+            );
+        } else {
+            lines.push(
+                `TaskStartSkillCatalog: relevant=none; catalog=${guidance.skill.catalog_path || 'unavailable'}`
+            );
+        }
+        if (guidance.review) {
+            const reviewLaneSummary = guidance.review.lanes.length > 0
+                ? guidance.review.lanes.map((lane) => (
+                    `${lane.id}:${lane.display_label}:${lane.selection}:profile_${lane.profile_state}`
+                )).join(', ')
+                : 'none';
+            const omittedSuffix = guidance.review.omitted_lane_count > 0
+                ? `; omitted=${guidance.review.omitted_lane_count}`
+                : '';
+            lines.push(
+                `TaskStartReview${guidance.review.mode === 'direct' ? 'Suggestion' : 'Catalog'}: ` +
+                `${reviewLaneSummary}${omittedSuffix}; advisory_only=true`
+            );
+            lines.push(
+                'TaskStartReviewPolicy: guidance never makes a lane mandatory; catalog/profile policy and RequiredReviews remain authoritative.'
+            );
+        }
+    }
     if (result.quality_checklist) {
         lines.push(result.quality_checklist.visible_summary_line);
     }
