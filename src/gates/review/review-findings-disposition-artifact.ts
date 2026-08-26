@@ -8,9 +8,11 @@ import type {
 } from './review-findings-validation-artifact';
 import {
     evaluateReviewFindingsValidationArtifactDispositions,
+    resolveReviewFindingDispositionSourceRule,
     type LockedReviewFindingPolicyResolution,
     type ReviewFindingsDispositionEvaluation
 } from './review-finding-disposition';
+import type { ReviewFollowUpTaskClosurePolicySnapshot } from '../../core/review-follow-up-task-closure-policy';
 import type { ReviewFindingsSeverity } from './review-findings-schema';
 
 export const REVIEW_FINDINGS_DISPOSITION_ARTIFACT_TYPE = 'review_findings_disposition';
@@ -38,6 +40,10 @@ export interface ReviewFindingsDispositionPolicySnapshot {
     policy_source: LockedReviewFindingPolicyResolution['source'];
     policy_diagnostics: string[];
     review_finding_policy: ReviewFindingPolicy;
+    base_review_finding_policy?: ReviewFindingPolicy;
+    review_follow_up_task_closure_policy?: ReviewFollowUpTaskClosurePolicySnapshot;
+    review_follow_up_task_closure_policy_source?:
+        LockedReviewFindingPolicyResolution['follow_up_task_closure_policy_source'];
 }
 
 export interface ReviewFindingsDispositionArtifactItem {
@@ -106,15 +112,19 @@ function dispositionStatus(action: ReviewFindingDispositionAction): ReviewFindin
 function buildFindingItem(
     finding: NormalizedReviewFindingInventoryEntry,
     action: ReviewFindingDispositionAction,
-    policySource: LockedReviewFindingPolicyResolution['source']
+    policyResolution: LockedReviewFindingPolicyResolution
 ): ReviewFindingsDispositionArtifactItem {
     return {
         id: finding.id,
         kind: 'finding',
         severity: finding.severity,
         action,
-        source_rule: `review_finding_policy.findings.${finding.severity}`,
-        policy_source: policySource,
+        source_rule: resolveReviewFindingDispositionSourceRule(
+            policyResolution,
+            'finding',
+            finding.severity
+        ),
+        policy_source: policyResolution.source,
         blocking: action === 'fix_now',
         materialization_status: dispositionStatus(action),
         audit_status: 'retained_in_disposition_artifact'
@@ -124,15 +134,19 @@ function buildFindingItem(
 function buildResidualRiskItem(
     risk: NormalizedReviewResidualRiskInventoryEntry,
     action: ReviewFindingDispositionAction,
-    policySource: LockedReviewFindingPolicyResolution['source']
+    policyResolution: LockedReviewFindingPolicyResolution
 ): ReviewFindingsDispositionArtifactItem {
     return {
         id: risk.id,
         kind: 'residual_risk',
         severity: 'residual_risk',
         action,
-        source_rule: 'review_finding_policy.residual_risk',
-        policy_source: policySource,
+        source_rule: resolveReviewFindingDispositionSourceRule(
+            policyResolution,
+            'residual_risk',
+            'residual_risk'
+        ),
+        policy_source: policyResolution.source,
         blocking: action === 'fix_now',
         materialization_status: dispositionStatus(action),
         audit_status: 'retained_in_disposition_artifact'
@@ -177,14 +191,14 @@ export function buildReviewFindingsDispositionArtifact(
             if (finding.id === EVIDENCE_ONLY_FINDING_ID) {
                 continue;
             }
-            items.push(buildFindingItem(finding, action, options.policyResolution.source));
+            items.push(buildFindingItem(finding, action, options.policyResolution));
         }
     }
     for (const risk of validationResult.normalized_inventory.residual_risks) {
         items.push(buildResidualRiskItem(
             risk,
             dispositionResult.residual_risks.action,
-            options.policyResolution.source
+            options.policyResolution
         ));
     }
 
@@ -207,7 +221,20 @@ export function buildReviewFindingsDispositionArtifact(
             policy_id: options.policyResolution.policy.policy_id,
             policy_source: options.policyResolution.source,
             policy_diagnostics: [...options.policyResolution.diagnostics],
-            review_finding_policy: clonePolicy(options.policyResolution.policy)
+            review_finding_policy: clonePolicy(options.policyResolution.policy),
+            ...(options.policyResolution.follow_up_task_closure_policy.eligible
+                ? {
+                    base_review_finding_policy: clonePolicy(options.policyResolution.base_policy),
+                    review_follow_up_task_closure_policy: {
+                        ...options.policyResolution.follow_up_task_closure_policy,
+                        diagnostics: [
+                            ...options.policyResolution.follow_up_task_closure_policy.diagnostics
+                        ]
+                    },
+                    review_follow_up_task_closure_policy_source:
+                        options.policyResolution.follow_up_task_closure_policy_source
+                }
+                : {})
         },
         disposition_result: dispositionResult,
         disposition_result_sha256: sha256RedactedJsonPayload(dispositionResult),

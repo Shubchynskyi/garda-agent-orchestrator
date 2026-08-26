@@ -294,7 +294,16 @@ function prepareCurrentReviewPhase(repoRoot: string, taskId: string, preflightPa
     const requestedFindingPolicy = (JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, any>)
         .profile_policy_snapshot?.review_finding_policy;
     if (requestedFindingPolicy) {
-        assert.deepEqual(taskMode.profile_policy_snapshot?.review_finding_policy, requestedFindingPolicy);
+        assert.deepEqual(
+            taskMode.profile_policy_snapshot?.review_finding_policy,
+            requestedFindingPolicy,
+            `Task-mode finding policy drift for ${taskId}: ${JSON.stringify({
+                task_profile: taskMode.task_profile,
+                profile_selection_source: taskMode.profile_selection_source,
+                active_profile: taskMode.active_profile,
+                task_queue: fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8')
+            })}`
+        );
     }
     assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
     runHandshakeForTask(repoRoot, taskId, provider);
@@ -1030,10 +1039,30 @@ export async function seedPromptBoundReviewFixture(options: {
     provider?: string;
     reviewerIdentity?: string;
     preflightOverrides?: Record<string, unknown>;
+    taskNotes?: string;
 }) {
     const provider = options.provider || 'Codex';
     const reviewerIdentity = options.reviewerIdentity || `agent:${options.taskId}-reviewer`;
     seedTaskQueue(options.repoRoot, options.taskId);
+    const requestedProfileId = String(
+        ((options.preflightOverrides?.profile_policy_snapshot as Record<string, any> | undefined)
+            ?.review_finding_policy as Record<string, unknown> | undefined)?.policy_id || ''
+    ).trim();
+    if (options.taskNotes || requestedProfileId) {
+        const taskPath = path.join(options.repoRoot, 'TASK.md');
+        let taskContent = fs.readFileSync(taskPath, 'utf8');
+        if (requestedProfileId) {
+            taskContent = taskContent.replace('| default |', `| ${requestedProfileId} |`);
+        }
+        if (options.taskNotes) {
+            taskContent = taskContent.replace('| fixture |', `| ${options.taskNotes} |`);
+        }
+        fs.writeFileSync(
+            taskPath,
+            taskContent,
+            'utf8'
+        );
+    }
     seedInitAnswers(options.repoRoot, provider);
     initializeGitRepo(options.repoRoot);
     fs.writeFileSync(path.join(options.repoRoot, 'src', 'app.ts'), 'const promptBoundValue = 2;\n', 'utf8');

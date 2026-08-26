@@ -434,6 +434,17 @@ function writePreflight(
             schema_version: 1;
             materialization_mode: 'per_finding' | 'grouped_by_parent';
         };
+        reviewFollowUpTaskClosurePolicy?: {
+            schema_version: 1;
+            eligible: boolean;
+            configured: boolean;
+            valid: boolean;
+            provenance: 'per_finding' | 'grouped_by_parent' | null;
+            source_notes_sha256: string | null;
+            skip_low_findings: boolean;
+            forbid_child_tasks: boolean;
+            diagnostics: string[];
+        };
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
     } = {}
@@ -510,6 +521,9 @@ function writePreflight(
                 : {}),
             ...(options.reviewFollowUpPolicy
                 ? { review_follow_up_policy: options.reviewFollowUpPolicy }
+                : {}),
+            ...(options.reviewFollowUpTaskClosurePolicy
+                ? { review_follow_up_task_closure_policy: options.reviewFollowUpTaskClosurePolicy }
                 : {})
         },
         review_execution_policy: {
@@ -1154,7 +1168,10 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     repoRoot: string,
     taskId: string,
     reviewType: string,
-    options: { followUpFindingCount?: number } = {}
+    options: {
+        findingSeverity?: 'medium' | 'low';
+        followUpFindingCount?: number;
+    } = {}
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
@@ -1168,6 +1185,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
     const reviewExecution = resolveReviewExecutionFixture(reviewContext);
+    const findingSeverity = options.findingSeverity ?? 'medium';
     const followUpFindingCount = options.followUpFindingCount ?? 1;
     const followUpFindingIds = Array.from({ length: followUpFindingCount }, (_, index) => `F-${String(index + 1).padStart(3, '0')}`);
     const followUpFindings = followUpFindingIds.map((findingId, index) => {
@@ -1215,8 +1233,8 @@ function writeAcceptedFindingsDispositionReviewEvidence(
         findings: {
             critical: [],
             high: [],
-            medium: followUpFindings,
-            low: []
+            medium: findingSeverity === 'medium' ? followUpFindings : [],
+            low: findingSeverity === 'low' ? followUpFindings : []
         },
         residual_risks: [],
         reviewer_notes: []
@@ -1887,6 +1905,112 @@ describe('gates/next-step', { concurrency: 2 }, () => {
         assert.match(result.title, /Fix failed 'code' review findings/);
         assert.ok(!result.commands[0].command.includes('record-review-result'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('routes forbid-child closure findings to current-task remediation instead of descendant materialization', () => {
+        const taskId = `${TASK_ID}-F1`;
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, taskId);
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            reviewFollowUpTaskClosurePolicy: {
+                schema_version: 1,
+                eligible: true,
+                configured: true,
+                valid: true,
+                provenance: 'per_finding',
+                source_notes_sha256: 'a'.repeat(64),
+                skip_low_findings: false,
+                forbid_child_tasks: true,
+                diagnostics: ['Frozen from explicit per_finding task metadata.']
+            }
+        });
+        seedCompilePass(repoRoot, taskId);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, taskId, 'code');
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            taskId,
+            'code',
+            preflightPath,
+            fileSha256(preflightPath),
+            JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.fix_now, 1);
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 0);
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.match(result.title, /Fix failed 'code' review findings/u);
+        assert.doesNotMatch(result.title, /follow-up tasks/iu);
+    });
+
+    it('routes skip-low closure findings as explicitly ignored without blockers or follow-ups', () => {
+        const taskId = `${TASK_ID}-F1`;
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, taskId);
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            reviewFollowUpTaskClosurePolicy: {
+                schema_version: 1,
+                eligible: true,
+                configured: true,
+                valid: true,
+                provenance: 'per_finding',
+                source_notes_sha256: 'b'.repeat(64),
+                skip_low_findings: true,
+                forbid_child_tasks: true,
+                diagnostics: ['Frozen from explicit per_finding task metadata.']
+            }
+        });
+        seedCompilePass(repoRoot, taskId);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, taskId, 'code', {
+            findingSeverity: 'low'
+        });
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            taskId,
+            'code',
+            preflightPath,
+            fileSha256(preflightPath),
+            JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.ignore, 1);
+        assert.equal(state.reviewFindingsDisposition?.blocking_count, 0);
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 0);
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.notEqual(result.next_gate, 'implementation');
+        assert.notEqual(result.next_gate, 'materialize-review-follow-up-tasks');
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'security');
     });
 
     it('routes accepted create_follow_up dispositions to follow-up task materialization before downstream reviews', () => {

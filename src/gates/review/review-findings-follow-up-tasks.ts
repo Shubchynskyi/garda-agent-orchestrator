@@ -15,6 +15,11 @@ import {
     isCanonicalTaskId,
     isReviewFindingsFollowUpTaskId
 } from '../../core/task-ids';
+import {
+    buildLegacyReviewFollowUpTaskClosurePolicySnapshot,
+    getReviewFollowUpTaskClosurePolicySnapshotViolations,
+    type ReviewFollowUpTaskClosurePolicySnapshot
+} from '../../core/review-follow-up-task-closure-policy';
 import { allocateParentDerivedTaskIds } from '../../core/task-id-allocation';
 import {
     formatActiveTaskQueueTable,
@@ -51,8 +56,11 @@ export const REVIEW_FINDINGS_FOLLOW_UP_TASKS_ARTIFACT_TYPE = 'review_findings_fo
 export const REVIEW_FINDINGS_FOLLOW_UP_TASKS_ARTIFACT_SCHEMA_VERSION = 1;
 
 const REVIEW_FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+const EVIDENCE_ONLY_FINDING_ID = 'F-000';
 const REVIEW_TYPE_TOKEN_PATTERN = /^[a-z][a-z0-9_-]*$/u;
 const REVIEW_TYPE_MAX_LENGTH = 64;
+const MATERIALIZED_PARENT_NOTE_SUFFIX_PATTERN =
+    /(?:\s+Review follow-up tasks materialized: `[^`\r\n]+`(?:, `[^`\r\n]+`)*; artifact `[^`\r\n]+`\.)+$/u;
 
 type ReviewFollowUpMaterializationStatus =
     | 'MATERIALIZED'
@@ -104,6 +112,8 @@ export interface FollowUpMaterializationContext {
     preflight_sha256: string | null;
     compile_gate_timestamp: string | null;
     group_fingerprint: string | null;
+    review_follow_up_task_closure_policy: ReviewFollowUpTaskClosurePolicySnapshot;
+    review_follow_up_task_closure_policy_source: 'preflight_profile_policy_snapshot' | 'legacy_default';
     diagnostics: string[];
 }
 
@@ -212,6 +222,10 @@ function sha256JsonPayload(value: unknown): string {
         .digest('hex');
 }
 
+function sha256TextPayload(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex').toLowerCase();
+}
+
 function normalizeHash(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
@@ -271,6 +285,7 @@ function resolveFollowUpMaterializationContext(
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const parentProfile = resolveParentTaskProfile(repoRoot, taskId);
     const initialTaskProfileContext = resolveFollowUpTaskProfileContext(parentProfile, null);
+    const legacyClosurePolicy = buildLegacyReviewFollowUpTaskClosurePolicySnapshot();
     const fallback: FollowUpMaterializationContext = {
         mode: 'per_finding',
         ...initialTaskProfileContext,
@@ -279,6 +294,8 @@ function resolveFollowUpMaterializationContext(
         preflight_sha256: null,
         compile_gate_timestamp: null,
         group_fingerprint: null,
+        review_follow_up_task_closure_policy: legacyClosurePolicy,
+        review_follow_up_task_closure_policy_source: 'legacy_default',
         diagnostics: [
             ...initialTaskProfileContext.diagnostics,
             'Legacy or missing profile snapshot review_follow_up_policy defaulted to per_finding.'
@@ -289,6 +306,24 @@ function resolveFollowUpMaterializationContext(
         ? read.value.profile_policy_snapshot
         : null;
     const taskProfileContext = resolveFollowUpTaskProfileContext(parentProfile, snapshot);
+    const closurePolicyValue = snapshot?.review_follow_up_task_closure_policy;
+    const closurePolicyViolations = getReviewFollowUpTaskClosurePolicySnapshotViolations(closurePolicyValue);
+    const closurePolicy = closurePolicyViolations.length === 0
+        ? {
+            ...(closurePolicyValue as unknown as ReviewFollowUpTaskClosurePolicySnapshot),
+            diagnostics: [
+                ...(closurePolicyValue as unknown as ReviewFollowUpTaskClosurePolicySnapshot).diagnostics
+            ]
+        }
+        : legacyClosurePolicy;
+    const closurePolicySource = closurePolicyViolations.length === 0
+        ? 'preflight_profile_policy_snapshot' as const
+        : 'legacy_default' as const;
+    const closurePolicyDiagnostics = closurePolicyViolations.length === 0
+        ? []
+        : [
+            'Preflight closure-policy snapshot is missing or invalid; descendant materialization uses legacy fail-closed defaults.'
+        ];
     const policy = snapshot && isPlainRecord(snapshot.review_follow_up_policy)
         ? snapshot.review_follow_up_policy
         : null;
@@ -297,7 +332,16 @@ function resolveFollowUpMaterializationContext(
         ? policy.materialization_mode
         : null;
     if (!mode) {
-        return fallback;
+        return {
+            ...fallback,
+            review_follow_up_task_closure_policy: closurePolicy,
+            review_follow_up_task_closure_policy_source: closurePolicySource,
+            diagnostics: [
+                ...taskProfileContext.diagnostics,
+                ...closurePolicyDiagnostics,
+                'Legacy or missing profile snapshot review_follow_up_policy defaulted to per_finding.'
+            ]
+        };
     }
     const snapshotHash = normalizeHash(snapshot?.snapshot_hash);
     const compileGatePath = path.join(reviewsRoot, `${taskId}-compile-gate.json`);
@@ -332,8 +376,11 @@ function resolveFollowUpMaterializationContext(
             preflight_sha256: compilePreflightSha256,
             compile_gate_timestamp: compileTimestamp || null,
             group_fingerprint: null,
+            review_follow_up_task_closure_policy: closurePolicy,
+            review_follow_up_task_closure_policy_source: closurePolicySource,
             diagnostics: [
                 ...taskProfileContext.diagnostics,
+                ...closurePolicyDiagnostics,
                 'Grouped follow-up policy requires snapshot_hash and a current preflight-bound compile cycle; materialization is blocked.'
             ]
         };
@@ -354,7 +401,12 @@ function resolveFollowUpMaterializationContext(
                 materialization_mode: mode
             })
             : null,
-        diagnostics: [...taskProfileContext.diagnostics]
+        review_follow_up_task_closure_policy: closurePolicy,
+        review_follow_up_task_closure_policy_source: closurePolicySource,
+        diagnostics: [
+            ...taskProfileContext.diagnostics,
+            ...closurePolicyDiagnostics
+        ]
     };
 }
 
@@ -532,7 +584,47 @@ function isReviewFindingSeverity(value: unknown): value is ReviewFindingSeverity
     return typeof value === 'string' && (REVIEW_FINDING_SEVERITIES as readonly string[]).includes(value);
 }
 
-function expectedSourceRuleForItem(item: ReviewFindingsDispositionArtifactItem): string | null {
+function expectedSourceRuleForItem(
+    artifact: ReviewFindingsDispositionArtifact,
+    item: ReviewFindingsDispositionArtifactItem
+): string | null {
+    const policy = artifact.policy as unknown as Record<string, unknown>;
+    const closurePolicy = isPlainRecord(policy.review_follow_up_task_closure_policy)
+        ? policy.review_follow_up_task_closure_policy
+        : null;
+    const basePolicy = isPlainRecord(policy.base_review_finding_policy)
+        ? policy.base_review_finding_policy
+        : null;
+    const baseFindings = basePolicy && isPlainRecord(basePolicy.findings)
+        ? basePolicy.findings
+        : null;
+    const effectivePolicy = isPlainRecord(policy.review_finding_policy)
+        ? policy.review_finding_policy
+        : null;
+    const effectiveFindings = effectivePolicy && isPlainRecord(effectivePolicy.findings)
+        ? effectivePolicy.findings
+        : null;
+    if (
+        isReviewFindingsFollowUpTaskId(artifact.task_id)
+        && item.kind === 'finding'
+        && item.severity === 'low'
+        && closurePolicy?.skip_low_findings === true
+        && baseFindings?.low !== effectiveFindings?.low
+        && item.action === 'ignore'
+    ) {
+        return 'review_follow_up_task_closure_policy.skip_low_findings';
+    }
+    const baseAction = item.kind === 'residual_risk'
+        ? basePolicy?.residual_risk
+        : (isReviewFindingSeverity(item.severity) ? baseFindings?.[item.severity] : null);
+    if (
+        isReviewFindingsFollowUpTaskId(artifact.task_id)
+        && closurePolicy?.forbid_child_tasks === true
+        && baseAction === 'create_follow_up'
+        && item.action === 'fix_now'
+    ) {
+        return 'review_follow_up_task_closure_policy.forbid_child_tasks';
+    }
     if (item.kind === 'residual_risk') {
         return 'review_finding_policy.residual_risk';
     }
@@ -540,6 +632,28 @@ function expectedSourceRuleForItem(item: ReviewFindingsDispositionArtifactItem):
         return `review_finding_policy.findings.${item.severity}`;
     }
     return null;
+}
+
+function expectedClosurePolicyActionForItem(
+    artifact: ReviewFindingsDispositionArtifact,
+    item: ReviewFindingsDispositionArtifactItem
+): string | null {
+    if (
+        !isReviewFindingsFollowUpTaskId(artifact.task_id)
+        || item.kind !== 'finding'
+        || item.severity !== 'low'
+    ) {
+        return null;
+    }
+    const policy = artifact.policy as unknown as Record<string, unknown>;
+    const closurePolicy = isPlainRecord(policy.review_follow_up_task_closure_policy)
+        ? policy.review_follow_up_task_closure_policy
+        : null;
+    return closurePolicy?.eligible === true
+        && closurePolicy.valid === true
+        && closurePolicy.skip_low_findings === true
+        ? 'ignore'
+        : null;
 }
 
 function expectedMaterializationStatusForAction(action: unknown): string | null {
@@ -555,27 +669,6 @@ function expectedMaterializationStatusForAction(action: unknown): string | null 
     return null;
 }
 
-function dispositionBucketActionForId(bucket: unknown, id: string): string | null {
-    if (!isPlainRecord(bucket) || typeof bucket.action !== 'string' || !Array.isArray(bucket.ids)) {
-        return null;
-    }
-    return bucket.ids.includes(id) ? bucket.action : null;
-}
-
-function dispositionResultActionForItem(
-    artifact: ReviewFindingsDispositionArtifact,
-    item: ReviewFindingsDispositionArtifactItem
-): string | null {
-    const result = artifact.disposition_result as unknown as Record<string, unknown>;
-    if (item.kind === 'residual_risk') {
-        return dispositionBucketActionForId(result.residual_risks, item.id);
-    }
-    if (!isReviewFindingSeverity(item.severity) || !isPlainRecord(result.findings)) {
-        return null;
-    }
-    return dispositionBucketActionForId(result.findings[item.severity], item.id);
-}
-
 function dispositionItemKey(kind: ReviewFindingsDispositionArtifactItem['kind'], severity: string, id: string): string {
     return `${kind}:${severity}:${id}`;
 }
@@ -584,15 +677,17 @@ function dispositionResultItemKeys(artifact: ReviewFindingsDispositionArtifact):
     key: string;
     path: string;
     id: string;
+    action: string | null;
 }> {
     const result = artifact.disposition_result as unknown as Record<string, unknown>;
-    const keys: Array<{ key: string; path: string; id: string }> = [];
+    const keys: Array<{ key: string; path: string; id: string; action: string | null }> = [];
     const findings = isPlainRecord(result.findings) ? result.findings : {};
     for (const severity of REVIEW_FINDING_SEVERITIES) {
         const bucket = findings[severity];
         if (!isPlainRecord(bucket) || !Array.isArray(bucket.ids)) {
             continue;
         }
+        const action = typeof bucket.action === 'string' ? bucket.action : null;
         for (const rawId of bucket.ids) {
             const id = normalizeText(rawId);
             if (!id) {
@@ -601,13 +696,15 @@ function dispositionResultItemKeys(artifact: ReviewFindingsDispositionArtifact):
             keys.push({
                 key: dispositionItemKey('finding', severity, id),
                 path: `disposition_result.findings.${severity}`,
-                id
+                id,
+                action
             });
         }
     }
 
     const residualRiskBucket = result.residual_risks;
     if (isPlainRecord(residualRiskBucket) && Array.isArray(residualRiskBucket.ids)) {
+        const action = typeof residualRiskBucket.action === 'string' ? residualRiskBucket.action : null;
         for (const rawId of residualRiskBucket.ids) {
             const id = normalizeText(rawId);
             if (!id) {
@@ -616,7 +713,8 @@ function dispositionResultItemKeys(artifact: ReviewFindingsDispositionArtifact):
             keys.push({
                 key: dispositionItemKey('residual_risk', 'residual_risk', id),
                 path: 'disposition_result.residual_risks',
-                id
+                id,
+                action
             });
         }
     }
@@ -669,6 +767,36 @@ function validateDispositionArtifactShape(params: {
     if (!artifactPolicySource) {
         violations.push('Review findings disposition artifact policy.policy_source is missing.');
     }
+    const artifactPolicy = artifact.policy as unknown as Record<string, unknown>;
+    const dispositionResult = artifact.disposition_result as unknown as Record<string, unknown>;
+    const policyClosureValue = artifactPolicy.review_follow_up_task_closure_policy;
+    const resultClosureValue = dispositionResult.review_follow_up_task_closure_policy;
+    if (policyClosureValue !== undefined || resultClosureValue !== undefined) {
+        const policyClosureViolations = getReviewFollowUpTaskClosurePolicySnapshotViolations(policyClosureValue);
+        const resultClosureViolations = getReviewFollowUpTaskClosurePolicySnapshotViolations(resultClosureValue);
+        violations.push(...policyClosureViolations.map((violation) => (
+            `Review findings disposition artifact policy ${violation}`
+        )));
+        violations.push(...resultClosureViolations.map((violation) => (
+            `Review findings disposition result ${violation}`
+        )));
+        if (
+            policyClosureViolations.length === 0
+            && resultClosureViolations.length === 0
+            && sha256JsonPayload(policyClosureValue) !== sha256JsonPayload(resultClosureValue)
+        ) {
+            violations.push(
+                'Review findings disposition policy and disposition_result closure-policy snapshots must match.'
+            );
+        }
+    }
+    const dispositionResultItems = dispositionResultItemKeys(artifact);
+    const dispositionResultActionsByItemKey = new Map<string, string>();
+    for (const resultItem of dispositionResultItems) {
+        if (resultItem.action) {
+            dispositionResultActionsByItemKey.set(resultItem.key, resultItem.action);
+        }
+    }
     const dispositionItemKeys = new Set<string>();
     for (const item of artifact.items) {
         const itemId = normalizeText(item.id);
@@ -687,7 +815,14 @@ function validateDispositionArtifactShape(params: {
         if (item.action !== 'fix_now' && item.action !== 'create_follow_up' && item.action !== 'ignore') {
             violations.push(`Review findings disposition item '${item.id || 'missing'}' has invalid action.`);
         }
-        const dispositionResultAction = dispositionResultActionForItem(artifact, item);
+        const key = item.kind === 'residual_risk'
+            ? dispositionItemKey('residual_risk', 'residual_risk', itemId)
+            : isReviewFindingSeverity(item.severity)
+                ? dispositionItemKey('finding', item.severity, itemId)
+                : null;
+        const dispositionResultAction = key
+            ? dispositionResultActionsByItemKey.get(key) || null
+            : null;
         if (!dispositionResultAction) {
             violations.push(
                 `Review findings disposition item '${item.id || 'missing'}' is not present in disposition_result.`
@@ -698,7 +833,14 @@ function validateDispositionArtifactShape(params: {
                 `disposition_result action '${dispositionResultAction}'.`
             );
         }
-        const expectedSourceRule = expectedSourceRuleForItem(item);
+        const expectedClosurePolicyAction = expectedClosurePolicyActionForItem(artifact, item);
+        if (expectedClosurePolicyAction && item.action !== expectedClosurePolicyAction) {
+            violations.push(
+                `Review findings disposition item '${item.id || 'missing'}' must use action ` +
+                `'${expectedClosurePolicyAction}' under frozen skip_low_findings closure policy.`
+            );
+        }
+        const expectedSourceRule = expectedSourceRuleForItem(artifact, item);
         if (!expectedSourceRule || normalizeText(item.source_rule) !== expectedSourceRule) {
             violations.push(
                 `Review findings disposition item '${item.id || 'missing'}' source_rule must be ` +
@@ -718,11 +860,6 @@ function validateDispositionArtifactShape(params: {
                 `Review findings disposition item '${item.id || 'missing'}' blocking flag does not match action '${item.action}'.`
             );
         }
-        const key = item.kind === 'residual_risk'
-            ? dispositionItemKey('residual_risk', 'residual_risk', itemId)
-            : isReviewFindingSeverity(item.severity)
-                ? dispositionItemKey('finding', item.severity, itemId)
-                : null;
         if (key) {
             if (dispositionItemKeys.has(key)) {
                 violations.push(`Review findings disposition item '${item.id || 'missing'}' is duplicated.`);
@@ -742,7 +879,7 @@ function validateDispositionArtifactShape(params: {
             );
         }
     }
-    for (const resultItem of dispositionResultItemKeys(artifact)) {
+    for (const resultItem of dispositionResultItems) {
         if (!dispositionItemKeys.has(resultItem.key)) {
             violations.push(
                 `Review findings ${resultItem.path} id '${resultItem.id}' is missing a matching disposition item.`
@@ -852,6 +989,55 @@ function validateValidationInventoryShape(artifact: ReviewFindingsValidationArti
             }
         });
     }
+    return violations;
+}
+
+function validateDispositionInventoryCompleteness(params: {
+    disposition: ReviewFindingsDispositionArtifact;
+    validation: ReviewFindingsValidationArtifact;
+}): string[] {
+    const violations: string[] = [];
+    const resultKeys = new Set(
+        dispositionResultItemKeys(params.disposition).map((item) => item.key)
+    );
+    const dispositionItemKeys = new Set(
+        params.disposition.items.map((item) => dispositionItemKey(item.kind, item.severity, item.id))
+    );
+    const inventory = params.validation.validation_result.normalized_inventory;
+
+    for (const severity of REVIEW_FINDING_SEVERITIES) {
+        for (const finding of inventory.findings_by_severity[severity]) {
+            if (finding.id === EVIDENCE_ONLY_FINDING_ID) {
+                continue;
+            }
+            const key = dispositionItemKey('finding', severity, finding.id);
+            if (!resultKeys.has(key)) {
+                violations.push(
+                    `Accepted validation inventory finding '${finding.id}' at severity '${severity}' is missing from disposition_result.`
+                );
+            }
+            if (!dispositionItemKeys.has(key)) {
+                violations.push(
+                    `Accepted validation inventory finding '${finding.id}' at severity '${severity}' is missing a disposition item.`
+                );
+            }
+        }
+    }
+
+    for (const residualRisk of inventory.residual_risks) {
+        const key = dispositionItemKey('residual_risk', 'residual_risk', residualRisk.id);
+        if (!resultKeys.has(key)) {
+            violations.push(
+                `Accepted validation inventory residual risk '${residualRisk.id}' is missing from disposition_result.`
+            );
+        }
+        if (!dispositionItemKeys.has(key)) {
+            violations.push(
+                `Accepted validation inventory residual risk '${residualRisk.id}' is missing a disposition item.`
+            );
+        }
+    }
+
     return violations;
 }
 
@@ -1263,6 +1449,10 @@ function appendParentFollowUpNote(existingNotes: string, childTaskIds: readonly 
     return existingNotes.trim() ? `${existingNotes.trim()} ${suffix}` : suffix;
 }
 
+function sourceParentNotes(notes: string): string {
+    return String(notes || '').replace(MATERIALIZED_PARENT_NOTE_SUFFIX_PATTERN, '').trim();
+}
+
 function findInsertionLineIndex(parentRow: CanonicalActiveTaskQueueRow, rows: readonly CanonicalActiveTaskQueueRow[]): number {
     const prefix = `${parentRow.taskId}-F`.toLowerCase();
     return rows.reduce((lineIndex, row) => {
@@ -1348,6 +1538,30 @@ function materializeTaskQueueRows(params: {
                     error_message: null,
                     rollback_content: null
                 };
+            }
+            const closurePolicy = params.materializationContext.review_follow_up_task_closure_policy;
+            if (
+                isReviewFindingsFollowUpTaskId(params.parentTaskId)
+                && closurePolicy.eligible
+            ) {
+                const expectedSourceNotesSha256 = normalizeHash(closurePolicy.source_notes_sha256);
+                const currentNotesSha256 = sha256TextPayload(parentRow.notes);
+                const preMaterializationNotesSha256 = sha256TextPayload(sourceParentNotes(parentRow.notes));
+                const matchesCurrentCycle = expectedSourceNotesSha256 === currentNotesSha256;
+                const matchesIdempotentRerun = expectedSourceNotesSha256 === preMaterializationNotesSha256;
+                if (!expectedSourceNotesSha256 || (!matchesCurrentCycle && !matchesIdempotentRerun)) {
+                    return {
+                        outcome: 'write_failed',
+                        task_path: normalizePath(taskPath),
+                        created: [],
+                        reused: [],
+                        blocked_fingerprints: params.obligations.map((obligation) => obligation.fingerprint),
+                        error_message:
+                            `Current TASK.md parent notes for '${params.parentTaskId}' do not match the frozen ` +
+                            'review follow-up closure-policy source_notes_sha256; descendant materialization is blocked.',
+                        rollback_content: null
+                    };
+                }
             }
             const childTaskProfile = params.materializationContext.task_profile || parentRow.profile;
 
@@ -1841,6 +2055,19 @@ function validateReceiptEvidence(params: {
         validateHashField(violations, 'Review receipt review_findings_disposition_artifact.artifact_sha256', dispositionReference.artifact_sha256, params.dispositionArtifactSha256);
         validateHashField(violations, 'Review receipt review_findings_disposition_artifact.disposition_result_sha256', dispositionReference.disposition_result_sha256, params.dispositionResultSha256);
     }
+    const embeddedDisposition = isPlainRecord(params.receipt.review_findings_disposition)
+        ? params.receipt.review_findings_disposition
+        : null;
+    if (!embeddedDisposition) {
+        violations.push('Review receipt is missing review_findings_disposition evidence.');
+    } else {
+        validateHashField(
+            violations,
+            'Review receipt review_findings_disposition payload sha256',
+            sha256RedactedJsonPayload(embeddedDisposition),
+            params.dispositionResultSha256
+        );
+    }
     const contract = isPlainRecord(params.receipt.review_output_contract)
         ? params.receipt.review_output_contract
         : null;
@@ -1853,6 +2080,34 @@ function validateReceiptEvidence(params: {
         validateHashField(violations, 'Review receipt review_output_contract.disposition_result_sha256', contract.disposition_result_sha256, params.dispositionResultSha256);
     }
     return { receiptSha256, violations };
+}
+
+function validateDispositionClosurePolicyBinding(params: {
+    disposition: ReviewFindingsDispositionArtifact;
+    materializationContext: FollowUpMaterializationContext;
+}): string[] {
+    const policy = params.disposition.policy as unknown as Record<string, unknown>;
+    const dispositionClosurePolicy = policy.review_follow_up_task_closure_policy;
+    const currentClosurePolicy = params.materializationContext.review_follow_up_task_closure_policy;
+    if (dispositionClosurePolicy === undefined) {
+        return currentClosurePolicy.eligible || currentClosurePolicy.configured
+            ? [
+                'Review findings disposition artifact is missing the frozen follow-up task closure-policy binding.'
+            ]
+            : [];
+    }
+    const violations = getReviewFollowUpTaskClosurePolicySnapshotViolations(dispositionClosurePolicy);
+    if (violations.length > 0) {
+        return violations.map((violation) => (
+            `Review findings disposition closure-policy binding ${violation}`
+        ));
+    }
+    if (sha256JsonPayload(dispositionClosurePolicy) !== sha256JsonPayload(currentClosurePolicy)) {
+        return [
+            'Review findings disposition closure-policy snapshot does not match the frozen current preflight snapshot.'
+        ];
+    }
+    return [];
 }
 
 function validateGroupedSourceCycleEvidence(params: {
@@ -2123,28 +2378,6 @@ export function materializeReviewFindingsFollowUpTasks(
         });
     }
 
-    if (isReviewFindingsFollowUpTaskId(taskId)) {
-        return buildBlockedResult({
-            repoRoot,
-            taskId,
-            reviewType,
-            artifactPath,
-            dispositionArtifactPath,
-            dispositionArtifactSha256: null,
-            dispositionResultSha256: null,
-            validationArtifactPath: null,
-            validationArtifactSha256: null,
-            validationResultSha256: null,
-            validationArtifact: null,
-            receiptPath: null,
-            receiptSha256: null,
-            items: [],
-            violations: [
-                `Task '${taskId}' is already a review findings follow-up task; all findings and residual risks must be fixed in this task, and nested follow-up materialization is forbidden.`
-            ]
-        });
-    }
-
     const dispositionRead = readJsonFile(dispositionArtifactPath, 'Review findings disposition artifact');
     const dispositionArtifactSha256 = fileSha256(dispositionArtifactPath);
     const disposition = dispositionRead.value ? parseDispositionArtifact(dispositionRead.value) : null;
@@ -2256,6 +2489,10 @@ export function materializeReviewFindingsFollowUpTasks(
         dispositionResultSha256: disposition.disposition_result_sha256
     });
     const materializationContext = resolveFollowUpMaterializationContext(repoRoot, reviewsRoot, taskId);
+    const dispositionClosurePolicyViolations = validateDispositionClosurePolicyBinding({
+        disposition,
+        materializationContext
+    });
     const groupedSourceCycleViolations = validationArtifact
         ? validateGroupedSourceCycleEvidence({
             repoRoot,
@@ -2277,11 +2514,16 @@ export function materializeReviewFindingsFollowUpTasks(
     const validationInventoryViolations = validationArtifact
         ? validateValidationInventoryShape(validationArtifact)
         : [];
+    const dispositionInventoryViolations = validationArtifact && validationInventoryViolations.length === 0
+        ? validateDispositionInventoryCompleteness({ disposition, validation: validationArtifact })
+        : [];
     const sourceViolations = [
         ...validationResult.violations,
         ...validationInventoryViolations,
+        ...dispositionInventoryViolations,
         ...receiptRead.violations,
         ...receiptValidation.violations,
+        ...dispositionClosurePolicyViolations,
         ...groupedSourceCycleViolations,
         ...groupedRequiredReviewViolations
     ];
@@ -2338,6 +2580,50 @@ export function materializeReviewFindingsFollowUpTasks(
             receiptSha256: receiptValidation.receiptSha256,
             items: built.items,
             violations: built.violations
+        });
+    }
+
+    const closurePolicy = materializationContext.review_follow_up_task_closure_policy;
+    const isFollowUpTask = isReviewFindingsFollowUpTaskId(taskId);
+    const legacyNestedFollowUpBlocked = isFollowUpTask
+        && (!closurePolicy.eligible || !closurePolicy.valid);
+    const descendantMaterializationForbidden = isFollowUpTask
+        && (closurePolicy.forbid_child_tasks || legacyNestedFollowUpBlocked);
+    if (descendantMaterializationForbidden && built.obligations.length > 0) {
+        const blockedQueueResult: TaskQueueMaterializationResult = {
+            outcome: 'not_required',
+            task_path: normalizePath(path.join(repoRoot, TASK_QUEUE_FILENAME)),
+            created: [],
+            reused: [],
+            blocked_fingerprints: built.obligations.map((obligation) => obligation.fingerprint),
+            error_message: null,
+            rollback_content: null
+        };
+        const items = buildMaterializationItems({
+            baseItems: built.items,
+            obligations: built.obligations,
+            queueResult: blockedQueueResult
+        });
+        return buildBlockedResult({
+            repoRoot,
+            taskId,
+            reviewType,
+            artifactPath,
+            dispositionArtifactPath,
+            dispositionArtifactSha256,
+            dispositionResultSha256: disposition.disposition_result_sha256,
+            validationArtifactPath,
+            validationArtifactSha256: validationResult.artifact_sha256,
+            validationResultSha256: validationArtifact.validation_result_sha256,
+            validationArtifact,
+            receiptPath,
+            receiptSha256: receiptValidation.receiptSha256,
+            items,
+            violations: [legacyNestedFollowUpBlocked
+                ? `Legacy review follow-up task '${taskId}' has no valid explicit closure-policy provenance; ` +
+                    'nested follow-up materialization remains fail-closed after receipt, context, and tree evidence validation.'
+                : `Frozen review follow-up task closure policy forbids child tasks for '${taskId}'; ` +
+                    'every would-be descendant remains an explicit current-task remediation blocker.']
         });
     }
 

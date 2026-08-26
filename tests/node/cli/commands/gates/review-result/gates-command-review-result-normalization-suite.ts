@@ -38,6 +38,10 @@ import {
     readReviewOutputCorrectionArtifact
 } from '../../../../../../src/gates/review/review-output-correction';
 import { resolveReviewExecutionRuntimeBindings } from '../../../../../../src/cli/commands/gate-review-handlers/context/review-context-runtime-validation';
+import {
+    formatReviewFollowUpTaskClosurePolicyMetadata,
+    resolveReviewFollowUpTaskClosurePolicy
+} from '../../../../../../src/core/review-follow-up-task-closure-policy';
 
 const it = createPartitionedTestRegistrar(
     nodeIt,
@@ -141,6 +145,24 @@ function softProfilePolicySnapshot(): Record<string, unknown> {
                 low: 'ignore'
             },
             residual_risk: 'ignore'
+        }
+    };
+}
+
+function followUpClosureScenarioInput(
+    skipLowFindings: boolean,
+    forbidChildTasks: boolean
+): { taskNotes: string; profilePolicySnapshot: Record<string, unknown> } {
+    const taskNotes = `review_follow_up_fingerprint=${'a'.repeat(64)}. `
+        + formatReviewFollowUpTaskClosurePolicyMetadata({
+            skip_low_findings: skipLowFindings,
+            forbid_child_tasks: forbidChildTasks
+        });
+    return {
+        taskNotes,
+        profilePolicySnapshot: {
+            ...balancedProfilePolicySnapshot(),
+            review_follow_up_task_closure_policy: resolveReviewFollowUpTaskClosurePolicy(taskNotes)
         }
     };
 }
@@ -1916,6 +1938,8 @@ describe('gates command review result - normalization', () => {
     });
 
     it('record-review-result applies locked balanced dispositions before deriving the gate verdict', async () => {
+        const skipLowClosure = followUpClosureScenarioInput(true, false);
+        const forbidChildClosure = followUpClosureScenarioInput(false, true);
         const scenarios = [
             {
                 taskId: 'T-979-9-balanced-low-follow-up',
@@ -1971,6 +1995,45 @@ describe('gates command review result - normalization', () => {
                 expectedAction: 'fix_now',
                 expectedBlockingCount: 1,
                 expectedDispositionVerdict: 'fail_for_fix_now'
+            },
+            {
+                taskId: 'T-979-10-F1',
+                profilePolicySnapshot: skipLowClosure.profilePolicySnapshot,
+                taskNotes: skipLowClosure.taskNotes,
+                subject: 'finding' as const,
+                severity: 'low' as const,
+                expectedVerdict: 'REVIEW PASSED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'ignore',
+                expectedBlockingCount: 0,
+                expectedDispositionVerdict: 'pass_with_follow_up_or_ignored_findings',
+                expectedSourceRule: 'review_follow_up_task_closure_policy.skip_low_findings'
+            },
+            {
+                taskId: 'T-979-11-F1',
+                profilePolicySnapshot: forbidChildClosure.profilePolicySnapshot,
+                taskNotes: forbidChildClosure.taskNotes,
+                subject: 'finding' as const,
+                severity: 'low' as const,
+                expectedVerdict: 'REVIEW FAILED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'fix_now',
+                expectedBlockingCount: 1,
+                expectedDispositionVerdict: 'fail_for_fix_now',
+                expectedSourceRule: 'review_follow_up_task_closure_policy.forbid_child_tasks'
+            },
+            {
+                taskId: 'T-979-12-F1',
+                profilePolicySnapshot: forbidChildClosure.profilePolicySnapshot,
+                taskNotes: forbidChildClosure.taskNotes,
+                subject: 'residual_risk' as const,
+                severity: null,
+                expectedVerdict: 'REVIEW FAILED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'fix_now',
+                expectedBlockingCount: 1,
+                expectedDispositionVerdict: 'fail_for_fix_now',
+                expectedSourceRule: 'review_follow_up_task_closure_policy.forbid_child_tasks'
             }
         ];
 
@@ -1980,6 +2043,7 @@ describe('gates command review result - normalization', () => {
                 const fixture = await seedPromptBoundReviewFixture({
                     repoRoot,
                     taskId: scenario.taskId,
+                    ...('taskNotes' in scenario ? { taskNotes: scenario.taskNotes } : {}),
                     preflightOverrides: {
                         profile_policy_snapshot: scenario.profilePolicySnapshot
                     }
@@ -2072,14 +2136,28 @@ describe('gates command review result - normalization', () => {
                 );
                 assert.equal(dispositionArtifact.items.length, 1);
                 const dispositionItem = dispositionArtifact.items[0];
+                const expectedClosureSourceRule = 'expectedSourceRule' in scenario
+                    ? scenario.expectedSourceRule
+                    : undefined;
                 assert.equal(dispositionItem.id, scenario.subject === 'finding' ? 'F-001' : 'R-001');
                 assert.equal(dispositionItem.action, scenario.expectedAction);
                 assert.equal(
                     dispositionItem.source_rule,
-                    scenario.subject === 'finding'
-                        ? `review_finding_policy.findings.${String(scenario.severity)}`
-                        : 'review_finding_policy.residual_risk'
+                    expectedClosureSourceRule
+                        ?? (scenario.subject === 'finding'
+                            ? `review_finding_policy.findings.${String(scenario.severity)}`
+                            : 'review_finding_policy.residual_risk')
                 );
+                if (expectedClosureSourceRule) {
+                    assert.deepEqual(
+                        receipt.review_findings_disposition.review_follow_up_task_closure_policy,
+                        scenario.profilePolicySnapshot.review_follow_up_task_closure_policy
+                    );
+                    assert.deepEqual(
+                        dispositionArtifact.policy.review_follow_up_task_closure_policy,
+                        scenario.profilePolicySnapshot.review_follow_up_task_closure_policy
+                    );
+                }
                 assert.equal(
                     dispositionItem.materialization_status,
                     scenario.expectedAction === 'fix_now'
@@ -2100,14 +2178,15 @@ describe('gates command review result - normalization', () => {
                 if (scenario.expectedAction === 'fix_now') {
                     const baseline = JSON.parse(fs.readFileSync(remediationBaselinePath, 'utf8'));
                     const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8'));
+                    const expectedItemId = scenario.subject === 'finding' ? 'F-001' : 'R-001';
                     assert.equal(baseline.artifact_type, 'review_findings_remediation_baseline');
                     assert.equal(baseline.schema_version, 2);
                     assert.equal(baseline.task_id, scenario.taskId);
                     assert.equal(baseline.review_type, 'code');
-                    assert.deepEqual(baseline.fix_now_items.map((item: { id: string }) => item.id), ['F-001']);
+                    assert.deepEqual(baseline.fix_now_items.map((item: { id: string }) => item.id), [expectedItemId]);
                     assert.equal(baseline.fix_now_items[0].action, 'fix_now');
                     assert.equal(baseline.path_line_inventory.length, 1);
-                    assert.deepEqual(baseline.path_line_inventory[0].item_ids, ['F-001']);
+                    assert.deepEqual(baseline.path_line_inventory[0].item_ids, [expectedItemId]);
                     assert.equal(
                         baseline.bindings.findings_validation.artifact_sha256,
                         receipt.review_findings_validation.artifact_sha256

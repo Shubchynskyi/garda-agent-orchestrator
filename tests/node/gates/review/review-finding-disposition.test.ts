@@ -10,6 +10,7 @@ import {
 import { buildReviewFindingsDispositionArtifact } from '../../../../src/gates/review/review-findings-disposition-artifact';
 import type { ReviewFindingsValidationArtifact } from '../../../../src/gates/review/review-findings-validation-artifact';
 import type { ReviewFinding, ReviewFindingsReport } from '../../../../src/gates/review/review-findings-schema';
+import { buildLegacyReviewFollowUpTaskClosurePolicySnapshot } from '../../../../src/core/review-follow-up-task-closure-policy';
 
 const STRICT_POLICY: LockedReviewFindingPolicyResolution = {
     policy: {
@@ -23,7 +24,20 @@ const STRICT_POLICY: LockedReviewFindingPolicyResolution = {
         },
         residual_risk: 'fix_now'
     },
+    base_policy: {
+        schema_version: 1,
+        policy_id: 'strict',
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        },
+        residual_risk: 'fix_now'
+    },
     source: 'preflight_profile_policy_snapshot',
+    follow_up_task_closure_policy: buildLegacyReviewFollowUpTaskClosurePolicySnapshot(),
+    follow_up_task_closure_policy_source: 'legacy_default',
     diagnostics: []
 };
 
@@ -56,7 +70,10 @@ function report(findings: ReviewFinding[]): ReviewFindingsReport {
     };
 }
 
-function validationArtifact(findings: ReviewFinding[]): ReviewFindingsValidationArtifact {
+function validationArtifact(
+    findings: ReviewFinding[],
+    severity: 'critical' | 'high' | 'medium' | 'low' = 'high'
+): ReviewFindingsValidationArtifact {
     return {
         schema_version: 1,
         artifact_type: 'review_findings_validation',
@@ -73,17 +90,38 @@ function validationArtifact(findings: ReviewFinding[]): ReviewFindingsValidation
                 finding_count: findings.length,
                 residual_risk_count: 0,
                 findings_by_severity: {
-                    critical: [],
-                    high: findings.map((entry) => ({
+                    critical: severity === 'critical' ? findings.map((entry) => ({
                         id: entry.id,
-                        severity: 'high',
+                        severity,
                         title: entry.title,
                         description: entry.description,
                         evidence_locations: entry.evidence.map((evidence) => evidence.location),
                         coverage_obligation_ids: entry.coverage_obligation_ids
-                    })),
-                    medium: [],
-                    low: []
+                    })) : [],
+                    high: severity === 'high' ? findings.map((entry) => ({
+                        id: entry.id,
+                        severity,
+                        title: entry.title,
+                        description: entry.description,
+                        evidence_locations: entry.evidence.map((evidence) => evidence.location),
+                        coverage_obligation_ids: entry.coverage_obligation_ids
+                    })) : [],
+                    medium: severity === 'medium' ? findings.map((entry) => ({
+                        id: entry.id,
+                        severity,
+                        title: entry.title,
+                        description: entry.description,
+                        evidence_locations: entry.evidence.map((evidence) => evidence.location),
+                        coverage_obligation_ids: entry.coverage_obligation_ids
+                    })) : [],
+                    low: severity === 'low' ? findings.map((entry) => ({
+                        id: entry.id,
+                        severity,
+                        title: entry.title,
+                        description: entry.description,
+                        evidence_locations: entry.evidence.map((evidence) => evidence.location),
+                        coverage_obligation_ids: entry.coverage_obligation_ids
+                    })) : []
                 },
                 residual_risks: []
             },
@@ -107,6 +145,40 @@ function validationArtifact(findings: ReviewFinding[]): ReviewFindingsValidation
                 },
                 tree: { review_tree_state_sha256: null },
                 coverage_contract_sha256: null
+            }
+        }
+    };
+}
+
+function closurePolicyPreflight(
+    skipLowFindings: boolean,
+    forbidChildTasks: boolean,
+    taskId = 'T-parent-F1'
+) {
+    return {
+        task_id: taskId,
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            review_follow_up_task_closure_policy: {
+                schema_version: 1,
+                eligible: true,
+                configured: true,
+                valid: true,
+                provenance: 'per_finding',
+                source_notes_sha256: 'a'.repeat(64),
+                skip_low_findings: skipLowFindings,
+                forbid_child_tasks: forbidChildTasks,
+                diagnostics: ['Frozen from explicit per_finding task metadata.']
             }
         }
     };
@@ -208,4 +280,94 @@ test('review findings follow-up tasks force every disposition to fix_now', () =>
     });
     assert.equal(resolution.policy.residual_risk, 'fix_now');
     assert.match(resolution.diagnostics.join(' '), /nested follow-up tasks are forbidden/u);
+});
+
+test('explicit follow-up closure policy applies all four independent flag combinations', () => {
+    const none = resolveLockedReviewFindingPolicyFromPreflight(closurePolicyPreflight(false, false));
+    assert.equal(none.policy.findings.medium, 'create_follow_up');
+    assert.equal(none.policy.findings.low, 'create_follow_up');
+    assert.equal(none.policy.residual_risk, 'create_follow_up');
+
+    const skipOnly = resolveLockedReviewFindingPolicyFromPreflight(closurePolicyPreflight(true, false));
+    assert.equal(skipOnly.policy.findings.medium, 'create_follow_up');
+    assert.equal(skipOnly.policy.findings.low, 'ignore');
+    assert.equal(skipOnly.policy.residual_risk, 'create_follow_up');
+
+    const forbidOnly = resolveLockedReviewFindingPolicyFromPreflight(closurePolicyPreflight(false, true));
+    assert.equal(forbidOnly.policy.findings.medium, 'fix_now');
+    assert.equal(forbidOnly.policy.findings.low, 'fix_now');
+    assert.equal(forbidOnly.policy.residual_risk, 'fix_now');
+
+    const both = resolveLockedReviewFindingPolicyFromPreflight(closurePolicyPreflight(true, true));
+    assert.equal(both.policy.findings.critical, 'fix_now');
+    assert.equal(both.policy.findings.high, 'fix_now');
+    assert.equal(both.policy.findings.medium, 'fix_now');
+    assert.equal(both.policy.findings.low, 'ignore');
+    assert.equal(both.policy.residual_risk, 'fix_now');
+});
+
+test('ordinary tasks ignore follow-up-only closure controls', () => {
+    const resolution = resolveLockedReviewFindingPolicyFromPreflight(
+        closurePolicyPreflight(true, true, 'T-parent')
+    );
+
+    assert.equal(resolution.policy.findings.medium, 'create_follow_up');
+    assert.equal(resolution.policy.findings.low, 'create_follow_up');
+    assert.equal(resolution.policy.residual_risk, 'create_follow_up');
+
+    const artifact = buildReviewFindingsDispositionArtifact({
+        taskId: 'T-parent',
+        reviewType: 'code',
+        validationArtifact: validationArtifact([finding('F-001')], 'low'),
+        validationArtifactPath: 'runtime/reviews/T-parent-code-findings-validation.json',
+        validationArtifactSha256: 'e'.repeat(64),
+        policyResolution: resolution
+    });
+    assert.equal(artifact.items[0].action, 'create_follow_up');
+    assert.equal(artifact.items[0].source_rule, 'review_finding_policy.findings.low');
+});
+
+test('skip low findings is retained as explicit disposition policy provenance', () => {
+    const resolution = resolveLockedReviewFindingPolicyFromPreflight(closurePolicyPreflight(true, true));
+    const artifact = buildReviewFindingsDispositionArtifact({
+        taskId: 'T-parent-F1',
+        reviewType: 'code',
+        validationArtifact: validationArtifact([finding('F-001')], 'low'),
+        validationArtifactPath: 'runtime/reviews/T-parent-F1-code-findings-validation.json',
+        validationArtifactSha256: 'e'.repeat(64),
+        policyResolution: resolution
+    });
+
+    assert.equal(artifact.items[0].action, 'ignore');
+    assert.equal(
+        artifact.items[0].source_rule,
+        'review_follow_up_task_closure_policy.skip_low_findings'
+    );
+    assert.equal(artifact.summary.ignored_count, 1);
+    assert.equal(artifact.summary.blocking_count, 0);
+    assert.equal(artifact.policy.review_follow_up_task_closure_policy?.provenance, 'per_finding');
+    assert.equal(
+        artifact.disposition_result.review_follow_up_task_closure_policy?.source_notes_sha256,
+        'a'.repeat(64)
+    );
+});
+
+test('forbid child tasks retains would-be follow-up findings as current-task remediation', () => {
+    const resolution = resolveLockedReviewFindingPolicyFromPreflight(closurePolicyPreflight(false, true));
+    const artifact = buildReviewFindingsDispositionArtifact({
+        taskId: 'T-parent-F1',
+        reviewType: 'code',
+        validationArtifact: validationArtifact([finding('F-001')], 'medium'),
+        validationArtifactPath: 'runtime/reviews/T-parent-F1-code-findings-validation.json',
+        validationArtifactSha256: 'e'.repeat(64),
+        policyResolution: resolution
+    });
+
+    assert.equal(artifact.items[0].action, 'fix_now');
+    assert.equal(
+        artifact.items[0].source_rule,
+        'review_follow_up_task_closure_policy.forbid_child_tasks'
+    );
+    assert.equal(artifact.items[0].materialization_status, 'requires_fix_now');
+    assert.equal(artifact.disposition_result.verdict, 'fail_for_fix_now');
 });

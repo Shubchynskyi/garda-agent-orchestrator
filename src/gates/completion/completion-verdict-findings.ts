@@ -5,6 +5,7 @@ import {
 } from '../../core/orchestration-constants';
 import { normalizePath } from '../shared/helpers';
 import {
+    REVIEW_FINDINGS_SCHEMA_VERSION,
     validateReviewFindingsReport,
     type ReviewFindingsReport
 } from '../review/review-findings-schema';
@@ -43,7 +44,11 @@ function tryParseJsonReviewFindingsReport(content: string): {
     }
     try {
         const parsed = JSON.parse(trimmed) as unknown;
-        if (!isRecord(parsed) || Number(parsed.schema_version) !== 1 || !isRecord(parsed.findings)) {
+        if (
+            !isRecord(parsed)
+            || Number(parsed.schema_version) !== REVIEW_FINDINGS_SCHEMA_VERSION
+            || !isRecord(parsed.findings)
+        ) {
             return { detected: false, report: null, violations: [] };
         }
         const coverageLedger = isRecord(parsed.coverage_ledger) ? parsed.coverage_ledger : {};
@@ -56,7 +61,8 @@ function tryParseJsonReviewFindingsReport(content: string): {
         const validation = validateReviewFindingsReport(parsed, {
             expectedTaskId: typeof parsed.task_id === 'string' ? parsed.task_id.trim() : '',
             expectedReviewType: typeof parsed.review_type === 'string' ? parsed.review_type.trim() : '',
-            expectedCoverageObligationIds
+            expectedCoverageObligationIds,
+            allowStructuralOnlyReviewExecution: true
         });
         return {
             detected: true,
