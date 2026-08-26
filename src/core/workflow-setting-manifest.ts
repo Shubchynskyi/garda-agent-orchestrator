@@ -140,6 +140,18 @@ function assertOwner(owner: WorkflowSettingOwner, label: string): void {
     throw new Error(`${label}.owner.kind is unsupported.`);
 }
 
+function isDenseStringArray(value: unknown): value is readonly string[] {
+    if (!Array.isArray(value)) {
+        return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(value, index) || typeof value[index] !== 'string') {
+            return false;
+        }
+    }
+    return true;
+}
+
 function isValueTypeCompatible(valueType: WorkflowSettingValueType, value: unknown): value is WorkflowSettingValue {
     switch (valueType) {
         case 'boolean':
@@ -151,7 +163,7 @@ function isValueTypeCompatible(valueType: WorkflowSettingValueType, value: unkno
             return typeof value === 'string';
         case 'enum_list':
         case 'string_list':
-            return Array.isArray(value) && value.every((item) => typeof item === 'string');
+            return isDenseStringArray(value);
     }
 }
 
@@ -252,7 +264,12 @@ function freezeMaterializations(
         throw new Error(`Workflow setting '${entry.id}' must materialize between 1 and 16 bounded changes.`);
     }
     const seenPaths = new Set<string>();
-    return Object.freeze(materializations.map((materialization, index) => {
+    const frozenMaterializations: WorkflowSettingMaterialization[] = [];
+    for (let index = 0; index < materializations.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(materializations, index)) {
+            throw new Error(`Workflow setting '${entry.id}' materialization[${index}] must be present.`);
+        }
+        const materialization = materializations[index];
         const path = requireBoundedString(materialization?.path, `Workflow setting '${entry.id}' materialization[${index}].path`, 200);
         if (!CONFIG_PATH_PATTERN.test(path) || SENSITIVE_TOKEN_PATTERN.test(path)) {
             throw new Error(`Workflow setting '${entry.id}' produced an invalid or secret-bearing materialization path '${path}'.`);
@@ -261,8 +278,9 @@ function freezeMaterializations(
             throw new Error(`Workflow setting '${entry.id}' produced duplicate materialization path '${path}'.`);
         }
         seenPaths.add(path);
-        return Object.freeze({ path, value: materialization.value });
-    }));
+        frozenMaterializations.push(Object.freeze({ path, value: materialization.value }));
+    }
+    return Object.freeze(frozenMaterializations);
 }
 
 export function createWorkflowSettingRegistry(

@@ -189,6 +189,14 @@ test('workflow-setting registry rejects invalid defaults and secret-bearing cont
         })]),
         /cannot register secret-bearing settings/u
     );
+    assert.throws(
+        () => createWorkflowSettingRegistry([booleanSetting({
+            id: 'remote-access-enabled',
+            key: 'remote_access.enabled',
+            cli: { flag: '--remote-access-enabled', value_name: 'API_KEY' }
+        })]),
+        /cannot register secret-bearing settings/u
+    );
     for (const key of ['credentials.api_key', 'credentials.access_key', 'credentials.bearer']) {
         assert.throws(
             () => createWorkflowSettingRegistry([booleanSetting({
@@ -208,6 +216,31 @@ test('workflow-setting registry rejects invalid defaults and secret-bearing cont
         } as unknown as WorkflowSettingManifestEntry]),
         /default_value must satisfy its declared value_type/u
     );
+});
+
+test('workflow-setting registry rejects sparse declared list values', () => {
+    const sparseDefault = new Array<string>(1);
+    assert.throws(
+        () => createWorkflowSettingRegistry([typedSetting(
+            'string_list',
+            sparseDefault,
+            'text_list',
+            (value): value is readonly string[] => (
+                Array.isArray(value) && value.every((item) => typeof item === 'string')
+            )
+        )]),
+        /default_value must satisfy/u
+    );
+
+    const registry = createWorkflowSettingRegistry([typedSetting(
+        'enum_list',
+        ['code'],
+        'select',
+        (value): value is readonly string[] => (
+            Array.isArray(value) && value.every((item) => typeof item === 'string')
+        )
+    )]);
+    assert.throws(() => registry.validate('enum-list-setting', new Array<string>(1)), /Invalid value/u);
 });
 
 test('workflow-setting registry fails closed for invalid values and unsafe materialization hooks', () => {
@@ -241,4 +274,47 @@ test('workflow-setting registry fails closed for invalid values and unsafe mater
         () => privateKeyPathRegistry.materialize('full-suite-enabled', true, { target: 'template' }),
         /invalid or secret-bearing materialization path/u
     );
+
+    const invalidMaterializationRegistries = [
+        {
+            registry: createWorkflowSettingRegistry([booleanSetting({ materialize: () => [] })]),
+            message: /between 1 and 16 bounded changes/u
+        },
+        {
+            registry: createWorkflowSettingRegistry([booleanSetting({
+                materialize: (value) => Array.from(
+                    { length: 17 },
+                    (_unused, index) => ({ path: `limits.output_${index}`, value })
+                )
+            })]),
+            message: /between 1 and 16 bounded changes/u
+        },
+        {
+            registry: createWorkflowSettingRegistry([booleanSetting({
+                materialize: (value) => [
+                    { path: 'full_suite_validation.enabled', value },
+                    { path: 'full_suite_validation.enabled', value }
+                ]
+            })]),
+            message: /duplicate materialization path/u
+        },
+        {
+            registry: createWorkflowSettingRegistry([booleanSetting({
+                materialize: (value) => [{ path: 'full_suite_validation..enabled', value }]
+            })]),
+            message: /invalid or secret-bearing materialization path/u
+        },
+        {
+            registry: createWorkflowSettingRegistry([booleanSetting({
+                materialize: () => new Array<{ path: string; value: unknown }>(1)
+            })]),
+            message: /materialization\[0\] must be present/u
+        }
+    ];
+    for (const { registry, message } of invalidMaterializationRegistries) {
+        assert.throws(
+            () => registry.materialize('full-suite-enabled', true, { target: 'live' }),
+            message
+        );
+    }
 });
