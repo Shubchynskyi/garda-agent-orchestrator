@@ -98,6 +98,7 @@ function makeTempRepo(): string {
             balanced: {
                 description: 'Balanced test profile',
                 depth: 2,
+                task_decomposition: { enabled: false },
                 review_policy: { code: true, test: 'auto' },
                 token_economy: {
                     enabled: true,
@@ -869,15 +870,14 @@ describe('gates/next-step', () => {
         seedStartedTask(repoRoot, TASK_ID);
         const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
         const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
-        taskMode.profile_policy_snapshot = {
-            review_execution_policy: {
-                mode: 'strict_sequential',
-                configured: true,
-                review_dependency_graph: null,
-                full_suite_validation: {
-                    enabled: true,
-                    placement: 'after_compile_before_reviews'
-                }
+        const profilePolicySnapshot = taskMode.profile_policy_snapshot as Record<string, unknown>;
+        profilePolicySnapshot.review_execution_policy = {
+            mode: 'strict_sequential',
+            configured: true,
+            review_dependency_graph: null,
+            full_suite_validation: {
+                enabled: true,
+                placement: 'after_compile_before_reviews'
             }
         };
         writeJson(taskModePath, taskMode);
