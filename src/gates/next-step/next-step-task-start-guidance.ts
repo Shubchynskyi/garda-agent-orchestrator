@@ -63,7 +63,9 @@ function buildReviewGuidance(preflight: Record<string, unknown> | null): NextSte
         return null;
     }
     const snapshot = snapshotValue as EffectiveReviewSnapshot;
-    const selectedLanes = snapshot.lanes.filter((lane) => lane.selection === 'required');
+    const requiredLanes = snapshot.lanes.filter((lane) => lane.selection === 'required');
+    const optionalLanes = snapshot.lanes.filter((lane) => lane.selection === 'optional');
+    const selectedLanes = requiredLanes.length > 0 ? requiredLanes : optionalLanes;
     const direct = selectedLanes.length > 0;
     const relevantLanes = direct
         ? selectedLanes

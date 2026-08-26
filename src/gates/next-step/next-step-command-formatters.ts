@@ -21,6 +21,10 @@ import {
 } from '../shared/known-nonblocking-signals';
 import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
+function formatInlineText(value: string): string {
+    return value.replace(/[\r\n\u2028\u2029]+/gu, ' ').trim();
+}
+
 export function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
 }
@@ -320,7 +324,7 @@ export function formatNextStepText(result: NextStepResult): string {
         if (guidance.skill.mode === 'direct') {
             const activationState = guidance.skill.activation_commands.length > 0
                 ? 'guarded activation command(s) are listed above'
-                : 'current-cycle activation is already recorded';
+                : 'no activation command is pending';
             lines.push(
                 `TaskStartSkillSuggestion: ${guidance.skill.suggested_skill_ids.join(', ')}; ${activationState}`
             );
@@ -332,7 +336,7 @@ export function formatNextStepText(result: NextStepResult): string {
         if (guidance.review) {
             const reviewLaneSummary = guidance.review.lanes.length > 0
                 ? guidance.review.lanes.map((lane) => (
-                    `${lane.id}:${lane.display_label}:${lane.selection}:profile_${lane.profile_state}`
+                    `${lane.id}:${formatInlineText(lane.display_label)}:${lane.selection}:profile_${lane.profile_state}`
                 )).join(', ')
                 : 'none';
             const omittedSuffix = guidance.review.omitted_lane_count > 0
