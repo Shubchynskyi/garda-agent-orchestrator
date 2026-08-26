@@ -196,7 +196,9 @@ function buildFindingItem(
         coverage_obligation_ids: [...finding.coverage_obligation_ids],
         action: disposition?.action ?? null,
         source_rule: disposition?.source_rule ?? null,
-        materialization_status: disposition?.materialization_status ?? null,
+        materialization_status: followUpTaskId
+            ? 'MATERIALIZED'
+            : disposition?.materialization_status ?? null,
         follow_up_task_id: followUpTaskId,
         blocking: disposition?.blocking === true
     };
@@ -217,7 +219,9 @@ function buildResidualRiskItem(
         coverage_obligation_ids: [],
         action: disposition?.action ?? null,
         source_rule: disposition?.source_rule ?? null,
-        materialization_status: disposition?.materialization_status ?? null,
+        materialization_status: followUpTaskId
+            ? 'MATERIALIZED'
+            : disposition?.materialization_status ?? null,
         follow_up_task_id: followUpTaskId,
         blocking: disposition?.blocking === true
     };

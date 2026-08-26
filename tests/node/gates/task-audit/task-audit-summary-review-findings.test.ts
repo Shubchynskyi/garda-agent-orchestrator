@@ -271,6 +271,15 @@ describe('gates/task-audit-summary structured review findings', () => {
         assert.deepEqual(after?.lanes[0].remaining_blocker_ids, []);
         assert.equal(after?.lanes[0].findings[0].action, 'create_follow_up');
         assert.equal(after?.lanes[0].findings[0].follow_up_task_id, materialized.created_task_ids[0]);
+        assert.equal(after?.lanes[0].findings[0].materialization_status, 'MATERIALIZED');
+
+        const finalUserReport = formatFinalUserReport(buildTaskAuditSummary({
+            taskId,
+            repoRoot: fixture.repoRoot,
+            reviewsRoot: fixture.reviewsRoot
+        }).final_closeout);
+        assert.match(finalUserReport, new RegExp(`Follow-ups:\\n${materialized.created_task_ids[0]}`, 'u'));
+        assert.doesNotMatch(finalUserReport, /has no materialized follow-up/u);
     });
 
     it('renders residual risks through task audit, closeout, and the final user report', () => {
