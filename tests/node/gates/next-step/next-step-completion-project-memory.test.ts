@@ -28,7 +28,8 @@ import {
     seedProjectMemoryImpact,
     fileSha256,
     appendEvent,
-    seedStartedTask,
+    seedStartedTask as seedBaseStartedTask,
+    writeStrictDecompositionDecision,
     writePreflight,
     seedCompilePass,
     seedReviewGatePass,
@@ -37,6 +38,15 @@ import {
 const PROJECT_MEMORY_ORDER_VIOLATION =
     'Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.';
 const nodeRequire = createRequire(__filename);
+
+function seedStartedTask(repoRoot: string, taskId: string): void {
+    seedBaseStartedTask(repoRoot, taskId);
+    writeStrictDecompositionDecision(repoRoot, taskId, {
+        decision: 'single-cycle',
+        taskProfile: 'balanced',
+        expectedReviewTypes: ['none']
+    });
+}
 
 function formatProjectMemorySummaryForTest(
     projectMemory: ReturnType<typeof buildProjectMemoryNextStepSummary>
