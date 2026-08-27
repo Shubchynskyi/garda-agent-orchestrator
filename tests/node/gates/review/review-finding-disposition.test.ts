@@ -153,7 +153,8 @@ function validationArtifact(
 function closurePolicyPreflight(
     skipLowFindings: boolean,
     forbidChildTasks: boolean,
-    taskId = 'T-parent-F1'
+    taskId = 'T-parent-F1',
+    configured = true
 ) {
     return {
         task_id: taskId,
@@ -172,7 +173,7 @@ function closurePolicyPreflight(
             review_follow_up_task_closure_policy: {
                 schema_version: 1,
                 eligible: true,
-                configured: true,
+                configured,
                 valid: true,
                 provenance: 'per_finding',
                 source_notes_sha256: 'a'.repeat(64),
@@ -280,6 +281,21 @@ test('review findings follow-up tasks force every disposition to fix_now', () =>
     });
     assert.equal(resolution.policy.residual_risk, 'fix_now');
     assert.match(resolution.diagnostics.join(' '), /nested follow-up tasks are forbidden/u);
+});
+
+test('unconfigured follow-up closure metadata preserves the strict F-task safety floor', () => {
+    const resolution = resolveLockedReviewFindingPolicyFromPreflight(
+        closurePolicyPreflight(false, false, 'T-parent-F1', false)
+    );
+
+    assert.deepEqual(resolution.policy.findings, {
+        critical: 'fix_now',
+        high: 'fix_now',
+        medium: 'fix_now',
+        low: 'fix_now'
+    });
+    assert.equal(resolution.policy.residual_risk, 'fix_now');
+    assert.match(resolution.diagnostics.join(' '), /strict F-task safety floor|nested follow-up tasks/u);
 });
 
 test('explicit follow-up closure policy applies all four independent flag combinations', () => {

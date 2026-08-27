@@ -118,7 +118,11 @@ function applyMandatoryReviewFindingSafetyFloors(
     }
 
     const closurePolicy = resolution.follow_up_task_closure_policy;
-    if (isFollowUpTask && (!closurePolicy.eligible || !closurePolicy.valid)) {
+    if (isFollowUpTask && (
+        !closurePolicy.eligible
+        || !closurePolicy.configured
+        || !closurePolicy.valid
+    )) {
         basePolicy.findings = { ...REVIEW_FINDING_POLICY_PRESETS.strict.findings };
         basePolicy.residual_risk = 'fix_now';
         diagnostics.push(

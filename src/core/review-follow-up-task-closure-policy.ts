@@ -230,7 +230,7 @@ function resolveReviewFollowUpTaskClosurePolicyFromNotes(
             valid: true,
             provenance: provenance.provenance,
             diagnostics: [
-                'Explicit review follow-up provenance found; closure controls default off because policy metadata is absent.'
+                'Explicit review follow-up provenance found, but closure controls are unconfigured; the strict F-task safety floor remains active until explicit policy metadata is frozen.'
             ]
         });
     }
@@ -350,7 +350,7 @@ export function buildLegacyReviewFollowUpTaskClosurePolicySnapshot(): ReviewFoll
         valid: true,
         provenance: null,
         diagnostics: [
-            'Legacy profile policy snapshot has no task-level follow-up closure policy; settings default off.'
+            'Legacy profile policy snapshot has no task-level follow-up closure policy; the strict F-task safety floor remains active.'
         ]
     });
 }
