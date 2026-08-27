@@ -28,6 +28,9 @@ export type {
     ReportProfileSource,
     ReportProfileReviewPolicyValue,
     ReportProfileReviewType,
+    ReportReviewCatalogProfileState,
+    ReportReviewCatalogLane,
+    ReportReviewCatalogTab,
     ReportProfileRow,
     ReportProfilesTab,
     ReportInstructionEntry,
@@ -52,6 +55,7 @@ export { readCanonicalActiveQueueRows } from './report-data/task-queue';
 export { buildWorkflowConfigTab } from './report-data/workflow-config-tab';
 export { buildQualityGateTab } from './report-data/quality-gate-tab';
 export { buildProfilesTab } from './report-data/profiles-tab';
+export { buildReviewCatalogTab } from './report-data/review-catalog-tab';
 export { buildInitSettingsTab } from './report-data/init-settings-tab';
 export { buildProjectMemoryTab } from './report-data/project-memory-tab';
 export { buildBackupsTab } from './report-data/backups-tab';

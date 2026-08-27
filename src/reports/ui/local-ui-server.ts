@@ -21,12 +21,14 @@ import {
     buildUiActionsPayload,
     buildUiCleanupPayload,
     buildUiProfilePayload,
+    buildUiReviewCatalogActionPayload,
     buildUiSettingsPayload,
     handleUiActionRequest,
     handleUiCleanupRunPostRequest,
     handleUiCleanupSettingsPostRequest,
     handleUiCleanupTaskPurgePostRequest,
     handleUiProfilesPostRequest,
+    handleUiReviewCatalogPostRequest,
     handleUiSettingRequest,
     handleUiTaskActionRequest,
     sendApiError,
@@ -685,6 +687,12 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             });
             return;
         }
+        if (request.method === 'POST' && pathname === '/api/review-catalog') {
+            handleUiReviewCatalogPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_review_catalog_request');
+            });
+            return;
+        }
         if (request.method === 'POST' && pathname === '/api/ordinary-docs') {
             handleOrdinaryDocsPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
                 sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_ordinary_docs_request');
@@ -771,6 +779,14 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         }
         if (pathname === '/api/profiles') {
             sendJson(response, 200, buildUiProfilePayload(resolvedRepoRoot, options.actionsEnabled));
+            return;
+        }
+        if (pathname === '/api/review-catalog') {
+            sendJson(response, 200, buildUiReviewCatalogActionPayload(
+                resolvedRepoRoot,
+                options.actionsEnabled,
+                parsedUrl.searchParams.get('profile')
+            ));
             return;
         }
         if (pathname === '/api/cleanup-settings') {

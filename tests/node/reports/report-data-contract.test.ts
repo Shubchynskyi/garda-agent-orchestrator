@@ -16,6 +16,7 @@ import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 import {
     buildBackupsTab,
     buildQualityGateTab,
+    buildReviewCatalogTab,
     buildReportDataContract,
     buildReportSnapshotFingerprint,
     buildReportTaskDetail,
@@ -204,6 +205,109 @@ function writeProfilesConfig(repoRoot: string): void {
     fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2));
     fs.writeFileSync(templateProfilesPath, JSON.stringify(profiles, null, 2));
 }
+
+function writeReviewCatalogConfig(repoRoot: string): void {
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const configRoot = path.join(bundleRoot, 'live', 'config');
+    const skillRoot = path.join(bundleRoot, 'live', 'skills', 'architecture-review');
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Architecture review\n', 'utf8');
+    const builtInIds = ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency'];
+    fs.writeFileSync(path.join(configRoot, 'review-capabilities.json'), `${JSON.stringify({
+        ...Object.fromEntries(builtInIds.map((reviewId) => [reviewId, true])),
+        architecture: true
+    }, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(path.join(configRoot, 'review-catalog.json'), `${JSON.stringify({
+        version: 1,
+        custom_review_types: [{
+            id: 'architecture',
+            display_label: 'Architecture review',
+            enabled_by_default: false,
+            skill_id: 'architecture-review',
+            trigger: { mode: 'signals', signal_ids: ['architecture'] },
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['maintainability'] }
+        }]
+    }, null, 2)}\n`, 'utf8');
+    const profilesPath = path.join(configRoot, 'profiles.json');
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+        built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        user_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+    };
+    profiles.built_in_profiles.balanced.review_policy.architecture = 'auto';
+    profiles.user_profiles['custom-review'].review_policy.architecture = false;
+    fs.writeFileSync(profilesPath, `${JSON.stringify(profiles, null, 2)}\n`, 'utf8');
+}
+
+test('review catalog report surface stays compact and exposes validation and migration state', () => {
+    const repoRoot = makeTempRepo();
+    try {
+        writeTaskMd(repoRoot);
+        writeWorkflowConfig(repoRoot);
+        writePathsConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        writeReviewCatalogConfig(repoRoot);
+
+        const catalog = buildReviewCatalogTab(repoRoot, 'custom-review');
+        assert.equal(catalog.status, 'present');
+        assert.equal(catalog.validation.status, 'PASS');
+        assert.equal(catalog.migration.status, 'current');
+        assert.equal(catalog.selected_profile, 'custom-review');
+        const architecture = catalog.lanes.find((lane) => lane.id === 'architecture');
+        assert.ok(architecture);
+        assert.equal(architecture.source, 'custom');
+        assert.equal(architecture.enabled_by_default, false);
+        assert.equal(architecture.profile.state, 'disabled');
+        assert.deepEqual(architecture.profile.dependencies, []);
+        assert.equal(Object.hasOwn(architecture, 'profile_states'), false);
+
+        const report = buildReportDataContract({ repoRoot, generatedAtUtc: '2026-05-16T00:00:00.000Z' });
+        assert.equal(report.profiles_tab.review_catalog.validation.status, 'PASS');
+        assert.equal(report.profiles_tab.review_catalog.active_profile, 'balanced');
+
+        fs.unlinkSync(path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'review-catalog.json'
+        ));
+        const dangling = buildReviewCatalogTab(repoRoot);
+        assert.equal(dangling.status, 'invalid');
+        assert.equal(dangling.migration.status, 'blocked_invalid');
+
+        const capabilitiesPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'review-capabilities.json'
+        );
+        const capabilities = JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8')) as Record<string, boolean>;
+        delete capabilities.architecture;
+        fs.writeFileSync(capabilitiesPath, `${JSON.stringify(capabilities, null, 2)}\n`, 'utf8');
+        const profilesPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'profiles.json'
+        );
+        const legacyProfiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+            user_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        delete legacyProfiles.built_in_profiles.balanced.review_policy.architecture;
+        delete legacyProfiles.user_profiles['custom-review'].review_policy.architecture;
+        fs.writeFileSync(profilesPath, `${JSON.stringify(legacyProfiles, null, 2)}\n`, 'utf8');
+        const legacy = buildReviewCatalogTab(repoRoot);
+        assert.equal(legacy.status, 'legacy_compatible');
+        assert.equal(legacy.migration.status, 'legacy_compatible');
+        assert.equal(legacy.migration.required, false);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
 
 function writePartialTaskTimeline(repoRoot: string, taskId: string): void {
     const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);

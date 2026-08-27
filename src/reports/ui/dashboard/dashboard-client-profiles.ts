@@ -1,5 +1,6 @@
 /** Browser-side dashboard script fragment (profiles). */
 export const UI_DASHBOARD_CLIENT_PROFILES = `let currentProfileTabName = '';
+let currentReviewCatalogPayload = null;
 function profilePolicyValue(profile, reviewType) {
   const policy = profile && profile.review_policy && Object.prototype.hasOwnProperty.call(profile.review_policy, reviewType)
     ? profile.review_policy[reviewType]
@@ -49,6 +50,101 @@ function renderProfileResult(result) {
     error: result && result.error ? result.error : null
   });
 }
+function reviewCatalogInputId(reviewId, field) {
+  return profileInputId('catalog-' + String(reviewId || 'new'), field);
+}
+function readReviewCatalogListInput(reviewId, field) {
+  const input = document.getElementById(reviewCatalogInputId(reviewId, field));
+  return String(input ? input.value : '').split(',').map(value => value.trim()).filter(Boolean);
+}
+function reviewCatalogFieldValue(reviewId, field) {
+  const input = document.getElementById(reviewCatalogInputId(reviewId, field));
+  return input ? String(input.value || '').trim() : '';
+}
+function renderReviewCatalogResult(result) {
+  currentProfileActionResult = result;
+  if (!profilesStatusNode) return;
+  const diff = result && Array.isArray(result.diff) ? result.diff : [];
+  const diffMarkup = diff.length > 0
+    ? '<div class="review-catalog-preview-diff"><strong>' + safe(t('changeColumn')) + '</strong><ol>'
+      + diff.map(entry => '<li><code>' + safe(entry.path || '') + '</code><pre>'
+        + safe(JSON.stringify({ before: entry.before, after: entry.after }, null, 2)) + '</pre></li>').join('')
+      + '</ol></div>'
+    : '<p class="empty">' + safe(t('changeColumn')) + ': -</p>';
+  profilesStatusNode.innerHTML = '<section class="setting-result review-catalog-result">'
+    + '<div><strong>' + safe(result && result.review_id ? result.review_id : t('availableReviewTypes')) + '</strong> '
+    + badge(result && result.status ? result.status : 'error', 'review-catalog-status') + '</div>'
+    + '<p><strong>' + safe(t('statusColumn')) + ':</strong> <code>' + safe(result && result.mode ? result.mode : '') + '</code></p>'
+    + diffMarkup
+    + (result && result.error ? '<p class="error">' + safe(result.error) + '</p>' : '')
+    + '</section>';
+}
+function reviewCatalogMutationPayload(operation, lane) {
+  const reviewId = lane ? lane.id : reviewCatalogFieldValue('new', 'id');
+  if (operation === 'enable' || operation === 'disable') {
+    return { operation, review_id: reviewId };
+  }
+  if (operation === 'profile-bind') {
+    return {
+      operation,
+      review_id: reviewId,
+      profile_name: currentReviewCatalogPayload ? currentReviewCatalogPayload.selected_profile : '',
+      profile_state: reviewCatalogFieldValue(reviewId, 'profile-state')
+    };
+  }
+  if (operation === 'dependency') {
+    const dependencyIds = readReviewCatalogListInput(reviewId, 'dependencies');
+    return {
+      operation,
+      review_id: reviewId,
+      profile_name: currentReviewCatalogPayload ? currentReviewCatalogPayload.selected_profile : '',
+      dependency_ids: dependencyIds,
+      clear_dependencies: dependencyIds.length === 0
+    };
+  }
+  return {
+    operation,
+    review_id: reviewId,
+    display_label: reviewCatalogFieldValue(reviewId, 'display-label'),
+    skill_id: reviewCatalogFieldValue(reviewId, 'skill-id'),
+    trigger_mode: reviewCatalogFieldValue(reviewId, 'trigger-mode') || 'manual',
+    signal_ids: readReviewCatalogListInput(reviewId, 'signals'),
+    coverage_category_ids: readReviewCatalogListInput(reviewId, 'coverage'),
+    role_id: reviewCatalogFieldValue(reviewId, 'role-id'),
+    focus_tags: readReviewCatalogListInput(reviewId, 'focus-tags')
+  };
+}
+async function submitReviewCatalogAction(payload) {
+  const previewResponse = await fetch('/api/review-catalog', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({ ...payload, mode: 'preview' })
+  });
+  const preview = await previewResponse.json();
+  renderReviewCatalogResult(preview);
+  if (!previewResponse.ok || !preview || preview.status !== 'previewed') return;
+  if (!/^[a-f0-9]{64}$/u.test(String(preview.before_state_sha256 || ''))
+      || !/^[a-f0-9]{64}$/u.test(String(preview.plan_sha256 || ''))) return;
+  const phrase = String(preview.confirmation_phrase || '');
+  const confirmation = window.prompt(t('typeToApplySetting') + ' "' + phrase + '" ' + t('typeToApplySettingTail'));
+  if (confirmation === null) return;
+  const executeResponse = await fetch('/api/review-catalog', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({
+      ...payload,
+      mode: 'execute',
+      confirmation,
+      expected_state_sha256: preview.before_state_sha256,
+      expected_plan_sha256: preview.plan_sha256
+    })
+  });
+  const result = await executeResponse.json();
+  renderReviewCatalogResult(result);
+  if (executeResponse.ok && result && result.status === 'executed') {
+    await refreshProfilesPayload();
+  }
+}
 function renderProfilePolicySelect(profileName, reviewType, value, disabled) {
   const disabledAttr = disabled ? ' disabled' : '';
   const options = [
@@ -75,6 +171,95 @@ function renderProfilePolicyGrid(profile, disabled) {
         + '</label>';
     }).join('')
     + '</div>';
+}
+function renderReviewCatalogSkillControl(reviewId, value, disabled) {
+  const knownSkills = currentReviewCatalogPayload && Array.isArray(currentReviewCatalogPayload.known_skill_ids)
+    ? currentReviewCatalogPayload.known_skill_ids
+    : [];
+  const values = value && !knownSkills.includes(value) ? [value, ...knownSkills] : knownSkills;
+  return '<select id="' + safe(reviewCatalogInputId(reviewId, 'skill-id')) + '"' + (disabled ? ' disabled' : '') + '>'
+    + values.map(skillId => '<option value="' + safe(skillId) + '"' + (skillId === value ? ' selected' : '') + '>' + safe(skillId) + '</option>').join('')
+    + '</select>';
+}
+function renderReviewCatalogDefinitionFields(lane, disabled) {
+  const reviewId = lane ? lane.id : 'new';
+  const trigger = lane && lane.trigger ? lane.trigger : { mode: 'manual', signal_ids: [] };
+  const role = lane && lane.reviewer_role ? lane.reviewer_role : { role_id: '', focus_tags: [] };
+  const input = (field, value) => '<input id="' + safe(reviewCatalogInputId(reviewId, field)) + '" type="text" value="' + safe(value || '') + '"' + (disabled ? ' disabled' : '') + '>';
+  return '<div class="review-catalog-definition-fields">'
+    + (!lane ? '<label><span>' + safe(t('idColumn')) + ' <code>review_id</code></span>' + input('id', '') + '</label>' : '')
+    + '<label><span>' + safe(t('titleColumn')) + ' <code>display_label</code></span>' + input('display-label', lane ? lane.display_label : '') + '</label>'
+    + '<label><span><code>skill_id</code></span>' + renderReviewCatalogSkillControl(reviewId, lane && lane.skill_ids ? lane.skill_ids[0] : '', disabled) + '</label>'
+    + '<label><span><code>trigger_mode</code></span><select id="' + safe(reviewCatalogInputId(reviewId, 'trigger-mode')) + '"' + (disabled ? ' disabled' : '') + '>'
+    + ['manual', 'signals'].map(mode => '<option value="' + mode + '"' + (trigger.mode === mode ? ' selected' : '') + '>' + mode + '</option>').join('')
+    + '</select></label>'
+    + '<label><span><code>signal_ids</code></span>' + input('signals', Array.isArray(trigger.signal_ids) ? trigger.signal_ids.join(', ') : '') + '</label>'
+    + '<label><span><code>coverage_category_ids</code></span>' + input('coverage', lane && lane.coverage_category_ids ? lane.coverage_category_ids.join(', ') : '') + '</label>'
+    + '<label><span><code>role_id</code></span>' + input('role-id', role.role_id || '') + '</label>'
+    + '<label><span><code>focus_tags</code></span>' + input('focus-tags', Array.isArray(role.focus_tags) ? role.focus_tags.join(', ') : '') + '</label>'
+    + '</div>';
+}
+function renderReviewCatalogCreate(disabled) {
+  return '<details class="review-catalog-create"><summary>' + safe(t('addOptionalCheckRule')) + '</summary>'
+    + renderReviewCatalogDefinitionFields(null, disabled)
+    + '<div class="setting-buttons"><button type="button" data-review-catalog-action="create"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div>'
+    + '</details>';
+}
+function renderReviewCatalogLane(lane, disabled) {
+  const immutable = Boolean(lane.built_in);
+  const actionDisabled = disabled || immutable;
+  const profile = lane.profile || { state: 'disabled', active: false, dependencies: [], explanation: [] };
+  const sourceLabel = immutable ? t('profileSourceBuiltIn') : t('qualityGateSourceCustom');
+  const stateOptions = [
+    ['required', t('profilePolicyRequired')],
+    ['auto', t('profilePolicyAuto')],
+    ['disabled', t('profilePolicyDisabled')]
+  ];
+  const capabilityAction = lane.capability_enabled ? 'disable' : 'enable';
+  return '<article class="review-catalog-lane" data-review-catalog-id="' + safe(lane.id) + '">'
+    + '<div class="review-catalog-lane-head"><div><h4>' + safe(lane.display_label) + ' <code>' + safe(lane.id) + '</code></h4>'
+    + '<div class="profile-card-meta">' + badge(sourceLabel, 'review-catalog-source')
+    + badge(profile.active ? t('qualityGateStatusActive') : t('qualityGateStatusDisabled'), 'review-catalog-activity', profile.active ? 'active' : 'disabled')
+    + (!lane.enabled_by_default ? badge('disabled_by_default', 'review-catalog-default') : '')
+    + '</div></div>'
+    + (!immutable ? '<button type="button" data-review-catalog-action="' + capabilityAction + '" data-review-catalog-id="' + safe(lane.id) + '"' + (disabled ? ' disabled' : '') + '>'
+      + safe(lane.capability_enabled ? t('qualityGateStatusDisabled') : t('qualityGateStatusActive')) + '</button>' : '')
+    + '</div>'
+    + '<div class="review-catalog-lane-grid">'
+    + '<div><strong>' + safe(t('profileName')) + '</strong><code>' + safe(profile.name || '') + '</code></div>'
+    + '<div><strong>' + safe(t('statusColumn')) + '</strong><code>' + safe(profile.inactive_reason || 'active') + '</code></div>'
+    + '<div><strong>' + safe(t('profilePolicyAuto')) + '</strong><code>' + safe(lane.trigger.mode) + (lane.trigger.signal_ids.length > 0 ? ': ' + safe(lane.trigger.signal_ids.join(', ')) : '') + '</code></div>'
+    + '<div><strong>dependencies</strong><code>' + safe(profile.dependencies && profile.dependencies.length > 0 ? profile.dependencies.join(', ') : '-') + '</code></div>'
+    + '</div>'
+    + '<div class="review-catalog-controls">'
+    + '<label><span>' + safe(t('currentValueColumn')) + '</span><select id="' + safe(reviewCatalogInputId(lane.id, 'profile-state')) + '"' + (actionDisabled ? ' disabled' : '') + '>'
+    + stateOptions.map(([value, label]) => '<option value="' + value + '"' + (profile.state === value ? ' selected' : '') + '>' + safe(label) + '</option>').join('')
+    + '</select></label>'
+    + '<button type="button" data-review-catalog-action="profile-bind" data-review-catalog-id="' + safe(lane.id) + '"' + (actionDisabled ? ' disabled' : '') + '>' + safe(t('apply')) + '</button>'
+    + '<label><span><code>dependencies</code></span><input id="' + safe(reviewCatalogInputId(lane.id, 'dependencies')) + '" type="text" value="' + safe(profile.dependencies ? profile.dependencies.join(', ') : '') + '"' + (actionDisabled ? ' disabled' : '') + '></label>'
+    + '<button type="button" data-review-catalog-action="dependency" data-review-catalog-id="' + safe(lane.id) + '"' + (actionDisabled || !profile.active ? ' disabled' : '') + '>' + safe(t('apply')) + '</button>'
+    + '</div>'
+    + (immutable ? '' : '<details class="review-catalog-update"><summary>' + safe(t('save')) + '</summary>'
+      + renderReviewCatalogDefinitionFields(lane, disabled)
+      + '<div class="setting-buttons"><button type="button" data-review-catalog-action="update" data-review-catalog-id="' + safe(lane.id) + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('save')) + '</button></div></details>')
+    + '<details><summary>' + safe(t('runtimeDiagnosticsTitle')) + '</summary><ul>'
+    + (profile.explanation || []).map(line => '<li>' + safe(line) + '</li>').join('') + '</ul></details>'
+    + '</article>';
+}
+function renderReviewCatalogSection(catalog, disabled) {
+  currentReviewCatalogPayload = catalog || null;
+  if (!catalog) return '';
+  const issues = catalog.validation && Array.isArray(catalog.validation.issues) ? catalog.validation.issues : [];
+  const invalid = catalog.validation && catalog.validation.status === 'FAIL';
+  return '<section class="review-catalog-section">'
+    + '<div class="review-catalog-summary"><h3>' + safe(t('availableReviewTypes')) + '</h3>'
+    + '<div>' + badge(catalog.validation ? catalog.validation.status : 'FAIL', 'review-catalog-validation', invalid ? 'disabled' : 'active')
+    + badge(catalog.migration ? catalog.migration.status : 'blocked_invalid', 'review-catalog-migration') + '</div></div>'
+    + (catalog.migration && catalog.migration.reason ? '<p class="empty">' + safe(catalog.migration.reason) + '</p>' : '')
+    + (issues.length > 0 ? '<div class="blocker-alert">' + safe(issues.join(' ')) + '</div>' : '')
+    + (invalid ? '' : renderReviewCatalogCreate(disabled)
+      + '<div class="review-catalog-lanes">' + (catalog.lanes || []).map(lane => renderReviewCatalogLane(lane, disabled)).join('') + '</div>')
+    + '</section>';
 }
 function renderProfileDeltaReviewSection(profile, disabled) {
   const reviewTypes = currentProfilesPayload && Array.isArray(currentProfilesPayload.review_types)
@@ -450,11 +635,28 @@ function attachProfileActionHandlers() {
     });
   }
 }
+function attachReviewCatalogActionHandlers() {
+  for (const button of profilesNode.querySelectorAll('button[data-review-catalog-action]')) {
+    button.addEventListener('click', () => {
+      const action = button.dataset.reviewCatalogAction || '';
+      const reviewId = button.dataset.reviewCatalogId || '';
+      const lane = currentReviewCatalogPayload && Array.isArray(currentReviewCatalogPayload.lanes)
+        ? currentReviewCatalogPayload.lanes.find(candidate => candidate.id === reviewId) || null
+        : null;
+      submitReviewCatalogAction(reviewCatalogMutationPayload(action, lane));
+    });
+  }
+}
 function attachProfileTabHandlers() {
   for (const button of profilesNode.querySelectorAll('button[data-profile-tab]')) {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       currentProfileTabName = button.dataset.profileTab || '';
       if (currentProfilesPayload) {
+        try {
+          currentProfilesPayload.review_catalog = await loadReviewCatalogPayload(currentProfileTabName);
+        } catch (error) {
+          renderReviewCatalogResult({ status: 'error', error: error && error.message ? error.message : String(error) });
+        }
         renderProfiles(currentProfilesPayload);
       }
     });
@@ -471,6 +673,7 @@ function attachProfilePolicyVisualHandlers() {
   }
 }
 function attachProfileFollowUpTaskProfileHandlers() {
+  if (!profilesNode || typeof profilesNode.querySelector !== 'function') return;
   const modeSelect = profilesNode.querySelector('.profile-follow-up-task-profile select[id$="-follow-up-mode"]');
   if (!modeSelect) return;
   modeSelect.addEventListener('change', () => {
@@ -554,15 +757,28 @@ function renderProfiles(payload) {
     + renderProfileTabs(profiles, selectedName)
     + '<section class="profile-selected-panel" role="tabpanel">'
     + (selectedProfile ? renderProfileCard(selectedProfile, disabled) : '<p class="empty">' + safe(t('profileNoBuiltInProfiles')) + '</p>')
-    + '</section>';
+    + '</section>'
+    + renderReviewCatalogSection(payload.review_catalog, disabled);
   attachProfileTabHandlers();
   attachProfilePolicyVisualHandlers();
   attachProfileFollowUpTaskProfileHandlers();
   attachProfileFindingPolicyHandlers();
   attachProfileActionHandlers();
+  attachReviewCatalogActionHandlers();
+}
+async function loadReviewCatalogPayload(profileName) {
+  const query = profileName ? '?profile=' + encodeURIComponent(profileName) : '';
+  const response = await fetch('/api/review-catalog' + query);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload && payload.error ? payload.error : 'Review catalog request failed.');
+  return payload;
 }
 async function refreshProfilesPayload() {
   const response = await fetch('/api/profiles');
-  renderProfiles(await response.json());
+  const payload = await response.json();
+  if (currentProfileTabName) {
+    payload.review_catalog = await loadReviewCatalogPayload(currentProfileTabName);
+  }
+  renderProfiles(payload);
 }
 `;

@@ -350,6 +350,64 @@ export interface ReportProfileReviewType {
     label: string;
 }
 
+export type ReportReviewCatalogProfileState = 'disabled' | 'auto' | 'required';
+
+export interface ReportReviewCatalogLane {
+    id: string;
+    display_label: string;
+    source: 'built_in' | 'custom';
+    built_in: boolean;
+    enabled_by_default: boolean;
+    capability_enabled: boolean;
+    skill_ids: string[];
+    trigger: {
+        mode: 'compatibility' | 'manual' | 'signals';
+        signal_ids: string[];
+    };
+    coverage_category_ids: string[];
+    reviewer_role: {
+        role_id: string;
+        focus_tags: string[];
+    };
+    verdict_tokens: {
+        pass: string;
+        fail: string;
+    };
+    profile: {
+        name: string;
+        state: ReportReviewCatalogProfileState;
+        state_source: 'profile' | 'built_in_compatibility_default' | 'custom_disabled_default';
+        active: boolean;
+        inactive_reason: 'profile_disabled' | 'capability_disabled' | null;
+        dependencies: string[];
+        explanation: string[];
+    };
+}
+
+export interface ReportReviewCatalogTab {
+    status: 'present' | 'legacy_compatible' | 'invalid';
+    catalog_path: string;
+    capabilities_path: string;
+    profiles_path: string;
+    catalog_exists: boolean;
+    catalog_sha256: string | null;
+    state_sha256: string | null;
+    active_profile: string | null;
+    selected_profile: string | null;
+    profile_names: string[];
+    known_skill_ids: string[];
+    validation: {
+        status: 'PASS' | 'FAIL';
+        issues: string[];
+    };
+    migration: {
+        status: 'current' | 'legacy_compatible' | 'blocked_invalid';
+        required: boolean;
+        reason: string;
+    };
+    lanes: ReportReviewCatalogLane[];
+}
+
 export interface ReportProfileRow {
     name: string;
     source: ReportProfileSource;
@@ -388,6 +446,7 @@ export interface ReportProfilesTab {
     active_profile: string | null;
     review_trigger_policy: ReviewTriggerPolicy | null;
     review_types: ReportProfileReviewType[];
+    review_catalog: ReportReviewCatalogTab;
     profiles: ReportProfileRow[];
     built_in_profile_names: string[];
     user_profile_names: string[];

@@ -17,6 +17,7 @@ import {
 } from '../../policy/review-remediation-mode-policy';
 import { getKnownReviewTypeLabel } from '../review-type-setting-text';
 import type { ReportDataUnavailableEntry, ReportProfileRow, ReportProfilesTab } from './types';
+import { buildReviewCatalogTab } from './review-catalog-tab';
 
 function profilesPath(repoRoot: string): string {
     return joinOrchestratorPath(path.resolve(repoRoot), path.join('live', 'config', 'profiles.json'));
@@ -91,7 +92,12 @@ function buildProfileRow(
     };
 }
 
-function buildEmptyProfilesTab(configPath: string, status: ReportProfilesTab['status'], reason: string): ReportProfilesTab {
+function buildEmptyProfilesTab(
+    repoRoot: string,
+    configPath: string,
+    status: ReportProfilesTab['status'],
+    reason: string
+): ReportProfilesTab {
     return {
         config_path: toPosix(configPath),
         config_exists: status !== 'missing',
@@ -99,6 +105,7 @@ function buildEmptyProfilesTab(configPath: string, status: ReportProfilesTab['st
         active_profile: null,
         review_trigger_policy: null,
         review_types: KNOWN_REVIEW_TYPES.map((id) => ({ id, label: getKnownReviewTypeLabel(id) })),
+        review_catalog: buildReviewCatalogTab(repoRoot),
         profiles: [],
         built_in_profile_names: [],
         user_profile_names: [],
@@ -109,7 +116,7 @@ function buildEmptyProfilesTab(configPath: string, status: ReportProfilesTab['st
 export function buildProfilesTab(repoRoot: string): ReportProfilesTab {
     const configPath = profilesPath(repoRoot);
     if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
-        return buildEmptyProfilesTab(configPath, 'missing', 'Profiles config file missing.');
+        return buildEmptyProfilesTab(repoRoot, configPath, 'missing', 'Profiles config file missing.');
     }
 
     const unavailable: ReportDataUnavailableEntry[] = [];
@@ -123,6 +130,7 @@ export function buildProfilesTab(repoRoot: string): ReportProfilesTab {
             active_profile: data.active_profile,
             review_trigger_policy: reviewTriggerPolicy,
             review_types: KNOWN_REVIEW_TYPES.map((id) => ({ id, label: getKnownReviewTypeLabel(id) })),
+            review_catalog: buildReviewCatalogTab(repoRoot),
             profiles: buildProfileRows(data),
             built_in_profile_names: Object.keys(data.built_in_profiles),
             user_profile_names: Object.keys(data.user_profiles),
@@ -130,6 +138,7 @@ export function buildProfilesTab(repoRoot: string): ReportProfilesTab {
         };
     } catch (error: unknown) {
         return buildEmptyProfilesTab(
+            repoRoot,
             configPath,
             'invalid',
             error instanceof Error ? error.message : String(error)

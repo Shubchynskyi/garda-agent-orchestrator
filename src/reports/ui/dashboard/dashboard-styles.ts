@@ -142,6 +142,21 @@ tr.selected { background: #eef8f6; }
 .profile-policy-grid label.profile-policy-required select { border-color: #7bc99b; }
 .profile-policy-grid label.profile-policy-auto select { border-color: #9cb9ee; }
 .profile-policy-grid label.profile-policy-disabled select { border-color: #c6ccd6; color: var(--muted); }
+.review-catalog-section { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.review-catalog-summary, .review-catalog-lane-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.review-catalog-summary h3, .review-catalog-lane h4 { margin: 0; }
+.review-catalog-lanes { display: grid; gap: 10px; }
+.review-catalog-lane { display: grid; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.review-catalog-lane-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.review-catalog-lane-grid > div { display: grid; gap: 4px; min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.review-catalog-lane-grid code { overflow-wrap: anywhere; }
+.review-catalog-controls { display: grid; grid-template-columns: minmax(150px, 1fr) auto minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
+.review-catalog-controls label, .review-catalog-definition-fields label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
+.review-catalog-definition-fields { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 8px; margin-top: 9px; }
+.review-catalog-definition-fields input, .review-catalog-definition-fields select, .review-catalog-controls input, .review-catalog-controls select { width: 100%; min-width: 0; }
+.review-catalog-preview-diff { margin-top: 8px; }
+.review-catalog-preview-diff ol { display: grid; gap: 8px; margin: 7px 0 0; padding-left: 22px; }
+.review-catalog-preview-diff pre { max-height: 220px; margin-top: 5px; }
 .profile-delta-review { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .profile-delta-review legend { padding: 0 6px; font-weight: 800; }
 .profile-delta-review-help { margin: 0; }
@@ -318,7 +333,7 @@ button.file-open-inline, .file-open-inline { min-width: auto; width: auto; min-h
 .switch-strip .badge { min-width: 156px; }
 @media (max-width: 1060px) { .tasks-layout { grid-template-columns: 1fr; } .header-row { display: grid; grid-template-columns: 1fr 180px; } }
 @media (max-width: 1160px) { nav { flex-wrap: wrap; } .session-compact { margin-left: 0; } }
-@media (max-width: 1060px) { .profile-add-row, .profile-policy-grid, .profile-delta-review-grid, .profile-finding-policy-grid, .profile-finding-policy-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 860px) { .command-preview-meta, .cleanup-grid, .cleanup-policy-list, .plan-meta, .system-inline-details, .system-signal-grid, .profile-add-row, .profile-policy-grid, .profile-delta-review-grid, .profile-fields, .profile-finding-policy-grid, .profile-finding-policy-toolbar { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } .system-health-summary { flex-direction: column; } .profile-card-head { flex-direction: column; } .profile-card-actions { justify-content: flex-start; } }
+@media (max-width: 1060px) { .profile-add-row, .profile-policy-grid, .profile-delta-review-grid, .profile-finding-policy-grid, .profile-finding-policy-toolbar, .review-catalog-definition-fields, .review-catalog-lane-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .command-preview-meta, .cleanup-grid, .cleanup-policy-list, .plan-meta, .system-inline-details, .system-signal-grid, .profile-add-row, .profile-policy-grid, .profile-delta-review-grid, .profile-fields, .profile-finding-policy-grid, .profile-finding-policy-toolbar, .review-catalog-definition-fields, .review-catalog-lane-grid, .review-catalog-controls { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } .system-health-summary { flex-direction: column; } .profile-card-head, .review-catalog-lane-head { flex-direction: column; } .profile-card-actions { justify-content: flex-start; } }
 @media (max-width: 760px) { .overview { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .toolbar { grid-template-columns: 1fr; } .session-compact { flex: 1 1 100%; max-width: none; width: 100%; min-width: 0; margin-left: 0; } .switch-strip { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 640px) { header, main, nav { padding-left: 14px; padding-right: 14px; } th, td { padding: 8px; } .tab-buttons { flex: 1 1 100%; width: 100%; } .metrics, .quality-gate-summary { grid-template-columns: 1fr; } .header-row { grid-template-columns: 1fr; } .top-controls { justify-content: flex-end; justify-self: end; } }`;

@@ -1630,6 +1630,151 @@ test('profile browser action previews before confirmation and binds execute to t
     ]);
 });
 
+test('profiles UI renders compact review catalog state and disables guarded controls without actions', () => {
+    const reviewCatalog = {
+        status: 'present',
+        catalog_path: 'garda-agent-orchestrator/live/config/review-catalog.json',
+        capabilities_path: 'garda-agent-orchestrator/live/config/review-capabilities.json',
+        profiles_path: 'garda-agent-orchestrator/live/config/profiles.json',
+        catalog_exists: true,
+        catalog_sha256: 'a'.repeat(64),
+        state_sha256: 'b'.repeat(64),
+        active_profile: 'balanced',
+        selected_profile: 'balanced',
+        profile_names: ['balanced'],
+        known_skill_ids: ['architecture-review', 'code-review'],
+        validation: { status: 'PASS', issues: [] },
+        migration: { status: 'current', required: false, reason: 'Catalog is current.' },
+        lanes: [
+            {
+                id: 'code',
+                display_label: 'Code review',
+                source: 'built_in',
+                built_in: true,
+                enabled_by_default: true,
+                capability_enabled: true,
+                skill_ids: ['code-review'],
+                trigger: { mode: 'compatibility', signal_ids: [] },
+                coverage_category_ids: ['code-quality'],
+                reviewer_role: { role_id: 'code-reviewer', focus_tags: ['code-quality'] },
+                verdict_tokens: { pass: 'REVIEW PASSED', fail: 'REVIEW FAILED' },
+                profile: {
+                    name: 'balanced',
+                    state: 'required',
+                    state_source: 'profile',
+                    active: true,
+                    inactive_reason: null,
+                    dependencies: [],
+                    explanation: ['code uses built-in compatibility triggers']
+                }
+            },
+            {
+                id: 'architecture',
+                display_label: 'Architecture review',
+                source: 'custom',
+                built_in: false,
+                enabled_by_default: false,
+                capability_enabled: false,
+                skill_ids: ['architecture-review'],
+                trigger: { mode: 'signals', signal_ids: ['architecture'] },
+                coverage_category_ids: ['maintainability'],
+                reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['maintainability'] },
+                verdict_tokens: { pass: 'ARCHITECTURE REVIEW PASSED', fail: 'ARCHITECTURE REVIEW FAILED' },
+                profile: {
+                    name: 'balanced',
+                    state: 'disabled',
+                    state_source: 'profile',
+                    active: false,
+                    inactive_reason: 'profile_disabled',
+                    dependencies: ['code'],
+                    explanation: ['architecture trigger uses signals: architecture']
+                }
+            }
+        ]
+    };
+    const payload = {
+        status: 'present',
+        config_path: 'garda-agent-orchestrator/live/config/profiles.json',
+        active_profile: 'balanced',
+        unavailable: [],
+        finding_policy_actions: [],
+        finding_policy_presets: {},
+        review_types: [],
+        profiles: [],
+        review_catalog: reviewCatalog
+    };
+    const html = renderProfilesHtml(payload, true);
+    const disabledHtml = renderProfilesHtml(payload, false);
+    const russianHtml = renderProfilesHtml(payload, true, 'ru');
+
+    assert.match(html, /data-review-catalog-id="architecture"/u);
+    assert.match(html, /disabled_by_default/u);
+    assert.match(html, /signals: architecture/u);
+    assert.match(html, /<strong>dependencies<\/strong><code>code<\/code>/u);
+    assert.match(html, /data-review-catalog-action="enable"/u);
+    assert.doesNotMatch(html, /data-review-catalog-id="code"[^>]*data-review-catalog-action/u);
+    assert.doesNotMatch(html, /prompt_body|reviewer_prompt|secret/u);
+    assert.match(disabledHtml, /data-review-catalog-action="enable"[^>]* disabled/u);
+    assert.match(russianHtml, /Пользовательское/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.review-catalog-lane-grid/u);
+});
+
+test('review catalog browser action shows semantic diff before bound confirmation', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: string[] = [];
+    const stateSha256 = 'a'.repeat(64);
+    const planSha256 = 'b'.repeat(64);
+    const profilesStatusNode = { innerHTML: '' };
+    const context = {
+        actionToken: 'test-token',
+        currentProfileActionResult: null,
+        currentProfilesPayload: null,
+        profilesStatusNode,
+        safe: (value: unknown) => String(value),
+        badge: (value: unknown) => `<span>${String(value)}</span>`,
+        t: (key: string) => key,
+        window: {
+            prompt: () => {
+                events.push('prompt');
+                return 'APPLY REVIEW CATALOG CHANGE';
+            }
+        },
+        fetch: async (_url: string, options: { body: string }) => {
+            const payload = JSON.parse(options.body) as Record<string, unknown>;
+            requests.push(payload);
+            events.push(`request:${payload.mode}`);
+            return {
+                ok: true,
+                json: async () => requests.length === 1
+                    ? {
+                        status: 'previewed',
+                        mode: 'preview',
+                        review_id: 'architecture',
+                        before_state_sha256: stateSha256,
+                        plan_sha256: planSha256,
+                        confirmation_phrase: 'APPLY REVIEW CATALOG CHANGE',
+                        diff: [{ path: 'review-capabilities.architecture', before: false, after: true }]
+                    }
+                    : { status: 'confirmation_required', mode: 'execute', review_id: 'architecture', diff: [] }
+            };
+        }
+    };
+
+    await vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nsubmitReviewCatalogAction({ operation: 'enable', review_id: 'architecture' });`,
+        context
+    );
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].mode, 'preview');
+    assert.equal(requests[1].mode, 'execute');
+    assert.equal(requests[1].confirmation, 'APPLY REVIEW CATALOG CHANGE');
+    assert.equal(requests[1].expected_state_sha256, stateSha256);
+    assert.equal(requests[1].expected_plan_sha256, planSha256);
+    assert.match(profilesStatusNode.innerHTML, /review-catalog-result/u);
+    assert.deepEqual(events, ['request:preview', 'prompt', 'request:execute']);
+});
+
 test('profile browser action stops before confirmation when preview hash is invalid', async () => {
     const requests: Array<Record<string, unknown>> = [];
     let promptCalls = 0;
