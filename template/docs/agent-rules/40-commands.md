@@ -57,6 +57,16 @@ Rules:
   modified evidence remains fail-closed.
 - This command never replaces `compile-gate`, `full-suite-validation`, required
   reviews, or completion evidence.
+- Test-first expected-red is an explicit exception to ordinary passing focused
+  validation: put the exact marker `Test-first: expected-red` in the task's
+  `TASK.md` Notes, then follow the `next-step` command that adds
+  `--expect-failure`. That mode accepts only a current test-only preflight and a
+  concrete changed focused test. A real non-zero test exit is recorded with
+  bounded output; an unexpected pass, timeout, cancellation, unrelated test,
+  foreign task, stale preflight, or modified artifact fails closed. After the
+  evidence is recorded, `next-step` exposes implementation and still requires
+  refreshed preflight, compile, full-suite, reviews, and completion after the
+  production change.
 - If the command is not eligible for `run-intermediate-command`, use the Manual
   Validation Logs pattern below so chat output remains bounded and auditable.
 

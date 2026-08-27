@@ -30,6 +30,13 @@ interface BaselineOnlyRoute {
     reason: string;
 }
 
+interface TestFirstExpectedFailureRoute {
+    nextGate: string;
+    title: string;
+    reason: string;
+    commands: NextStepDecisionRoutePayload['commands'];
+}
+
 export interface NextStepGuardDecision {
     route: NextStepDecisionRoutePayload | null;
     warnings: string[];
@@ -240,6 +247,7 @@ export function resolveValidationDecisionRoute(options: {
     lifecycleGateIds?: readonly string[];
     resolveQualityChecklistRoute: () => ValidationRoute | null;
     resolveBaselineOnlyPreImplementationRoute: () => BaselineOnlyRoute | null;
+    resolveTestFirstExpectedFailureRoute?: () => TestFirstExpectedFailureRoute | null;
     resolveCompileGateRoute: () => ValidationRoute | null;
     resolveAuditedNoOpState: () => {
         required: boolean;
@@ -255,6 +263,7 @@ export function resolveValidationDecisionRoute(options: {
         full_suite_after_compile_before_reviews: true
     });
     let baselineChecked = false;
+    let testFirstChecked = false;
     let noOpChecked = false;
     const resolveBaselineRoute = (): ValidationRoute | null => {
         baselineChecked = true;
@@ -266,6 +275,19 @@ export function resolveValidationDecisionRoute(options: {
                 title: route.title,
                 reason: route.reason,
                 commands: []
+            }
+            : null;
+    };
+    const resolveTestFirstRoute = (): ValidationRoute | null => {
+        testFirstChecked = true;
+        const route = options.resolveTestFirstExpectedFailureRoute?.() ?? null;
+        return route
+            ? {
+                status: 'BLOCKED',
+                nextGate: route.nextGate,
+                title: route.title,
+                reason: route.reason,
+                commands: route.commands
             }
             : null;
     };
@@ -287,12 +309,17 @@ export function resolveValidationDecisionRoute(options: {
     };
     const route = resolveFirstActiveTaskLifecycleGate(gateIds, {
         'optional-quality-checklist': options.resolveQualityChecklistRoute,
-        'compile-gate': () => resolveBaselineRoute() ?? options.resolveCompileGateRoute(),
+        'compile-gate': () => (
+            resolveBaselineRoute()
+            ?? resolveTestFirstRoute()
+            ?? options.resolveCompileGateRoute()
+        ),
         'full-suite-validation': () => resolveNoOpRoute() ?? options.resolveFullSuiteValidationRoute()
     });
     if (route) {
         return route;
     }
     return (!baselineChecked ? resolveBaselineRoute() : null)
+        ?? (!testFirstChecked ? resolveTestFirstRoute() : null)
         ?? (!noOpChecked ? resolveNoOpRoute() : null);
 }

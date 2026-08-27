@@ -282,9 +282,12 @@ function buildPreflightGateHelpEntries(
             )
         },
         'run-intermediate-command': {
-            ...createSingleUsageEntry(
-                'Run an opt-in auditable intermediate validation command with full raw output artifact, compact visible output, and optional current preflight/coverage binding for focused review evidence.',
-                `${cliPrefix} gate run-intermediate-command --task-id "${TASK_ID_PLACEHOLDER}" --command-source "<node-test|targeted-test|typecheck|validation>" --command "<validation command>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --coverage-contract-sha256 "<coverage contract sha256>" --repo-root "."`,
+            ...createGateHelpEntry(
+                'Run an opt-in auditable intermediate validation command with full raw output artifact and compact visible output. --expect-failure is restricted to an exact TASK.md Notes marker "Test-first: expected-red", a current test-only preflight, and a focused changed test; a real nonzero test exit is recorded as successful expected-red evidence, while timeout, cancellation, or an unexpected pass fails closed.',
+                [
+                    `${cliPrefix} gate run-intermediate-command --task-id "${TASK_ID_PLACEHOLDER}" --command-source "<node-test|targeted-test|typecheck|validation>" --command "<validation command>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --coverage-contract-sha256 "<coverage contract sha256>" --repo-root "."`,
+                    `${cliPrefix} gate run-intermediate-command --task-id "${TASK_ID_PLACEHOLDER}" --command-source "<node-test|targeted-test>" --command "<focused changed test command>" --expect-failure --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
+                ],
                 true
             )
         },

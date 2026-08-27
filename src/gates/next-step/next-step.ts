@@ -277,6 +277,9 @@ import {
     buildBaselineOnlyPreImplementationRoute
 } from './next-step-pre-implementation-routing';
 import {
+    buildTestFirstExpectedFailureRoute
+} from './next-step-test-first-routing';
+import {
     buildNextStepQualityChecklistSummary,
     markQualityChecklistReadinessStaleForWorkspace,
     readQualityChecklistReadiness,
@@ -3816,6 +3819,19 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskMode,
             preflight,
             auditedNoOpPassed: resolveAuditedNoOpState().passed
+        }),
+        resolveTestFirstExpectedFailureRoute: () => buildTestFirstExpectedFailureRoute({
+            repoRoot,
+            reviewsRoot,
+            eventsRoot,
+            taskId,
+            taskEntry,
+            preflight,
+            preflightPath,
+            preflightCommandPath,
+            cliPrefix,
+            workspaceReady: preflightWorkspaceReadiness.ready,
+            currentChangedFiles: preflightWorkspaceReadiness.currentChangedFiles
         }),
         resolveCompileGateRoute: () => {
             const semanticCompileAccepted = semanticResumeReusable && semanticCycleResume.accepted_compile;

@@ -451,6 +451,19 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(!combinedOutput.includes('--classification "BASELINE_ONLY"'));
     });
 
+    it('documents the guarded expected-red intermediate command contract', async () => {
+        const result = await runCliWithCapturedOutput(
+            ['gate', 'run-intermediate-command', '--help'],
+            { cwd: getSourceCheckoutNestedCwd() }
+        );
+        assert.equal(result.exitCode, 0);
+        const combinedOutput = stripAnsi(result.logs.join('\n'));
+        assert.ok(combinedOutput.includes('--expect-failure'));
+        assert.ok(combinedOutput.includes('Test-first: expected-red'));
+        assert.ok(combinedOutput.includes('unexpected pass'));
+        assert.ok(combinedOutput.includes('test-only preflight'));
+    });
+
     it('quality-checklist help does not advertise a partial default-rule answer set', async () => {
         const result = await runCliWithCapturedOutput(['gate', 'quality-checklist', '--help'], { cwd: getSourceCheckoutNestedCwd() });
         assert.equal(result.exitCode, 0);
