@@ -228,6 +228,15 @@ test('review findings schema exposes a strict versioned JSON object contract', (
     assert.ok(reviewFindingsReportJsonSchema.required.includes('findings'));
 });
 
+test('published review findings schema stays synchronized with the runtime contract', () => {
+    const publishedSchema = JSON.parse(fs.readFileSync(
+        path.join(process.cwd(), 'template', 'schemas', 'review-findings-report.schema.json'),
+        'utf8'
+    ));
+
+    assert.deepEqual(publishedSchema, reviewFindingsReportJsonSchema);
+});
+
 test('review findings JSON schema models nested sections for machine validation', () => {
     const report = validReport();
 
