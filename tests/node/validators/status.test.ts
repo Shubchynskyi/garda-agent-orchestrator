@@ -1174,7 +1174,7 @@ test('status exposes explicit FULL/DELTA profile policy readiness', () => {
             active_profile: 'balanced',
             depth: 2,
             review_remediation_mode_policy: {
-                schema_version: 1,
+                schema_version: 2,
                 policy_id: 'conservative_review_remediation_mode_v1',
                 initial_review_mode: 'FULL',
                 delta_eligible_review_types: ['code', 'refactor', 'test'],
