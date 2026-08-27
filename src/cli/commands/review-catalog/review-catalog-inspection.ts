@@ -2,6 +2,7 @@ import { analyzeProfileReviewCatalogPolicy } from '../../../policy/profile-revie
 import type { ProfileEntry } from '../../../policy/profile-resolver';
 import type {
     ReviewCatalogInspectionLane,
+    ReviewCatalogInspectionLaneSummary,
     ReviewCatalogManagedState,
     ReviewCatalogProfileState
 } from './review-catalog-types';
@@ -20,44 +21,51 @@ function resolveProfileState(value: unknown, builtIn: boolean): ReviewCatalogPro
     return builtIn ? 'auto' : 'disabled';
 }
 
-export function buildReviewCatalogInspectionLanes(
+function buildInspectionLaneSummary(
+    state: ReviewCatalogManagedState,
+    definition: ReviewCatalogManagedState['catalog']['review_types'][number]
+): ReviewCatalogInspectionLaneSummary {
+    return {
+        id: definition.id,
+        display_label: definition.display_label,
+        built_in: definition.built_in,
+        capability_enabled: state.capabilities[definition.id] === true,
+        skill_ids: definition.skill_ids,
+        trigger: definition.trigger,
+        coverage_category_ids: definition.coverage_category_ids,
+        reviewer_role: definition.reviewer_role,
+        verdict_tokens: definition.verdict_tokens
+    };
+}
+
+export function buildReviewCatalogInspectionLaneSummaries(
     state: ReviewCatalogManagedState
-): ReviewCatalogInspectionLane[] {
-    return state.catalog.review_types.map((definition) => {
-        const profileStates: Record<string, ReviewCatalogProfileState> = {};
-        const dependencies: Record<string, readonly string[]> = {};
-        for (const [profileName, profile] of getProfiles(state)) {
-            profileStates[profileName] = resolveProfileState(
-                profile.review_policy[definition.id],
-                definition.built_in
-            );
-            dependencies[profileName] = Object.freeze([
-                ...(profile.review_dependency_graph?.dependencies[definition.id] || [])
-            ]);
-        }
-        return {
-            id: definition.id,
-            display_label: definition.display_label,
-            built_in: definition.built_in,
-            capability_enabled: state.capabilities[definition.id] === true,
-            skill_ids: definition.skill_ids,
-            trigger: definition.trigger,
-            coverage_category_ids: definition.coverage_category_ids,
-            reviewer_role: definition.reviewer_role,
-            verdict_tokens: definition.verdict_tokens,
-            profile_states: profileStates,
-            dependencies
-        };
-    });
+): ReviewCatalogInspectionLaneSummary[] {
+    return state.catalog.review_types.map((definition) => buildInspectionLaneSummary(state, definition));
 }
 
 export function requireInspectionLane(
     state: ReviewCatalogManagedState,
     reviewId: string
 ): ReviewCatalogInspectionLane {
-    const lane = buildReviewCatalogInspectionLanes(state).find(({ id }) => id === reviewId);
-    if (!lane) throw new Error(`Unknown review catalog id '${reviewId}'.`);
-    return lane;
+    const definition = state.catalog.review_types.find(({ id }) => id === reviewId);
+    if (!definition) throw new Error(`Unknown review catalog id '${reviewId}'.`);
+    const profileStates: Record<string, ReviewCatalogProfileState> = {};
+    const dependencies: Record<string, readonly string[]> = {};
+    for (const [profileName, profile] of getProfiles(state)) {
+        profileStates[profileName] = resolveProfileState(
+            profile.review_policy[definition.id],
+            definition.built_in
+        );
+        dependencies[profileName] = Object.freeze([
+            ...(profile.review_dependency_graph?.dependencies[definition.id] || [])
+        ]);
+    }
+    return {
+        ...buildInspectionLaneSummary(state, definition),
+        profile_states: profileStates,
+        dependencies
+    };
 }
 
 export function buildReviewCatalogLaneExplanation(

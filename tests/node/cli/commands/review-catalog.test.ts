@@ -193,6 +193,12 @@ test('review-catalog list and validate preserve built-in compatibility when the 
         assert.equal(listed.action, 'list');
         assert.equal(listed.catalog_exists, false);
         assert.deepEqual(listed.lanes.map((lane: CommandResult) => lane.id), BUILT_IN_REVIEW_IDS);
+        assert.ok(listed.lanes.every((lane: CommandResult) => !Object.hasOwn(lane, 'profile_states')));
+        assert.ok(listed.lanes.every((lane: CommandResult) => !Object.hasOwn(lane, 'dependencies')));
+
+        const shown = captureCommand(['show', 'code', ...sharedArgs(workspace)]).result;
+        assert.equal(shown.lane.profile_states.balanced, 'required');
+        assert.deepEqual(shown.lane.dependencies.balanced, []);
 
         const validated = captureCommand(['validate', ...sharedArgs(workspace)]).result;
         assert.equal(validated.action, 'validate');
@@ -454,6 +460,29 @@ test('review-catalog manages custom capability, profile binding, and a validated
     try {
         createCustomLane(workspace);
 
+        const updateArgs = [
+            'update', 'architecture',
+            '--display-label', 'Architecture boundary review',
+            '--focus-tag', 'boundaries',
+            ...sharedArgs(workspace)
+        ];
+        const updatePreview = captureCommand(updateArgs).result;
+        const updated = applyPreview(updateArgs, updatePreview);
+        assert.equal(updated.status, 'APPLIED');
+
+        const catalogAfterUpdate = JSON.parse(
+            fs.readFileSync(path.join(workspace.configDir, 'review-catalog.json'), 'utf8')
+        );
+        const updatedDefinition = catalogAfterUpdate.custom_review_types.find(
+            (definition: CommandResult) => definition.id === 'architecture'
+        );
+        assert.equal(updatedDefinition.display_label, 'Architecture boundary review');
+        assert.deepEqual(updatedDefinition.reviewer_role.focus_tags, ['boundaries']);
+        const capabilitiesAfterUpdate = JSON.parse(
+            fs.readFileSync(path.join(workspace.configDir, 'review-capabilities.json'), 'utf8')
+        );
+        assert.equal(capabilitiesAfterUpdate.architecture, undefined);
+
         const enableArgs = ['enable', 'architecture', ...sharedArgs(workspace)];
         const enablePreview = captureCommand(enableArgs).result;
         const enabled = applyPreview(enableArgs, enablePreview);
@@ -492,6 +521,7 @@ test('review-catalog manages custom capability, profile binding, and a validated
 
         const shown = captureCommand(['show', 'architecture', ...sharedArgs(workspace)]).result;
         assert.equal(shown.lane.id, 'architecture');
+        assert.equal(shown.lane.display_label, 'Architecture boundary review');
         assert.equal(shown.lane.capability_enabled, true);
         const explained = captureCommand([
             'explain', 'architecture', '--profile', 'balanced', ...sharedArgs(workspace)
@@ -508,6 +538,34 @@ test('review-catalog manages custom capability, profile binding, and a validated
             ]),
             /self-edge|depend on itself/iu
         );
+
+        const disableArgs = ['disable', 'architecture', ...sharedArgs(workspace)];
+        const disablePreview = captureCommand(disableArgs).result;
+        const disabled = applyPreview(disableArgs, disablePreview);
+        assert.equal(disabled.status, 'APPLIED');
+
+        const capabilitiesAfterDisable = JSON.parse(
+            fs.readFileSync(path.join(workspace.configDir, 'review-capabilities.json'), 'utf8')
+        );
+        assert.equal(capabilitiesAfterDisable.architecture, false);
+        const profilesAfterDisable = JSON.parse(
+            fs.readFileSync(path.join(workspace.configDir, 'profiles.json'), 'utf8')
+        );
+        const balancedAfterDisable = profilesAfterDisable.built_in_profiles.balanced;
+        assert.equal(balancedAfterDisable.review_policy.architecture, 'auto');
+        assert.equal(balancedAfterDisable.review_dependency_graph.preparation_order.includes('architecture'), false);
+        assert.equal(balancedAfterDisable.review_dependency_graph.dependencies.architecture, undefined);
+        assert.equal(
+            new Set(balancedAfterDisable.review_dependency_graph.preparation_order).size,
+            balancedAfterDisable.review_dependency_graph.preparation_order.length
+        );
+
+        const shownAfterDisable = captureCommand([
+            'show', 'architecture', ...sharedArgs(workspace)
+        ]).result;
+        assert.equal(shownAfterDisable.lane.capability_enabled, false);
+        assert.equal(shownAfterDisable.lane.profile_states.balanced, 'auto');
+        assert.deepEqual(shownAfterDisable.lane.dependencies.balanced, []);
     } finally {
         fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
     }

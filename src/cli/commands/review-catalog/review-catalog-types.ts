@@ -102,7 +102,7 @@ export interface ReviewCatalogManagementPlan {
     proposed_profiles?: ProfilesData;
 }
 
-export interface ReviewCatalogInspectionLane {
+export interface ReviewCatalogInspectionLaneSummary {
     id: string;
     display_label: string;
     built_in: boolean;
@@ -112,6 +112,9 @@ export interface ReviewCatalogInspectionLane {
     coverage_category_ids: readonly string[];
     reviewer_role: NormalizedReviewCatalog['review_types'][number]['reviewer_role'];
     verdict_tokens: NormalizedReviewCatalog['review_types'][number]['verdict_tokens'];
+}
+
+export interface ReviewCatalogInspectionLane extends ReviewCatalogInspectionLaneSummary {
     profile_states: Readonly<Record<string, ReviewCatalogProfileState>>;
     dependencies: Readonly<Record<string, readonly string[]>>;
 }

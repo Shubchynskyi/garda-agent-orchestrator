@@ -143,10 +143,10 @@ function buildStableDependencyGraph(
     preferredOrder: readonly string[]
 ): { preparation_order: string[]; dependencies: Record<string, string[]> } {
     const active = new Set(activeLaneIds);
-    const baseOrder = [
+    const baseOrder = [...new Set([
         ...preferredOrder.filter((reviewId) => active.has(reviewId)),
         ...activeLaneIds.filter((reviewId) => !preferredOrder.includes(reviewId))
-    ];
+    ])];
     const rank = new Map(baseOrder.map((reviewId, index) => [reviewId, index]));
     const dependencies: Record<string, string[]> = {};
     for (const reviewId of activeLaneIds) {
@@ -165,20 +165,34 @@ function buildStableDependencyGraph(
         ));
     }
 
-    const remaining = new Set(activeLaneIds);
-    const preparationOrder: string[] = [];
-    while (remaining.size > 0) {
-        const ready = baseOrder.filter((reviewId) => (
-            remaining.has(reviewId)
-            && dependencies[reviewId].every((dependency) => !remaining.has(dependency))
-        ));
-        if (ready.length === 0) {
-            throw new Error('Review dependency mutation creates a cycle or an ambiguous invalid graph.');
+    const indegree = new Map(activeLaneIds.map((reviewId) => [
+        reviewId,
+        dependencies[reviewId].length
+    ]));
+    const dependents = new Map(activeLaneIds.map((reviewId) => [reviewId, [] as string[]]));
+    for (const [reviewId, reviewDependencies] of Object.entries(dependencies)) {
+        for (const dependency of reviewDependencies) {
+            dependents.get(dependency)!.push(reviewId);
         }
+    }
+    const preparationOrder: string[] = [];
+    let ready = baseOrder.filter((reviewId) => indegree.get(reviewId) === 0);
+    while (ready.length > 0) {
         for (const reviewId of ready) {
             preparationOrder.push(reviewId);
-            remaining.delete(reviewId);
         }
+        const nextReady: string[] = [];
+        for (const reviewId of ready) {
+            for (const dependent of dependents.get(reviewId)!) {
+                const nextIndegree = indegree.get(dependent)! - 1;
+                indegree.set(dependent, nextIndegree);
+                if (nextIndegree === 0) nextReady.push(dependent);
+            }
+        }
+        ready = nextReady.sort((left, right) => rank.get(left)! - rank.get(right)!);
+    }
+    if (preparationOrder.length !== activeLaneIds.length) {
+        throw new Error('Review dependency mutation creates a cycle or an ambiguous invalid graph.');
     }
     return { preparation_order: preparationOrder, dependencies };
 }

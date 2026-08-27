@@ -5,7 +5,7 @@ import {
 import { parseOptions, type PackageJsonLike } from '../cli-helpers';
 import type { ParsedOptionsRecord } from '../profile/profile-types';
 import {
-    buildReviewCatalogInspectionLanes,
+    buildReviewCatalogInspectionLaneSummaries,
     buildReviewCatalogLaneExplanation,
     requireInspectionLane
 } from './review-catalog-inspection';
@@ -192,7 +192,7 @@ function handleInspection(
             catalog_exists: state.catalogExists,
             catalog_sha256: state.catalog.catalog_sha256,
             state_sha256: state.stateSha256,
-            lanes: buildReviewCatalogInspectionLanes(state)
+            lanes: buildReviewCatalogInspectionLaneSummaries(state)
         }, options);
     }
     const reviewId = requireReviewId(positionals, action);
