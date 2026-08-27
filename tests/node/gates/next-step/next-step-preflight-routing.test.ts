@@ -5,6 +5,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
+import { readTaskQueueEntries } from '../../../../src/core/task-queue-read';
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import type { EffectiveReviewExecutionPolicyMode } from '../../../../src/core/review-execution-policy';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 import { computeTaskPlanDigest, validateTaskPlan } from '../../../../src/schemas/task-plan';
 
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
@@ -83,6 +93,33 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    const fixtureProfile = {
+        description: 'Preflight routing fixture profile',
+        depth: 2,
+        task_decomposition: { enabled: false },
+        review_policy: { code: 'auto', test: 'auto' },
+        token_economy: {
+            enabled: true,
+            strip_examples: true,
+            strip_code_blocks: true,
+            scoped_diffs: true,
+            compact_reviewer_output: true
+        },
+        skills: { auto_suggest: true }
+    };
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: fixtureProfile,
+            strict: {
+                ...fixtureProfile,
+                description: 'Strict preflight routing fixture profile',
+                depth: 3
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -134,6 +171,66 @@ function fileSha256(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+function materializeTaskModeProfileSnapshot(
+    repoRoot: string,
+    taskId: string,
+    details: Record<string, unknown>
+): Record<string, unknown> {
+    const artifactPathValue = String(details.artifact_path || '').trim();
+    const taskModePath = artifactPathValue
+        ? path.resolve(repoRoot, artifactPathValue)
+        : path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    if (!fs.existsSync(taskModePath)) {
+        return details;
+    }
+    const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+    const taskProfile = readTaskQueueEntries(repoRoot).get(taskId)?.profile || 'balanced';
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        taskProfile,
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    taskMode.task_profile = profilePolicySnapshot.source.task_profile;
+    taskMode.profile_selection_source = profilePolicySnapshot.source.profile_selection_source;
+    taskMode.active_profile = profilePolicySnapshot.source.effective_profile;
+    taskMode.profile_source = profilePolicySnapshot.source.effective_profile_source;
+    taskMode.runtime_active_profile = profilePolicySnapshot.source.runtime_active_profile;
+    taskMode.runtime_profile_source = profilePolicySnapshot.source.runtime_profile_source;
+    taskMode.profile_policy_snapshot_required = true;
+    taskMode.profile_policy_snapshot = profilePolicySnapshot;
+    writeJson(taskModePath, taskMode);
+    return {
+        ...details,
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    };
+}
+
+function materializePreflightTimelineDetails(
+    repoRoot: string,
+    taskId: string,
+    details: Record<string, unknown>
+): Record<string, unknown> {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath)) {
+        return details;
+    }
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    return {
+        output_path: normalizeForTimeline(preflightPath),
+        ...details,
+        ...(preflight.effective_review_snapshot
+            ? { effective_review_snapshot: preflight.effective_review_snapshot }
+            : {})
+    };
+}
+
 
 
 function appendEvent(
@@ -144,6 +241,11 @@ function appendEvent(
     details: Record<string, unknown> = {},
     timestampUtc?: string
 ): { task_sequence: number; prev_event_sha256: string | null; event_sha256: string } {
+    const eventDetails = eventType === 'TASK_MODE_ENTERED'
+        ? materializeTaskModeProfileSnapshot(repoRoot, taskId, details)
+        : eventType === 'PREFLIGHT_CLASSIFIED'
+            ? materializePreflightTimelineDetails(repoRoot, taskId, details)
+            : details;
     const timelinePath = path.join(eventsRoot(repoRoot), `${taskId}.jsonl`);
     const existingLines = fs.existsSync(timelinePath)
         ? fs.readFileSync(timelinePath, 'utf8').split('\n').filter((line) => line.trim())
@@ -165,7 +267,7 @@ function appendEvent(
         actor: 'gate',
         message: eventType,
         timestamp_utc: timestampUtc || new Date().toISOString(),
-        details,
+        details: eventDetails,
         integrity: {
             schema_version: 1,
             task_sequence: taskSequence,
@@ -293,13 +395,105 @@ function getLoadedRuleFileBasenames(command: string): string[] {
         .sort();
 }
 
+function buildPreflightReviewPolicyEvidence(
+    repoRoot: string,
+    taskId: string,
+    requiredReviews: Record<string, boolean>,
+    changedFiles: string[],
+    options: {
+        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
+        scopeCategory?: string;
+        zeroDiffBaselineOnly?: boolean;
+    } = {}
+): {
+    profilePolicySnapshot: { snapshot_hash: string };
+    reviewExecutionPolicy: {
+        mode: EffectiveReviewExecutionPolicyMode;
+        visible_summary_line: string;
+        dependency_graph: ReturnType<typeof buildEffectiveReviewSnapshot>['review_dependency_graph'];
+    };
+    effectiveReviewSnapshot: ReturnType<typeof buildEffectiveReviewSnapshot>;
+} {
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const taskMode = fs.existsSync(taskModePath)
+        ? JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>
+        : null;
+    let frozenProfileSnapshot = taskMode?.profile_policy_snapshot as TaskProfilePolicySnapshot | null;
+    if (!frozenProfileSnapshot) {
+        const taskProfile = readTaskQueueEntries(repoRoot).get(taskId)?.profile || 'balanced';
+        frozenProfileSnapshot = buildTaskProfilePolicySnapshot(
+            path.join(repoRoot, 'garda-agent-orchestrator'),
+            taskProfile,
+            {
+                reviewExecutionPolicyMode: 'code_first_optional',
+                reviewExecutionPolicyConfigured: true,
+                fullSuiteValidationEnabled: false,
+                fullSuiteValidationPlacement: 'after_compile_before_reviews',
+                lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+            }
+        );
+        const timelinePath = path.join(eventsRoot(repoRoot), `${taskId}.jsonl`);
+        const timelineDeclaresSnapshot = fs.existsSync(timelinePath)
+            && fs.readFileSync(timelinePath, 'utf8').includes(
+                `"profile_policy_snapshot_hash":"${frozenProfileSnapshot.snapshot_hash}"`
+            );
+        if (taskMode && timelineDeclaresSnapshot) {
+            materializeTaskModeProfileSnapshot(repoRoot, taskId, {});
+            frozenProfileSnapshot = (
+                JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>
+            ).profile_policy_snapshot as TaskProfilePolicySnapshot;
+        }
+    }
+    const reviewPolicyMode = options.reviewPolicyMode
+        || frozenProfileSnapshot.review_execution_policy.mode;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        frozenProfileSnapshot.source.effective_profile,
+        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+        frozenProfileSnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: frozenProfileSnapshot.snapshot_hash,
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: options.scopeCategory || 'code',
+        taskIntent: 'Exercise next-step preflight routing',
+        changedFiles,
+        taskTriggers: {},
+        zeroDiffBaselineOnly: options.zeroDiffBaselineOnly === true,
+        reviewExecutionPolicyMode: reviewPolicyMode,
+        reviewDependencyGraph: null,
+        fullSuiteValidation: {
+            enabled: false,
+            placement: 'after_compile_before_reviews'
+        },
+        includeDependencyGraph: true
+    });
+    return {
+        profilePolicySnapshot: {
+            snapshot_hash: frozenProfileSnapshot.snapshot_hash
+        },
+        reviewExecutionPolicy: {
+            mode: reviewPolicyMode,
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effectiveReviewSnapshot
+    };
+}
+
 function writePreflight(
     repoRoot: string,
     taskId: string,
     requiredReviews: Record<string, boolean>,
     options: {
         seedPostPreflight?: boolean;
-        reviewPolicyMode?: string;
+        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
     } = {}
@@ -315,7 +509,13 @@ function writePreflight(
             changedFiles
         })
         : null;
-    const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
+    const reviewPolicyEvidence = buildPreflightReviewPolicyEvidence(
+        repoRoot,
+        taskId,
+        requiredReviews,
+        changedFiles,
+        { reviewPolicyMode: options.reviewPolicyMode }
+    );
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -330,13 +530,24 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
-        review_execution_policy: {
-            mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
-        }
+        ...(reviewPolicyEvidence
+            ? {
+                profile_policy_snapshot: reviewPolicyEvidence.profilePolicySnapshot,
+                review_execution_policy: reviewPolicyEvidence.reviewExecutionPolicy,
+                effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
+            }
+            : {
+                review_execution_policy: {
+                    mode: options.reviewPolicyMode || 'code_first_optional',
+                    visible_summary_line: `Review execution policy: ${options.reviewPolicyMode || 'code_first_optional'}`
+                }
+            })
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        ...(reviewPolicyEvidence
+            ? { effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot }
+            : {})
     });
     if (options.seedPostPreflight !== false) {
         seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
@@ -354,6 +565,17 @@ function writeBaselineOnlyPreflight(
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+    const requiredReviews = { ...ALL_REVIEW_FLAGS, ...options.requiredReviews };
+    const reviewPolicyEvidence = buildPreflightReviewPolicyEvidence(
+        repoRoot,
+        taskId,
+        requiredReviews,
+        [],
+        {
+            scopeCategory: 'empty',
+            zeroDiffBaselineOnly: true
+        }
+    );
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -365,12 +587,20 @@ function writeBaselineOnlyPreflight(
             scope_content_sha256: snapshot.scope_content_sha256,
             scope_sha256: snapshot.scope_sha256
         },
-        required_reviews: { ...ALL_REVIEW_FLAGS, ...options.requiredReviews },
+        required_reviews: requiredReviews,
         changed_files: [],
-        review_execution_policy: {
-            mode: 'code_first_optional',
-            visible_summary_line: 'Review execution policy: code_first_optional'
-        },
+        ...(reviewPolicyEvidence
+            ? {
+                profile_policy_snapshot: reviewPolicyEvidence.profilePolicySnapshot,
+                review_execution_policy: reviewPolicyEvidence.reviewExecutionPolicy,
+                effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot
+            }
+            : {
+                review_execution_policy: {
+                    mode: 'code_first_optional',
+                    visible_summary_line: 'Review execution policy: code_first_optional'
+                }
+            }),
         profile_guardrails: {
             zero_diff_no_reviewable_scope: true
         },
@@ -383,7 +613,10 @@ function writeBaselineOnlyPreflight(
         }
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        ...(reviewPolicyEvidence
+            ? { effective_review_snapshot: reviewPolicyEvidence.effectiveReviewSnapshot }
+            : {})
     });
     if (options.seedPostPreflight !== false) {
         seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
@@ -615,9 +848,7 @@ describe('gates/next-step preflight routing', () => {
         seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
         seedHandshake(repoRoot, TASK_ID);
         seedShellSmoke(repoRoot, TASK_ID);
-        writeBaselineOnlyPreflight(repoRoot, TASK_ID, {
-            requiredReviews: { code: true, security: true }
-        });
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
 
         const beforeCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.equal(beforeCompile.next_gate, 'implementation', beforeCompile.reason);
@@ -1020,7 +1251,7 @@ describe('gates/next-step preflight routing', () => {
         assert.doesNotMatch(result.reason, /ignored-plan\/generated\.ts/u);
     });
 
-    it('keeps baseline-only no-op intent on the compile path before no-op audit', () => {
+    it('routes baseline-only no-op intent directly to audited no-op evidence', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
         writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
@@ -1043,8 +1274,8 @@ describe('gates/next-step preflight routing', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'compile-gate');
-        assert.match(result.commands[0].command, /gate compile-gate/u);
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.match(result.commands[0].command, /gate record-no-op/u);
 
         seedGitAutoCompilePass(repoRoot, TASK_ID);
         const afterCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -1111,7 +1342,7 @@ describe('gates/next-step preflight routing', () => {
             writeBaselineOnlyPreflight(repoRoot, TASK_ID);
 
             const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-            assert.equal(result.next_gate, 'compile-gate', result.reason);
+            assert.equal(result.next_gate, 'record-no-op', result.reason);
 
             seedGitAutoCompilePass(repoRoot, TASK_ID);
             const afterCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -1150,7 +1381,7 @@ describe('gates/next-step preflight routing', () => {
         writeBaselineOnlyPreflight(repoRoot, TASK_ID);
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.equal(result.next_gate, 'record-no-op', result.reason);
 
         seedGitAutoCompilePass(repoRoot, TASK_ID);
         const afterCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
