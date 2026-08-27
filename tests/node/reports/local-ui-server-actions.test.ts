@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import { PassThrough } from 'node:stream';
 import {
     DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
+import { readJsonBody } from '../../../src/reports/ui/actions/http/action-http-common';
 import {
     cleanupLocalUiTestResources,
     makeLocalUiTempRepo,
@@ -24,6 +26,19 @@ function extractActionToken(html: string): string {
 const makeTempRepo = makeLocalUiTempRepo;
 const writeRepo = writeLocalUiRepoFixture;
 const setTaskResetEnabled = setLocalUiTaskResetEnabled;
+
+test('local UI JSON body limit counts UTF-8 bytes instead of decoded characters', async () => {
+    const maxBytes = 32 * 1024;
+    const body = JSON.stringify({ display_label: '€'.repeat(Math.floor(maxBytes / 3) + 1) });
+    assert.ok(body.length < maxBytes);
+    assert.ok(Buffer.byteLength(body, 'utf8') > maxBytes);
+
+    const request = new PassThrough();
+    const bodyPromise = readJsonBody(request as unknown as http.IncomingMessage, maxBytes);
+    request.end(body);
+
+    await assert.rejects(bodyPromise, /Request body is too large\./u);
+});
 
 function postJsonWithHostHeader(options: {
     port: number;

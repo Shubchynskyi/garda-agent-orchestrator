@@ -39,13 +39,16 @@ export function sendApiError(response: http.ServerResponse, statusCode: number, 
 export function readJsonBody(request: http.IncomingMessage, maxBytes = 8192): Promise<unknown> {
     return new Promise((resolve, reject) => {
         let raw = '';
+        let receivedBytes = 0;
         request.setEncoding('utf8');
         request.on('data', (chunk) => {
-            raw += chunk;
-            if (raw.length > maxBytes) {
+            receivedBytes += Buffer.byteLength(chunk, 'utf8');
+            if (receivedBytes > maxBytes) {
                 reject(new Error('Request body is too large.'));
                 request.destroy();
+                return;
             }
+            raw += chunk;
         });
         request.on('error', reject);
         request.on('end', () => {
