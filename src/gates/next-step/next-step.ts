@@ -3803,6 +3803,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 status: qualityChecklistReadiness.status,
                 reason: qualityChecklistReadiness.reason,
                 actionRequiredSummary: qualityChecklistReadiness.actionRequiredSummary,
+                answersTemplatePath: qualityChecklistReadiness.answersTemplatePath
+                    ? toRepoDisplayPath(repoRoot, qualityChecklistReadiness.answersTemplatePath)
+                    : null,
                 command: buildQualityChecklistCommand(
                     repoRoot,
                     cliPrefix,

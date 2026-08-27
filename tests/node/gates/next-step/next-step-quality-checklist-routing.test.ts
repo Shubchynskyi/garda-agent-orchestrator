@@ -21,7 +21,8 @@ import {
     normalizeForTimeline,
     reviewsRoot,
     seedCompilePass,
-    seedStartedTask,
+    seedStartedTask as seedBaseStartedTask,
+    writeStrictDecompositionDecision,
     writeJson,
     writePreflight
 } from './next-step-full-suite-fixtures';
@@ -120,14 +121,15 @@ function qualityChecklistRotatedRecoveryAnswersPath(repoRoot: string, taskId = T
     return `${qualityChecklistRepairAnswersPath(repoRoot, taskId)}.recovery.2.json`;
 }
 
-function qualityChecklistRotatedRecoveryAnswersCommandPath(taskId = TASK_ID): string {
-    return `${qualityChecklistRepairAnswersCommandPath(taskId)}.recovery.2.json`;
-}
-
 function writeWorkspaceChange(repoRoot: string, relativePath: string): void {
     const absolutePath = path.join(repoRoot, relativePath);
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     fs.writeFileSync(absolutePath, `Synthetic workspace change for ${relativePath}.\n`, 'utf8');
+}
+
+function seedStartedTask(repoRoot: string, taskId: string): void {
+    seedBaseStartedTask(repoRoot, taskId);
+    writeStrictDecompositionDecision(repoRoot, taskId);
 }
 
 function initializeWorkspaceBaseline(repoRoot: string, additionalPaths: readonly string[]): void {
@@ -351,7 +353,7 @@ describe('gates/next-step quality checklist routing', () => {
         assert.ok(readiness.activeRuleCount > 0);
     });
 
-    it('materializes current answers while routing to the quality checklist gate', () => {
+    it('withholds the quality checklist command until the materialized answers are complete', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -364,12 +366,11 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.effect, 'missing');
         assert.match(result.quality_checklist?.visible_summary_line || '', /QualityChecklist: enabled=true; required=true/u);
         assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=4/u);
-        assert.equal(result.commands[0].label, 'Run quality checklist');
-        assert.ok(result.commands[0].command.includes('gate quality-checklist'));
-        assert.ok(result.commands[0].command.includes('--answers-path'));
-        assert.ok(result.commands[0].command.includes(`--answers-path "${qualityChecklistAnswersCommandPath()}"`));
+        assert.equal(result.commands.length, 0);
         assert.equal(normalizeTestPath(result.quality_checklist?.answers_template_path), normalizeTestPath(qualityChecklistAnswersPath(repoRoot)));
-        assert.equal(result.commands[0].command.includes('--answers-json'), false);
+        assert.match(result.reason, /Complete every active answer/u);
+        assert.ok(result.reason.includes(qualityChecklistAnswersCommandPath()));
+        assert.match(result.reason, /executable quality-checklist command is emitted only after the answers are valid/u);
         const questionReferencePath = path.join(
             repoRoot,
             'garda-agent-orchestrator',
@@ -383,8 +384,6 @@ describe('gates/next-step quality checklist routing', () => {
             .filter((rule) => rule.enabled && isOptionalQualityCheckRuleActiveForScope(rule, 'mixed', ['src/app.ts']))
             .map((rule) => rule.id);
         assert.ok(activeRuleIds.every((ruleId) => questionReference.includes(`- ${ruleId}:`)));
-        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
-
         const answersPath = qualityChecklistAnswersPath(repoRoot);
         const template = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
             answers: Array<Record<string, unknown>>;
@@ -398,6 +397,12 @@ describe('gates/next-step quality checklist routing', () => {
         }));
         fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
 
+        const executable = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(executable.commands[0].label, 'Run quality checklist');
+        assert.ok(executable.commands[0].command.includes('gate quality-checklist'));
+        assert.ok(executable.commands[0].command.includes(`--answers-path "${qualityChecklistAnswersCommandPath()}"`));
+        assert.equal(executable.commands[0].command.includes('--answers-json'), false);
+
         const checklistResult = runQualityChecklistCommand({
             repoRoot,
             taskId: TASK_ID,
@@ -409,7 +414,7 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).next_gate, 'compile-gate');
     });
 
-    it('keeps the default answers command when an existing answers template is current', () => {
+    it('keeps a current blank answers template in the manual completion route', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -422,7 +427,9 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(second.next_gate, 'quality-checklist', second.reason);
         assert.ok(fs.existsSync(qualityChecklistAnswersPath(repoRoot)));
         assert.equal(fs.existsSync(qualityChecklistRepairAnswersPath(repoRoot)), false);
-        assert.ok(second.commands[0].command.includes(`--answers-path "${qualityChecklistAnswersCommandPath()}"`));
+        assert.equal(first.commands.length, 0);
+        assert.equal(second.commands.length, 0);
+        assert.match(second.reason, /Complete every active answer/u);
         assert.equal(normalizeTestPath(second.quality_checklist?.answers_template_path), normalizeTestPath(qualityChecklistAnswersPath(repoRoot)));
     });
 
@@ -437,8 +444,7 @@ describe('gates/next-step quality checklist routing', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.equal(result.commands.length, 1);
-        assert.ok(result.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.equal(result.commands.length, 0);
         assert.equal(normalizeTestPath(result.quality_checklist?.answers_template_path), normalizeTestPath(qualityChecklistRepairAnswersPath(repoRoot)));
         assert.match(result.reason, /Unsafe existing answers template preserved/u);
         assert.match(result.reason, /repair template materialized/u);
@@ -568,11 +574,11 @@ describe('gates/next-step quality checklist routing', () => {
         const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(recovered.next_gate, 'quality-checklist', recovered.reason);
-        assert.ok(recovered.commands[0].command.includes(`--answers-path "${qualityChecklistRecoveryAnswersCommandPath()}"`));
+        assert.equal(recovered.commands.length, 0);
         assert.match(recovered.reason, /existing repair candidate preserved/iu);
         assert.equal(fs.readFileSync(repairPath, 'utf8'), '{invalid repair json');
         assert.equal(fs.readFileSync(recoveryPath, 'utf8'), recoveryBytes);
-        assert.ok(repeated.commands[0].command.includes(`--answers-path "${qualityChecklistRecoveryAnswersCommandPath()}"`));
+        assert.equal(repeated.commands.length, 0);
     });
 
     it('routes through a rotated recovery path when both fixed repair candidates are unsafe', () => {
@@ -594,18 +600,13 @@ describe('gates/next-step quality checklist routing', () => {
         const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(recovered.next_gate, 'quality-checklist', recovered.reason);
-        assert.equal(recovered.commands.length, 1);
-        assert.ok(recovered.commands[0].command.includes(
-            `--answers-path "${qualityChecklistRotatedRecoveryAnswersCommandPath()}"`
-        ));
+        assert.equal(recovered.commands.length, 0);
         assert.match(recovered.reason, /existing repair candidate preserved/iu);
         assert.equal(fs.readFileSync(answersPath, 'utf8'), '{unsafe canonical json');
         assert.equal(fs.readFileSync(repairPath, 'utf8'), '{unsafe repair json');
         assert.equal(fs.readFileSync(recoveryPath, 'utf8'), '{unsafe recovery json');
         assert.equal(fs.readFileSync(rotatedRecoveryPath, 'utf8'), rotatedRecoveryBytes);
-        assert.ok(repeated.commands[0].command.includes(
-            `--answers-path "${qualityChecklistRotatedRecoveryAnswersCommandPath()}"`
-        ));
+        assert.equal(repeated.commands.length, 0);
     });
 
     it('routes tampered slim-scaffold answers templates through a repair answers path', () => {
@@ -627,8 +628,7 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.equal(result.commands.length, 1);
-        assert.ok(result.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.equal(result.commands.length, 0);
         assert.equal(normalizeTestPath(result.quality_checklist?.answers_template_path), normalizeTestPath(qualityChecklistRepairAnswersPath(repoRoot)));
         assert.match(result.reason, /editable fields do not match the slim active-rule scaffold/u);
     });
@@ -649,8 +649,7 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.equal(result.commands.length, 1);
-        assert.ok(result.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.equal(result.commands.length, 0);
         assert.equal(normalizeTestPath(result.quality_checklist?.answers_template_path), normalizeTestPath(qualityChecklistRepairAnswersPath(repoRoot)));
         assert.match(result.reason, /current preflight/u);
         assert.match(result.reason, /Existing binding is missing or does not match the stale answers template/u);
@@ -784,7 +783,7 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
         assert.equal(result.quality_checklist?.status, 'CONFIG_ERROR');
         assert.deepEqual(fs.readFileSync(answersPath, 'utf8'), partialAnswers);
-        assert.ok(result.commands[0].command.includes('--answers-path'));
+        assert.equal(result.commands.length, 0);
     });
 
     it('returns a repair route without an answers path when template materialization fails', () => {
@@ -823,8 +822,7 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.equal(result.commands.length, 1);
-        assert.ok(result.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.equal(result.commands.length, 0);
         assert.equal(fs.statSync(answersPath).isDirectory(), true);
         assert.ok(fs.existsSync(qualityChecklistRepairAnswersPath(repoRoot)));
         assert.match(result.reason, /Answers template was not materialized/u);
@@ -854,8 +852,7 @@ describe('gates/next-step quality checklist routing', () => {
             'utf8'
         )) as { answers: unknown[] };
         assert.equal(answersTemplate.answers.length, 4);
-        assert.ok(result.commands[0].command.includes('--answers-path'));
-        assert.equal(result.commands[0].command.includes('--answers-json'), false);
+        assert.equal(result.commands.length, 0);
     });
 
     it('includes canonical rule ids when stale moved rule config needs checklist answers', () => {
@@ -874,7 +871,7 @@ describe('gates/next-step quality checklist routing', () => {
         assert.match(result.reason, /custom_garda_classifier_intent_edge_cases/u);
         assert.match(result.reason, /Canonical enabled quality-check rule ids/u);
         assert.match(result.reason, /deprecated or moved ids are not accepted/u);
-        assert.ok(result.commands[0].command.includes('gate quality-checklist'));
+        assert.equal(result.commands.length, 0);
     });
 
     it('routes missing quality checklist before after-compile full-suite recovery', () => {
@@ -894,8 +891,7 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.ok(result.commands[0].command.includes('gate quality-checklist'));
-        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+        assert.equal(result.commands.length, 0);
     });
 
     it('skips quality checklist routing when optional checks are disabled', () => {

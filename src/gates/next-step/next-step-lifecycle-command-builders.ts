@@ -15,6 +15,7 @@ import {
 } from '../workspace/dirty-worktree-protection';
 import {
     assessQualityChecklistAnswersTemplateFile,
+    buildQualityChecklistArtifact,
     resolveDefaultQualityChecklistAnswersTemplatePath
 } from '../quality-checklist';
 import type {
@@ -617,18 +618,26 @@ export function buildQualityChecklistCommand(
     const absoluteAnswersPath = answersTemplatePath
         ? path.resolve(repoRoot, answersTemplatePath)
         : resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot, taskId);
-    let answersTemplateIsCurrent = false;
+    let answersTemplateIsExecutable = false;
     try {
-        answersTemplateIsCurrent = assessQualityChecklistAnswersTemplateFile({
+        const assessment = assessQualityChecklistAnswersTemplateFile({
             repoRoot,
             taskId,
             preflightPath: preflightCommandPath,
             answersPath: absoluteAnswersPath
-        }).status === 'current';
+        });
+        answersTemplateIsExecutable = assessment.status === 'current'
+            && assessment.template !== null
+            && buildQualityChecklistArtifact({
+                repoRoot,
+                taskId,
+                preflightPath: preflightCommandPath,
+                answers: assessment.template
+            }).status !== 'CONFIG_ERROR';
     } catch {
         return '';
     }
-    if (!answersTemplateIsCurrent) {
+    if (!answersTemplateIsExecutable) {
         return '';
     }
     const answersPath = toRepoDisplayPath(repoRoot, absoluteAnswersPath);

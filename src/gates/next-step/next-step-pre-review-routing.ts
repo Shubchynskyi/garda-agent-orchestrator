@@ -51,6 +51,7 @@ export interface NextStepQualityChecklistRoutingOptions extends NextStepReadines
     required: boolean;
     status: string | null;
     actionRequiredSummary?: string | null;
+    answersTemplatePath?: string | null;
     command: string;
 }
 
@@ -282,16 +283,23 @@ export function resolveNextStepQualityChecklistRoute(
         };
     }
 
+    const answersTemplatePath = options.answersTemplatePath || '';
+    const answersNeedCompletion = !options.command && !!answersTemplatePath;
     const label = options.ready && options.status === 'CONFIG_ERROR'
         ? 'Rerun quality checklist after repairing configuration or answers'
         : 'Run quality checklist';
     return {
         status: 'BLOCKED',
         nextGate: 'quality-checklist',
-        title: options.ready && options.status === 'CONFIG_ERROR'
+        title: answersNeedCompletion
+            ? 'Complete quality checklist answers.'
+            : options.ready && options.status === 'CONFIG_ERROR'
             ? 'Repair quality checklist evidence.'
             : 'Run optional quality checklist.',
-        reason: options.reason,
+        reason: answersNeedCompletion
+            ? `${options.reason} Complete every active answer in ${formatNextStepInlineValue(answersTemplatePath)} ` +
+                'and rerun next-step; the executable quality-checklist command is emitted only after the answers are valid.'
+            : options.reason,
         commands: options.command ? [buildCommand(label, options.command)] : []
     };
 }
