@@ -448,14 +448,17 @@ export function getAgentInitializationReadinessSnapshot(
 function readProviderComplianceResult(
     targetRoot: string,
     bundlePresent: boolean,
-    currentActiveAgentFiles: string[]
+    currentActiveAgentFiles: string[],
+    activeTaskId?: string
 ): StatusSnapshot['providerComplianceResult'] {
     if (!bundlePresent || currentActiveAgentFiles.length === 0) {
         return null;
     }
 
     try {
-        return scanProviderCompliance(targetRoot, currentActiveAgentFiles);
+        return scanProviderCompliance(targetRoot, currentActiveAgentFiles, activeTaskId
+            ? { handshakeArtifactTaskId: activeTaskId }
+            : undefined);
     } catch {
         return null;
     }
@@ -676,7 +679,8 @@ function collectStatusSnapshot(
     const providerComplianceResult = readProviderComplianceResult(
         resolvedTargetRoot,
         bundlePresent,
-        currentActiveAgentFiles
+        currentActiveAgentFiles,
+        options.taskId
     );
     const protectedManifestEvidence = readProtectedManifestEvidence(resolvedTargetRoot, bundlePresent);
     const protectedManifestAssessment = assessProtectedManifest({

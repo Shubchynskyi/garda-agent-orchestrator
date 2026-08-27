@@ -1321,6 +1321,65 @@ test('getTaskCycleStatusSnapshot preserves routing fields and skips toxin traver
     }
 });
 
+test('getTaskCycleStatusSnapshot does not authorize historical handshake artifacts', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-cycle-status-'));
+    const fsModule = require('node:fs');
+    const originalLstatSync = fsModule.lstatSync;
+    const originalRealpathSync = fsModule.realpathSync;
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-ACTIVE | 🟨 IN_PROGRESS | P1 | runtime | Current task | codex | 2026-08-02 | balanced | partial lifecycle |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        writeStatusFixtureFile(path.join(reviewsDir, 'T-HISTORICAL-handshake.json'), JSON.stringify({
+            status: 'FAILED',
+            provider: 'Codex',
+            violations: ['Historical failure.']
+        }));
+        writeStatusFixtureFile(path.join(reviewsDir, 'T-ACTIVE-handshake.json'), JSON.stringify({
+            status: 'FAILED',
+            provider: 'Codex',
+            violations: ['Active failure.']
+        }));
+
+        let historicalAuthorizationCount = 0;
+        const isHistoricalReviewArtifact = (candidate: fs.PathLike): boolean => (
+            path.dirname(path.resolve(String(candidate))) === path.resolve(reviewsDir)
+            && path.basename(String(candidate)).startsWith('T-HISTORICAL-')
+        );
+        fsModule.lstatSync = ((candidate: fs.PathLike, options?: unknown) => {
+            if (isHistoricalReviewArtifact(candidate)) historicalAuthorizationCount += 1;
+            return originalLstatSync(candidate, options as never);
+        }) as typeof fsModule.lstatSync;
+        fsModule.realpathSync = ((candidate: fs.PathLike, options?: unknown) => {
+            if (isHistoricalReviewArtifact(candidate)) historicalAuthorizationCount += 1;
+            return originalRealpathSync(candidate, options as never);
+        }) as typeof fsModule.realpathSync;
+
+        const snapshot = getTaskCycleStatusSnapshot(tmpDir, 'T-ACTIVE');
+        assert.equal(snapshot.readyForTasks, true, 'Task-cycle status keeps handshake failures informational');
+        assert.equal(historicalAuthorizationCount, 0);
+    } finally {
+        fsModule.lstatSync = originalLstatSync;
+        fsModule.realpathSync = originalRealpathSync;
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
 test('getStatusSnapshot reads toxin metrics from the resolved legacy bundle runtime', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-legacy-toxin-'));
     try {

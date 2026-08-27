@@ -437,6 +437,37 @@ test('scanProviderCompliance with activeTaskId ignores other tasks handshake vio
     }
 });
 
+test('scanProviderCompliance can limit task-cycle handshake discovery to the active task', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compliance-test-'));
+    try {
+        writeFile(path.join(tmpDir, '.agents', 'workflows', 'start-task.md'), makeRouterContent());
+        writeFile(path.join(tmpDir, 'AGENTS.md'), makeEntrypointContent('AGENTS.md'));
+        const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        writeFile(path.join(reviewsDir, 'T-OLD-handshake.json'), JSON.stringify({
+            schema_version: 1,
+            status: 'FAILED',
+            provider: 'Codex',
+            violations: ['Old provider drift.']
+        }));
+        writeFile(path.join(reviewsDir, 'T-CUR-handshake.json'), JSON.stringify({
+            schema_version: 1,
+            status: 'PASSED',
+            provider: 'Claude',
+            violations: []
+        }));
+
+        const result = scanProviderCompliance(tmpDir, ['AGENTS.md'], {
+            activeTaskId: 'T-CUR',
+            handshakeArtifactTaskId: 'T-CUR'
+        });
+
+        assert.equal(result.passed, true);
+        assert.deepEqual(result.handshakeArtifacts.map((artifact) => artifact.taskId), ['T-CUR']);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('scanProviderCompliance without activeTaskId treats all handshake violations as informational', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compliance-test-'));
     try {

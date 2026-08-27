@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { writeFileAtomically } from '../../core/filesystem';
 import { BUILT_IN_REVIEW_TYPE_IDS } from '../../core/review-catalog';
 import {
+    assertCanonicalTaskId,
     buildKnownReviewArtifactSuffixes,
     isCanonicalTaskId,
     KNOWN_REVIEW_ARTIFACT_SUFFIXES,
@@ -190,9 +191,24 @@ function isReviewsIndexEntry(value: unknown): value is ReviewsIndexEntry {
         && entry.fileName === `${entry.taskId}-${entry.artifactType}`;
 }
 
+function createTaskScopedIndexView(index: ReviewsIndex, taskId: string): ReviewsIndex {
+    const entries = index.entries.filter((entry) => entry.taskId === taskId);
+    return {
+        version: index.version,
+        directoryMtimeMs: index.directoryMtimeMs,
+        ...(typeof index.directoryCtimeMs === 'number' ? { directoryCtimeMs: index.directoryCtimeMs } : {}),
+        directoryEntryCount: entries.length,
+        directoryUnindexedEntryCount: 0,
+        generatedAtMs: index.generatedAtMs,
+        entries_sha256: computeEntriesSha256(entries),
+        entries
+    };
+}
+
 function readIndexFile(
     indexPath: string,
-    entriesPendingRemoval: ReadonlySet<string> = new Set()
+    entriesPendingRemoval: ReadonlySet<string> = new Set(),
+    taskId: string | null = null
 ): ReviewsIndex | null {
     try {
         if (!fs.existsSync(indexPath)) return null;
@@ -240,12 +256,16 @@ function readIndexFile(
         if (fileNames.size !== entries.length) {
             return null;
         }
-        const entriesRequiringDiskAuthorization = entries.filter((entry) => (
+        const scopedEntries = taskId === null
+            ? entries
+            : entries.filter((entry) => entry.taskId === taskId);
+        const entriesRequiringDiskAuthorization = scopedEntries.filter((entry) => (
             !entriesPendingRemoval.has(entry.fileName)
             && parseKnownReviewArtifactTaskId(entry.fileName, KNOWN_SUFFIXES) !== entry.taskId
         ));
         if (entriesRequiringDiskAuthorization.length === 0) {
-            return raw as unknown as ReviewsIndex;
+            const index = raw as unknown as ReviewsIndex;
+            return taskId === null ? index : createTaskScopedIndexView(index, taskId);
         }
         const reviewsDir = path.dirname(indexPath);
         const reviewsRootRealPath = resolveReviewsRootRealPath(reviewsDir);
@@ -255,7 +275,16 @@ function readIndexFile(
         const reviewTypeIdsByTask = collectSnapshotBackedReviewTypeIdsFromFileNames(
             reviewsDir,
             entries
-                .filter((entry) => !entriesPendingRemoval.has(entry.fileName))
+                .filter((entry) => (
+                    !entriesPendingRemoval.has(entry.fileName)
+                    && (
+                        taskId === null
+                        || (
+                            entry.artifactType === 'preflight.json'
+                            && taskIdsShareHierarchy(taskId, entry.taskId)
+                        )
+                    )
+                ))
                 .map((entry) => entry.fileName),
             reviewsRootRealPath
         );
@@ -277,7 +306,11 @@ function readIndexFile(
             }
             return false;
         });
-        return entriesAreAuthorized ? raw as unknown as ReviewsIndex : null;
+        if (!entriesAreAuthorized) {
+            return null;
+        }
+        const index = raw as unknown as ReviewsIndex;
+        return taskId === null ? index : createTaskScopedIndexView(index, taskId);
     } catch {
         return null;
     }
@@ -760,7 +793,13 @@ function parseSnapshotAuthorizedReviewArtifactFromDisk(
 /**
  * Perform a full directory scan and build a fresh index.
  */
-export function rebuildIndex(reviewsDir: string): ReviewsIndex {
+function taskIdsShareHierarchy(leftTaskId: string, rightTaskId: string): boolean {
+    return leftTaskId === rightTaskId
+        || leftTaskId.startsWith(`${rightTaskId}-`)
+        || rightTaskId.startsWith(`${leftTaskId}-`);
+}
+
+function rebuildIndexScope(reviewsDir: string, taskId: string | null): ReviewsIndex {
     const entries: ReviewsIndexEntry[] = [];
     const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
 
@@ -783,20 +822,29 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
     const indexedCandidates = fileNames.filter((fileName) => (
         fileName !== INDEX_FILE_NAME && !fileName.endsWith('.lock')
     ));
+    const scopedCandidates = taskId === null
+        ? indexedCandidates
+        : indexedCandidates.filter((fileName) => fileName.startsWith(`${taskId}-`));
+    const snapshotAuthorityFileNames = taskId === null
+        ? fileNames
+        : fileNames.filter((fileName) => {
+            const snapshotTaskId = parseKnownReviewArtifactTaskId(fileName, ['-preflight.json']);
+            return snapshotTaskId !== null && taskIdsShareHierarchy(taskId, snapshotTaskId);
+        });
     const reviewsRootRealPath = resolveReviewsRootRealPath(reviewsDir);
     const reviewTypeIdsByTask = collectSnapshotBackedReviewTypeIdsFromFileNames(
         reviewsDir,
-        fileNames,
+        snapshotAuthorityFileNames,
         reviewsRootRealPath
     );
-    for (const fileName of indexedCandidates) {
+    for (const fileName of scopedCandidates) {
         const parsed = parseSnapshotAuthorizedReviewArtifactFromDisk(
             fileName,
             reviewTypeIdsByTask,
             reviewsDir,
             reviewsRootRealPath
         );
-        if (!parsed) continue;
+        if (!parsed || (taskId !== null && parsed.taskId !== taskId)) continue;
 
         try {
             const artifact = resolveContainedRegularReviewArtifact(
@@ -821,12 +869,27 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
         version: INDEX_VERSION,
         directoryMtimeMs: dirSnapshot.mtimeMs,
         directoryCtimeMs: dirSnapshot.ctimeMs,
-        directoryEntryCount: indexedCandidates.length,
-        directoryUnindexedEntryCount: Math.max(0, indexedCandidates.length - entries.length),
+        directoryEntryCount: scopedCandidates.length,
+        directoryUnindexedEntryCount: Math.max(0, scopedCandidates.length - entries.length),
         generatedAtMs: Date.now(),
         entries_sha256: computeEntriesSha256(entries),
         entries
     };
+}
+
+/**
+ * Perform a full directory scan and build a fresh global index.
+ */
+export function rebuildIndex(reviewsDir: string): ReviewsIndex {
+    return rebuildIndexScope(reviewsDir, null);
+}
+
+/**
+ * Build a current index view for one task without authorizing or statting
+ * unrelated historical review artifacts.
+ */
+export function rebuildTaskIndex(reviewsDir: string, taskId: string): ReviewsIndex {
+    return rebuildIndexScope(reviewsDir, assertCanonicalTaskId(taskId));
 }
 
 /**
@@ -996,6 +1059,51 @@ export function loadIndex(
             return { index, source: 'rebuilt' as const };
         });
     }, { readOnly: options.readOnly === true });
+}
+
+/**
+ * Load a current task-only view of review artifacts. Task-scoped consumers
+ * must not pay the authorization cost of every historical custom review
+ * artifact merely to locate snapshots owned by one task.
+ */
+export function loadTaskIndex(reviewsDir: string, taskId: string): ReviewsIndexLoadResult {
+    const safeTaskId = assertCanonicalTaskId(taskId);
+    if (currentProcessOwnsReviewTransactionLock(reviewsDir)) {
+        const transactionSnapshot = getInProcessReviewTransactionSnapshot(reviewsDir);
+        if (transactionSnapshot) {
+            const entries = entriesForTask(transactionSnapshot, safeTaskId);
+            return {
+                index: {
+                    ...transactionSnapshot,
+                    directoryEntryCount: entries.length,
+                    directoryUnindexedEntryCount: 0,
+                    entries_sha256: computeEntriesSha256(entries),
+                    entries
+                },
+                source: 'cache'
+            };
+        }
+    }
+
+    return withReviewTransactionReadBarrier(reviewsDir, () => {
+        const indexPath = resolveIndexPath(reviewsDir);
+        const cached = readIndexFile(indexPath, new Set(), safeTaskId);
+        if (
+            cached
+            && !isLoadedIndexStale(
+                indexPath,
+                reviewsDir,
+                cached,
+                Number.POSITIVE_INFINITY
+            )
+        ) {
+            return { index: cached, source: 'cache' as const };
+        }
+        return {
+            index: rebuildTaskIndex(reviewsDir, safeTaskId),
+            source: 'rebuilt' as const
+        };
+    }, { readOnly: true });
 }
 
 export function rebuildAndPersistIndex(reviewsDir: string): ReviewsIndexMutationResult {

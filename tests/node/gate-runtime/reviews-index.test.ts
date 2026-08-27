@@ -10,6 +10,7 @@ import { acquireFilesystemLock, releaseFilesystemLock } from '../../../src/gate-
 import {
     rebuildIndex,
     loadIndex,
+    loadTaskIndex,
     writeIndex,
     resolveIndexPath,
     resolveIndexLockPath,
@@ -725,6 +726,82 @@ describe('reviews-index', () => {
 
             assert.equal(artifactValidationCount, 0);
             assert.equal(reviewsDirectoryReadCount, 0);
+        });
+
+        it('loads one task without authorizing unrelated historical artifacts', () => {
+            writeArtifact(reviewsDir, 'T-ACTIVE-preflight.json', JSON.stringify({
+                task_id: 'T-ACTIVE',
+                required_reviews: { code: true }
+            }));
+            writeArtifact(reviewsDir, 'T-ACTIVE-handshake.json', JSON.stringify({
+                task_id: 'T-ACTIVE',
+                status: 'PASSED'
+            }));
+            for (let index = 0; index < 100; index++) {
+                const taskId = `T-HISTORICAL-${index}`;
+                writeArtifact(reviewsDir, `${taskId}-preflight.json`, JSON.stringify({
+                    task_id: taskId,
+                    required_reviews: { code: true }
+                }));
+                writeArtifact(reviewsDir, `${taskId}-handshake.json`, JSON.stringify({
+                    task_id: taskId,
+                    status: 'PASSED'
+                }));
+            }
+            loadIndex(reviewsDir);
+
+            const realFs = require('node:fs');
+            const originalLstatSync = realFs.lstatSync;
+            const originalRealpathSync = realFs.realpathSync;
+            let unrelatedAuthorizationCount = 0;
+            const isUnrelatedArtifactPath = (candidate: unknown): boolean => (
+                typeof candidate === 'string'
+                && path.dirname(path.resolve(candidate)) === path.resolve(reviewsDir)
+                && path.basename(candidate).startsWith('T-HISTORICAL-')
+            );
+            try {
+                realFs.lstatSync = function (...args: any[]) {
+                    if (isUnrelatedArtifactPath(args[0])) unrelatedAuthorizationCount += 1;
+                    return originalLstatSync.apply(realFs, args);
+                };
+                realFs.realpathSync = function (...args: any[]) {
+                    if (isUnrelatedArtifactPath(args[0])) unrelatedAuthorizationCount += 1;
+                    return originalRealpathSync.apply(realFs, args);
+                };
+
+                const result = loadTaskIndex(reviewsDir, 'T-ACTIVE');
+                assert.deepEqual(
+                    result.index.entries.map((entry) => entry.fileName).sort(),
+                    ['T-ACTIVE-handshake.json', 'T-ACTIVE-preflight.json']
+                );
+            } finally {
+                realFs.lstatSync = originalLstatSync;
+                realFs.realpathSync = originalRealpathSync;
+            }
+
+            assert.equal(unrelatedAuthorizationCount, 0);
+        });
+
+        it('keeps overlapping parent and child artifact ownership fail-closed in a task view', () => {
+            const parentSnapshot = buildCustomReviewSnapshot('architecture-code');
+            writeArtifact(reviewsDir, 'T-1-preflight.json', JSON.stringify({
+                task_id: 'T-1',
+                required_reviews: parentSnapshot.required_reviews,
+                effective_review_snapshot: parentSnapshot
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-preflight.json', JSON.stringify({
+                task_id: 'T-1-architecture',
+                required_reviews: { code: true }
+            }));
+            writeArtifact(reviewsDir, 'T-1-architecture-code.md', '# Ambiguous ownership\n');
+
+            const result = loadTaskIndex(reviewsDir, 'T-1');
+
+            assert.equal(
+                result.index.entries.some((entry) => entry.fileName === 'T-1-architecture-code.md'),
+                false
+            );
+            assert.ok(result.index.entries.every((entry) => entry.taskId === 'T-1'));
         });
 
         it('rebuilds when forceRebuild is true', () => {
