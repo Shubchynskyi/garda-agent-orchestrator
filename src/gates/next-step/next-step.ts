@@ -362,6 +362,7 @@ import {
     buildScopedDiffCommand,
     buildTaskModePathCommandParts
 } from './next-step-review-command-builders';
+import { buildCoherentCycleRestartCommand } from '../completion/completion-reporting';
 export type { NextStepQualityChecklistSummary } from './next-step-quality-checklist-readiness';
 import {
     buildDocImpactCommandPlan,
@@ -3504,6 +3505,25 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     || failedCurrentReviewStateForPreflight.failToken
                     || 'FAILED',
                 expandedNonTestFiles: failedReviewRemediationExpandedNonTestFiles,
+                closedCycleRestart: reviewGateAlreadyPassed
+                    ? {
+                        boundary: 'REVIEW_GATE_PASSED',
+                        command: buildCoherentCycleRestartCommand(
+                            repoRoot,
+                            taskId,
+                            preflightCommandPath,
+                            taskModePath,
+                            null,
+                            null,
+                            {
+                                requiresOperatorConfirmation: Boolean(
+                                    taskMode?.orchestrator_work === true
+                                    || taskMode?.workflow_config_work === true
+                                )
+                            }
+                        )
+                    }
+                    : null,
                 restartReviewCycleCommand: buildRestartReviewCycleCommand(
                     repoRoot,
                     cliPrefix,

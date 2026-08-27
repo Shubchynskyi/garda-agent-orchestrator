@@ -118,6 +118,30 @@ test('resolveNextStepPreGuardRoute keeps authenticated failed-review remediation
     assert.match(route.reason, /failed 'test' review verdict/);
 });
 
+test('resolveNextStepPreGuardRoute uses coherent restart after a closed review boundary', () => {
+    const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
+        workspaceReadiness: {
+            ready: false,
+            reason: 'workspace source hash changed'
+        },
+        failedReviewRemediation: {
+            reviewType: 'code',
+            verdictToken: 'CODE REVIEW FAILED',
+            restartReviewCycleCommand: 'node bin/garda.js gate restart-review-cycle --task-id "T-1"',
+            closedCycleRestart: {
+                boundary: 'REVIEW_GATE_PASSED',
+                command: 'node bin/garda.js gate restart-coherent-cycle --task-id "T-1"'
+            }
+        }
+    }));
+
+    assert.ok(route);
+    assert.equal(route.nextGate, 'restart-coherent-cycle');
+    assert.match(route.reason, /already crossed REVIEW_GATE_PASSED/u);
+    assert.match(route.commands[0]?.command || '', /gate restart-coherent-cycle/u);
+    assert.doesNotMatch(route.commands[0]?.command || '', /gate restart-review-cycle/u);
+});
+
 test('resolveNextStepPreGuardRoute preserves POST_PREFLIGHT rebind route wording and command label', () => {
     const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
         postPreflightRulePack: {
