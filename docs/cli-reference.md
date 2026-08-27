@@ -644,6 +644,33 @@ Notes:
 - Enabling a capability validates that a matching live review skill is present under `live/skills/**`; bridge presence is reported separately for bridge-hosted providers, but root-entrypoint providers use the live skill directly.
 - Unsupported custom live skills remain manual-only and do not become preflight-triggered review types automatically.
 
+### `garda review-catalog`
+
+Inspect built-in and custom review lanes, validate catalog/profile/dependency resolution, and manage custom lanes through a guarded transaction.
+
+```text
+garda review-catalog list --target-root "."
+garda review-catalog validate --target-root "."
+garda review-catalog show <review-id> --profile <name> --target-root "."
+garda review-catalog explain <review-id> --profile <name> --target-root "."
+garda review-catalog create <review-id> --display-label <label> --skill-id <skill-id> --trigger-mode <manual|signals> [definition options] --target-root "."
+garda review-catalog update <review-id> [definition options] --target-root "."
+garda review-catalog enable|disable <review-id> --target-root "."
+garda review-catalog profile-bind <review-id> --profile <name> --state <disabled|auto|required> --target-root "."
+garda review-catalog dependency <review-id> --profile <name> --depends-on <review-id> --target-root "."
+garda review-catalog dependency <review-id> --profile <name> --clear-dependencies --target-root "."
+```
+
+Notes:
+
+- A missing `live/config/review-catalog.json` is legacy-compatible: inspection exposes the built-in lanes with their canonical verdict tokens.
+- Custom lanes are declarative and disabled by default. The CLI rejects prompt bodies, verdict-token overrides, built-in replacement, and unrecognized fields.
+- `list`, `show`, `explain`, and `validate` are read-only. Mutations affect future task snapshots only.
+- A mutation call without a phase flag is preview-only. Confirm the exact preview with `--confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601>`, then apply it with `--apply`, the same expected hashes, and `--confirmation-receipt-sha256 <hash>`.
+- Confirmation receipts are one-time and stale-state-bound. The transaction rejects active agent tasks, concurrent writers, changed config or filesystem boundaries, and replayed receipts.
+- Successful apply records audit and backup paths. A later publish failure automatically rolls all managed files back and records the rollback diagnostic.
+- Profile state and the validated dependency graph determine eligibility and review launch order; they do not retroactively alter an already-entered task.
+
 ### `garda profile`
 
 Manage the active workspace profile and user-defined profile presets.

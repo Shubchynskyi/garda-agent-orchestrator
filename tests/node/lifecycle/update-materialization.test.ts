@@ -1534,6 +1534,7 @@ describe('runUpdate', () => {
             const skillCatalogTemplateContent = fs.readFileSync(path.join(templateRuleDir, '90-skill-catalog.md'), 'utf8');
             const taskWorkflowIntegritySection = extractMarkdownSection(taskWorkflowContent, '## Integrity Priority Rules');
             const skillCatalogIntegritySection = extractMarkdownSection(skillCatalogContent, '## Integrity Priority Rules');
+            const reviewCatalogContextSection = extractMarkdownSection(taskWorkflowContent, '## Review Catalog Context Contract');
 
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'));
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack'));
@@ -1548,6 +1549,12 @@ describe('runUpdate', () => {
                 skillCatalogIntegritySection,
                 extractMarkdownSection(skillCatalogTemplateContent, '## Integrity Priority Rules')
             );
+            assert.equal(
+                reviewCatalogContextSection,
+                extractMarkdownSection(taskWorkflowTemplateContent, '## Review Catalog Context Contract')
+            );
+            assert.ok(reviewCatalogContextSection.includes('Custom review lanes are declarative and disabled by default'));
+            assert.ok(reviewCatalogContextSection.includes('Do not load `live/config/review-catalog.json` into normal task or reviewer context'));
             assert.ok(skillCatalogContent.includes('Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.'));
             assert.ok(skillCatalogContent.includes('Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'));
         } finally {

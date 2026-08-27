@@ -26,7 +26,7 @@ export function buildCommandSummaryLines(): string[] {
     return lines;
 }
 
-export type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow';
+export type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'review-catalog' | 'templates' | 'profile' | 'workflow';
 export type CommandHelpName =
     | GuardedCommandHelpName
     | 'stats'
@@ -101,6 +101,27 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         hints: Object.freeze([
             'Default mode: review-capabilities with no subcommand behaves like review-capabilities show.',
             'The list alias behaves like review-capabilities show.'
+        ])
+    }),
+    'review-catalog': Object.freeze({
+        summary: 'Inspect and safely manage review lanes, profile policy, and review dependencies.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} review-catalog [list|validate] [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} review-catalog <show|explain> <review-id> [--profile NAME] [--json]`,
+            `${PRIMARY_CLI_NAME} review-catalog <create|update> <review-id> --display-label LABEL --skill-id ID --trigger-mode <manual|signals> [definition options]`,
+            `${PRIMARY_CLI_NAME} review-catalog <enable|disable> <review-id>`,
+            `${PRIMARY_CLI_NAME} review-catalog profile-bind <review-id> --profile NAME --state <disabled|auto|required>`,
+            `${PRIMARY_CLI_NAME} review-catalog dependency <review-id> --profile NAME <--depends-on ID|--clear-dependencies>`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} review-catalog list --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog explain architecture --profile balanced --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog enable architecture --target-root "."`
+        ]),
+        hints: Object.freeze([
+            'A missing catalog remains legacy-compatible: the built-in review lanes and canonical verdict tokens still apply.',
+            'Custom lanes are disabled by default. Raw prompt bodies and verdict-token overrides are not accepted.',
+            'Mutation commands default to preview, affect future task snapshots only, and require a separate confirmed apply bound to the preview hashes.'
         ])
     }),
     templates: Object.freeze({
@@ -485,7 +506,7 @@ function styleHelpToken(token: string): string {
         || [
             'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'ui', 'off', 'on', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'backup', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
-            'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
+            'review-capabilities', 'review-catalog', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
             'inspect', 'rebuild-indexes', 'protected-manifest', 'locks', 'catalog', 'health', 'drift', 'rebuild',
             'events'
@@ -671,6 +692,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
             '  review-capabilities  Show, enable, and disable repo-local optional review capabilities.',
+            '  review-catalog  Inspect and safely manage review lanes, profiles, and dependencies.',
             '  templates     Show, validate, and manage user-owned message template overrides.',
             '  workflow      Show and set repo-local workflow config.',
             '  profile       List, use, create, delete, validate, and manage finding policy for workspace profiles.',

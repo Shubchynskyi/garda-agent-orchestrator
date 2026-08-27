@@ -2,7 +2,7 @@ import {
     parseOperatorConfirmationYes,
     validateFreshOperatorConfirmation
 } from '../../../core/operator-confirmation';
-import { parseOptions, type PackageJsonLike } from '../cli-helpers';
+import { buildGuardedCommandHelpText, parseOptions, type PackageJsonLike } from '../cli-helpers';
 import type { ParsedOptionsRecord } from '../profile/profile-types';
 import {
     buildReviewCatalogInspectionLaneSummaries,
@@ -293,7 +293,7 @@ export function handleReviewCatalog(
         { allowPositionals: action === 'show' || action === 'explain' || mutation, maxPositionals: 1 }
     );
     if (options.help) {
-        console.log('review-catalog: list, show, explain, validate, create, update, enable, disable, profile-bind, dependency');
+        console.log(buildGuardedCommandHelpText('review-catalog'));
         return null;
     }
     if (options.version) {

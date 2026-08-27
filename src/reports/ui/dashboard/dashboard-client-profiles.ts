@@ -255,6 +255,9 @@ function renderReviewCatalogSection(catalog, disabled) {
     + '<div class="review-catalog-summary"><h3>' + safe(t('availableReviewTypes')) + '</h3>'
     + '<div>' + badge(catalog.validation ? catalog.validation.status : 'FAIL', 'review-catalog-validation', invalid ? 'disabled' : 'active')
     + badge(catalog.migration ? catalog.migration.status : 'blocked_invalid', 'review-catalog-migration') + '</div></div>'
+    + '<p class="empty review-catalog-help"><code>built_in</code> → immutable <code>verdict_tokens</code> · '
+    + '<code>custom</code> → <code>disabled_by_default</code> · <code>mutations</code> → preview → confirm → apply · '
+    + '<code>task_effect</code> → <code>future_tasks_only</code> · <code>dependencies</code> → <code>review_dependency_graph</code></p>'
     + (catalog.migration && catalog.migration.reason ? '<p class="empty">' + safe(catalog.migration.reason) + '</p>' : '')
     + (issues.length > 0 ? '<div class="blocker-alert">' + safe(issues.join(' ')) + '</div>' : '')
     + (invalid ? '' : renderReviewCatalogCreate(disabled)

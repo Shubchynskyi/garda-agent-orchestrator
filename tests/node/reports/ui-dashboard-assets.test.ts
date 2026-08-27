@@ -1709,6 +1709,9 @@ test('profiles UI renders compact review catalog state and disables guarded cont
 
     assert.match(html, /data-review-catalog-id="architecture"/u);
     assert.match(html, /disabled_by_default/u);
+    assert.match(html, /immutable.*verdict_tokens/u);
+    assert.match(html, /future_tasks_only/u);
+    assert.match(html, /review_dependency_graph/u);
     assert.match(html, /signals: architecture/u);
     assert.match(html, /<strong>dependencies<\/strong><code>code<\/code>/u);
     assert.match(html, /data-review-catalog-action="enable"/u);

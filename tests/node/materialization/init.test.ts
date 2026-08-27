@@ -897,10 +897,15 @@ describe('runInit', () => {
             });
 
             const catalogPath = path.join(bundleRoot, 'live', 'config', 'review-catalog.json');
-            assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), {
+            const defaultCatalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+            assert.deepEqual(defaultCatalog, {
                 version: 1,
                 custom_review_types: []
             });
+            assert.deepEqual(
+                defaultCatalog,
+                JSON.parse(fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-catalog.json'), 'utf8'))
+            );
 
             const customCatalog = {
                 version: 1,
@@ -1069,6 +1074,10 @@ describe('runInit', () => {
             assert.ok(usage.includes('workflow show --target-root "."'));
             assert.ok(usage.includes('garda-agent-orchestrator/live/config/review-capabilities.json'));
             assert.ok(usage.includes('review-capabilities list|enable|disable'));
+            assert.ok(usage.includes('garda-agent-orchestrator/live/config/review-catalog.json'));
+            assert.ok(usage.includes('review-catalog list|show|explain|validate'));
+            assert.ok(usage.includes('Missing catalogs remain legacy-compatible.'));
+            assert.ok(usage.includes('affect future task snapshots only'));
             assert.ok(usage.includes('ordinary_doc_paths'));
             assert.ok(usage.includes('Full repository test validation after each task is currently disabled.'));
             assert.ok(usage.includes('garda-agent-orchestrator/'));

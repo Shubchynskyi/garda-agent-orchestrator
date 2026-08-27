@@ -75,6 +75,18 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
     Object.freeze({
         liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
         templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
+        heading: '## Review Catalog Context Contract',
+        requiredSnippets: Object.freeze([
+            'Built-in review lanes and their canonical verdict tokens remain compatibility-owned',
+            'Custom review lanes are declarative and disabled by default',
+            'immutable current-task catalog/policy snapshot',
+            'Do not load `live/config/review-catalog.json` into normal task or reviewer context',
+            '`review-catalog list|show|explain|validate`'
+        ])
+    }),
+    Object.freeze({
+        liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
         heading: '## Mandatory Gate Contract',
         requiredSnippets: Object.freeze([
             'Task-mode entry command must pass before preflight or implementation:',

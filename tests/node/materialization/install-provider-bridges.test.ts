@@ -48,7 +48,13 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(orchestratorBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(orchestratorBridge.includes('ReviewLaunchableBatch'));
             assert.ok(orchestratorBridge.includes('BlockedReviewLanes'));
+            assert.ok(orchestratorBridge.includes('live/config/review-catalog.json'));
+            assert.ok(orchestratorBridge.includes('absence remains legacy-compatible'));
+            assert.ok(orchestratorBridge.includes('immutable current-task catalog/policy snapshot'));
+            assert.ok(orchestratorBridge.includes('do not load the full catalog into agent context'));
             assert.ok(apiBridge.includes('api-contract-review'));
+            assert.ok(apiBridge.includes('current generated launch input and immutable task snapshot'));
+            assert.ok(apiBridge.includes('do not load the full review catalog into reviewer context'));
             assert.ok(infraBridge.includes('devops-k8s'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -89,6 +95,8 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(workflow.includes('ReviewLaunchableBatch'));
             assert.ok(workflow.includes('BlockedReviewLanes'));
             assert.ok(entrypoint.includes('.agents/workflows/start-task.md'));
+            assert.ok(entrypoint.includes('immutable current-task review snapshot'));
+            assert.ok(entrypoint.includes('must not load the full optional `review-catalog.json`'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

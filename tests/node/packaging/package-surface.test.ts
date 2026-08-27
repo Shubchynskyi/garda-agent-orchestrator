@@ -77,6 +77,28 @@ const ZERO_GROWTH: PackageSurfaceAllowedGrowth = Object.freeze({
     })
 });
 
+test('published package surface includes review catalog defaults and public guidance', () => {
+    const repoRoot = process.cwd();
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+        files: string[];
+    };
+
+    assert.ok(packageJson.files.includes('template'));
+    for (const relativePath of [
+        'template/config/review-catalog.json',
+        'template/docs/agent-rules/80-task-workflow.md',
+        'docs/configuration.md',
+        'docs/cli-reference.md',
+        'docs/compatibility-matrix.md'
+    ]) {
+        assert.ok(fs.existsSync(path.join(repoRoot, relativePath)), `${relativePath} should be package-visible`);
+    }
+    assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-catalog.json'), 'utf8')),
+        { version: 1, custom_review_types: [] }
+    );
+});
+
 test('buildPackageSurfaceArtifact deterministically measures packed files, lifecycle scripts, and executable lexical signals', () => {
     const repoRoot = createFixture();
     try {

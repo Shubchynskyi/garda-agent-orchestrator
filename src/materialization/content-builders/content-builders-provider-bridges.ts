@@ -155,9 +155,12 @@ ${getDelegationRequiredProviderLaunchLines().join('\n')}
 ## Dynamic Skill Discovery (Required)
 - Canonical skill list: \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\`
 - Optional-skill capability flags: \`${resolveBundleName()}/live/config/review-capabilities.json\`
+- Optional review-lane declarations: \`${resolveBundleName()}/live/config/review-catalog.json\` (absence remains legacy-compatible)
+- Profile lane states and dependency graphs: \`${resolveBundleName()}/live/config/profiles.json\`
 - Token-economy controls: \`${resolveBundleName()}/live/config/token-economy.json\`
 - Output-filter profiles: \`${resolveBundleName()}/live/config/output-filters.json\`
 - Include specialist skills added after initialization from \`${resolveBundleName()}/live/skills/**\` when required by preflight and capability flags.
+- During normal task execution, use the immutable current-task catalog/policy snapshot and generated reviewer launch input; do not load the full catalog into agent context. Use \`review-catalog list|show|explain|validate\` only for explicit inspection or management work.
 
 ## Task Timeline Logging (Required)
 - Event logger: \`${getNodeGateCommandPrefix()} log-task-event ...\`
@@ -259,6 +262,7 @@ Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`ins
 - Capability flag gate: \`${capabilityFlag}\`
 - Re-read \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\` before execution.
 - Re-read \`${resolveBundleName()}/live/config/review-capabilities.json\` before execution.
+- Resolve review lanes from the current generated launch input and immutable task snapshot; do not load the full review catalog into reviewer context.
 - Re-read \`${resolveBundleName()}/live/config/token-economy.json\` before execution.
 - Re-read \`${resolveBundleName()}/live/config/output-filters.json\` before execution.
 - Keep downstream rule-pack evidence current via \`${getNodeGateCommandPrefix()} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.

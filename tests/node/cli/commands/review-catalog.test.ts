@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { dispatchCliCommand } from '../../../../src/cli/commands/command-dispatch';
+import { buildCommandHelpText } from '../../../../src/cli/commands/cli-help-output';
 import { resolveCommandParityPolicy } from '../../../../src/cli/commands/dispatch/parity-policy';
 import { handleReviewCatalog } from '../../../../src/cli/commands/review-catalog-command';
 import {
@@ -185,6 +186,17 @@ function createTransactionPlanFixture(workspace: TestWorkspace): {
     } as unknown as ReviewCatalogManagementPlan;
     return { catalogPath, capabilitiesPath, beforeCapabilities, beforeStateSha256, plan };
 }
+
+test('review-catalog help explains compatibility, immutable snapshots, and guarded mutation phases', () => {
+    const help = buildCommandHelpText('review-catalog').replace(/\u001b\[[0-9;]*m/gu, '');
+
+    assert.match(help, /garda review-catalog \[list\|validate\]/u);
+    assert.match(help, /missing catalog remains legacy-compatible/u);
+    assert.match(help, /Custom lanes are disabled by default/u);
+    assert.match(help, /preview/u);
+    assert.match(help, /future task snapshots only/u);
+    assert.doesNotMatch(help, /supply.*prompt bod/u);
+});
 
 test('review-catalog list and validate preserve built-in compatibility when the live catalog is absent', () => {
     const workspace = createWorkspace();

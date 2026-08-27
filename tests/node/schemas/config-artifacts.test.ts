@@ -150,9 +150,11 @@ test('tracked template managed configs validate successfully', () => {
 });
 
 test('managed review catalog validator compiles the built-in compatibility catalog', () => {
-    const result = validateReviewCatalogConfig(readTemplateConfig('review-catalog'));
+    const catalog = readTemplateConfig('review-catalog');
+    const result = validateReviewCatalogConfig(catalog);
     const reviewTypes = result.review_types as Array<Record<string, unknown>>;
 
+    assert.deepEqual(catalog, { version: 1, custom_review_types: [] });
     assert.equal(reviewTypes.length, 9);
     assert.deepEqual(reviewTypes.map((definition) => definition.id), [
         'code',
@@ -165,6 +167,8 @@ test('managed review catalog validator compiles the built-in compatibility catal
         'infra',
         'dependency'
     ]);
+    assert.ok(reviewTypes.every((definition) => definition.built_in === true));
+    assert.ok(reviewTypes.every((definition) => definition.enabled_by_default === true));
     assert.match(String(result.catalog_sha256), /^[a-f0-9]{64}$/u);
 });
 

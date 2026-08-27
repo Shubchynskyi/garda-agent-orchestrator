@@ -16,6 +16,7 @@ node bin/garda.js gate validate-config
 | `token-economy.json` | Reviewer-context compaction and token savings | Yes |
 | `output-filters.json` | Gate output compaction profiles (compile, test, lint, review) | Yes |
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
+| `review-catalog.json` | Optional custom review-lane declarations; absence keeps built-in compatibility | Yes, through guarded `garda review-catalog ...` commands |
 | `paths.json` | Preflight classification roots and trigger regexes | Yes |
 | `skill-packs.json` | Installed built-in domain packs | Yes, through `garda skills add/remove` |
 | `optional-skill-selection-policy.json` | Repo-local policy for preprompt-time optional skill selection (`off`, `optional`, `mandatory`; legacy aliases remain read-compatible) | Yes |
@@ -196,6 +197,61 @@ Manage supported optional capability toggles through the CLI:
 The CLI validates that a matching live review skill is installed before enabling a supported optional capability. Bridge presence is surfaced separately for bridge-hosted providers, but root-entrypoint providers execute the live skill directly.
 
 `skills-index.json` is still a generated runtime index under `live/config/`, but it is **not** part of `garda.config.json` and is **not** validated by `gate validate-config`.
+
+## Review Catalog
+
+The review catalog extends the compatibility-owned built-in review lanes with repo-local declarative lanes.
+
+**Optional file:** `live/config/review-catalog.json`
+
+```json
+{
+  "version": 1,
+  "custom_review_types": [
+    {
+      "id": "architecture",
+      "display_label": "Architecture review",
+      "enabled_by_default": false,
+      "skill_id": "architecture-review",
+      "trigger": {
+        "mode": "signals",
+        "signal_ids": ["architecture"]
+      },
+      "coverage_category_ids": ["maintainability"],
+      "reviewer_role": {
+        "role_id": "architecture-reviewer",
+        "focus_tags": ["maintainability"]
+      }
+    }
+  ]
+}
+```
+
+Built-in lanes remain defined by Garda compatibility contracts and retain their canonical pass/fail tokens. Custom IDs are stable lowercase kebab-case identifiers; Garda derives their canonical verdict tokens and rejects prompt bodies, verdict overrides, built-in replacements, unknown metadata, and `enabled_by_default: true`. A custom lane becomes eligible only after its skill is installed, its capability is enabled, and the selected profile assigns it `auto` or `required`.
+
+Triggers use either `manual` mode or validated `signals`. The selected profile supplies lane state and its `review_dependency_graph`; preflight resolves those inputs into the immutable task catalog/policy snapshot and launch order. Existing tasks never observe later catalog, capability, profile, or dependency changes. Normal task agents use the compact `TaskStartReviewCatalog` and preflight snapshot, while reviewers receive only their generated launch input; neither should load the full catalog as routine context.
+
+Inspection is read-only and safe for legacy workspaces:
+
+```text
+garda review-catalog list --target-root "."
+garda review-catalog show architecture --profile balanced --target-root "."
+garda review-catalog explain architecture --profile balanced --target-root "."
+garda review-catalog validate --target-root "."
+```
+
+When the file is absent, these commands resolve the built-in compatibility catalog and validation still passes. Fresh init and reinit materialize the default `{ "version": 1, "custom_review_types": [] }` and preserve valid custom definitions, but the catalog is not a mandatory legacy manifest dependency before the dedicated migration release.
+
+Mutation commands are `create`, `update`, `enable`, `disable`, `profile-bind`, and `dependency`. They never write immediately: the first call returns a semantic preview plus current-state and plan hashes; `--confirm` with fresh operator confirmation creates a one-time receipt; `--apply` consumes that receipt and revalidates the same hashes and managed filesystem boundaries under the transaction lock. Management is rejected while agent tasks are active.
+
+Successful changes record an audit entry and recovery backup. A failed multi-file publish automatically restores the pre-write state and records `ROLLED_BACK`; use the reported backup and audit paths for diagnosis, then run the inverse guarded mutation when recovery is needed. Do not hand-edit runtime receipts or treat a backup as an apply receipt.
+
+Troubleshooting order:
+
+1. Run `review-catalog validate` and `review-catalog explain <id> --profile <name>`.
+2. Verify the referenced skill, capability flag, profile state, and dependency IDs.
+3. If confirmation is stale, discard it and create a new preview after all active tasks finish.
+4. If publish failed, inspect the rollback diagnostic and audit record; do not replay a consumed or stale receipt.
 
 ## Profile Review Finding Policy
 

@@ -79,6 +79,7 @@ If you want persistent commands, install globally.
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
 | **Specialist Review Lanes** | code, db, security, refactor, api, test, performance, infra, and dependency reviews when the task scope requires them |
+| **Extensible Review Catalog** | Guarded custom review lanes, profile states, dependency graphs, immutable task snapshots, and legacy-compatible defaults |
 | **Node Runtime** | Public CLI and gate flows run through the Node/TypeScript router with no shell runtime dependency |
 | **Compact Command Hints** | Agent rules teach efficient CLI flags for everyday commands |
 
@@ -115,6 +116,7 @@ The provider list is maintained in [docs/providers.md](docs/providers.md). That 
 | `garda uninstall` | Remove orchestrator while preserving `TASK.md` by default; queue removal requires explicit `--keep-task-file no` |
 | `garda skills` | List, suggest, add, remove, and validate optional built-in skill packs |
 | `garda profile` | List, switch, create, delete, and validate workspace profiles |
+| `garda review-catalog` | Inspect, validate, explain, and safely manage built-in/custom review lanes |
 
 Published command names: `garda`, `gao`, `garda-agent-orchestrator`
 
@@ -162,7 +164,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 | **[HOW_TO.md](HOW_TO.md)** | Step-by-step user guide |
 | **[docs/cli-reference.md](docs/cli-reference.md)** | Complete CLI command reference |
 | **[docs/architecture.md](docs/architecture.md)** | Design, runtime model, deployed files |
-| **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities |
+| **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities, and review catalog management |
 | **[docs/findings-contracts.md](docs/findings-contracts.md)** | Findings-only review lifecycle, policy, recovery, and legacy migration |
 | **[docs/node-platform-foundation.md](docs/node-platform-foundation.md)** | Node foundation, execution model, validators, and build/test skeleton |
 | **[docs/database/sqlite-persistence.md](docs/database/sqlite-persistence.md)** | Workspace-local derived SQLite catalog, authority boundary, recovery, and maintenance contract |

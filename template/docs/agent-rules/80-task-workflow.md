@@ -47,6 +47,15 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - If `garda-agent-orchestrator/runtime/plans/<task-id>.md` exists for the selected task, read it as optional executor guidance. Missing Markdown working plans are normal: do not block, invent a waiver, pass them as `--plan-path`, or treat their absence as a reviewer/completion issue.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
+## Review Catalog Context Contract
+- Built-in review lanes and their canonical verdict tokens remain compatibility-owned even when `live/config/review-catalog.json` is absent.
+- Custom review lanes are declarative and disabled by default. They cannot replace built-in lanes or supply prompt bodies or verdict-token overrides.
+- Capability flags, profile lane states, triggers, and the validated review dependency graph determine which catalog lanes are active and their launch order.
+- Task entry and preflight bind the effective lanes and dependency graph into an immutable current-task catalog/policy snapshot. Guarded catalog or profile mutations affect future tasks only.
+- Normal task agents consume `TaskStartReviewCatalog` plus current preflight evidence; delegated reviewers consume only the generated launch input for their lane. Do not load `live/config/review-catalog.json` into normal task or reviewer context.
+- Use `review-catalog list|show|explain|validate` only for explicit inspection, management, migration, or troubleshooting work.
+- Catalog mutations use the guarded preview, operator-confirmation, and apply transaction. Preserve its active-task guard, hash bindings, audit trail, backup, and automatic rollback behavior.
+
 ## Project Memory Task Entry Protocol
 - `TASK_ENTRY` rule-pack includes `15-project-memory.md` as generated project-memory orientation.
 - After `TASK_ENTRY` rule loading, read source memory through the index-first protocol:

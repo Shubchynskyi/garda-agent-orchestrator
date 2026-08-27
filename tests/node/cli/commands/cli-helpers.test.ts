@@ -904,6 +904,7 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('task'));
     assert.ok(text.includes('skills'));
     assert.ok(text.includes('review-capabilities'));
+    assert.ok(text.includes('review-catalog'));
     assert.ok(text.includes('workflow'));
     assert.ok(text.includes('suggest'));
     assert.ok(text.includes('--help'));
@@ -1003,12 +1004,17 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('rollback'));
     assert.ok(names.includes('skills'));
     assert.ok(names.includes('review-capabilities'));
+    assert.ok(names.includes('review-catalog'));
     assert.ok(names.includes('workflow'));
     assert.ok(names.includes('gate'));
     assert.equal(COMMAND_SUMMARY.find((command) => command[0] === 'skills')![1], 'List, suggest, and manage optional skill packs');
     assert.equal(
         COMMAND_SUMMARY.find((command) => command[0] === 'review-capabilities')![1],
         'Show, enable, and disable repo-local optional review capabilities'
+    );
+    assert.equal(
+        COMMAND_SUMMARY.find((command) => command[0] === 'review-catalog')![1],
+        'Inspect and safely manage review lanes, profiles, and dependencies'
     );
     assert.equal(COMMAND_SUMMARY.find((command) => command[0] === 'workflow')![1], 'Show and set repo-local workflow config');
 });
@@ -1271,6 +1277,7 @@ test('runCliMain prints command help for the user-facing invocation matrix', asy
         { command: 'gc', expectedUsage: 'garda gc' },
         { command: 'profile', expectedUsage: 'garda profile' },
         { command: 'review-capabilities', expectedUsage: 'garda review-capabilities' },
+        { command: 'review-catalog', expectedUsage: 'garda review-catalog' },
         { command: 'templates', expectedUsage: 'garda templates' }
     ];
 
