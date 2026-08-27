@@ -236,6 +236,17 @@ test('template review-capabilities.json validates against schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('review-capabilities schema accepts catalog-backed boolean lanes and rejects non-boolean values', () => {
+    const data = readTemplateConfig('review-capabilities.json') as Record<string, unknown>;
+    data.architecture = false;
+    const accepted = validateAgainstSchema(data, reviewCapabilitiesSchema);
+    assert.equal(accepted.valid, true, `Errors: ${JSON.stringify(accepted.errors)}`);
+
+    data.architecture = 'enabled';
+    const rejected = validateAgainstSchema(data, reviewCapabilitiesSchema);
+    assert.equal(rejected.valid, false);
+});
+
 test('template token-economy.json validates against schema', () => {
     const data = readTemplateConfig('token-economy.json');
     const result = validateAgainstSchema(data, tokenEconomySchema);
@@ -719,11 +730,15 @@ test('validateAgainstSchema catches wrong type', () => {
 
 test('validateAgainstSchema catches additional properties when disallowed', () => {
     const data = {
-        code: true, db: true, security: true, refactor: true,
-        api: true, test: true, performance: true, infra: true, dependency: true,
+        known_key: true,
         extra_key: true
     };
-    const result = validateAgainstSchema(data, reviewCapabilitiesSchema);
+    const result = validateAgainstSchema(data, {
+        type: 'object',
+        properties: { known_key: { type: 'boolean' } },
+        required: ['known_key'],
+        additionalProperties: false
+    });
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.message.includes("'extra_key'")));
 });

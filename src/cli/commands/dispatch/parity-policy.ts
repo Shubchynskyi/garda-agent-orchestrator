@@ -130,7 +130,7 @@ export function resolveCommandParityPolicy(commandName: string, commandArgv: str
         }
         return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'confirmed repair mutation paths must not run with stale source parity.');
     }
-    if (['agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'html', 'ui', 'on', 'off'].includes(commandName)) {
+    if (['agent-init', 'skills', 'review-capabilities', 'review-catalog', 'templates', 'profile', 'workflow', 'html', 'ui', 'on', 'off'].includes(commandName)) {
         return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'workspace configuration and workspace-selection commands require source/bundle parity before execution.');
     }
     if (['status', 'doctor', 'debug', 'stats', 'task', 'preprompt', 'verify', 'diff-managed'].includes(commandName)) {

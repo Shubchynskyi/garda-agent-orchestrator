@@ -189,7 +189,10 @@ export const reviewCapabilitiesSchema: Record<string, unknown> = Object.freeze({
         REVIEW_CAPABILITY_KEYS.map((key) => [key, { type: 'boolean', description: `Enable ${key} review.` }])
     ),
     required: [...REVIEW_CAPABILITY_KEYS],
-    additionalProperties: false
+    additionalProperties: {
+        type: 'boolean',
+        description: 'Catalog-backed custom review lanes remain disabled until explicitly set true.'
+    }
 });
 
 export const tokenEconomySchema: Record<string, unknown> = Object.freeze({

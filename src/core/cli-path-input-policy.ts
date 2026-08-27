@@ -109,6 +109,7 @@ export const CLI_PATH_INPUT_POLICIES: Readonly<Record<string, CliPathInputPolicy
     ),
     '--preflight-output-path': workspaceContained('Writes task-owned preflight evidence.'),
     '--preflight-path': workspaceContained('Reads task-owned preflight evidence.'),
+    '--profile': nonFilesystem('Profile id, not a filesystem path.'),
     '--receipt-path': workspaceContained('Reads task-owned review receipt evidence.'),
     '--repo-root': {
         classification: 'root-anchor',
