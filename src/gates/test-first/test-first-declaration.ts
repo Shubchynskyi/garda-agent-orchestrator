@@ -3,7 +3,7 @@ import type { TaskQueueEntry } from '../../core/task-queue-read';
 export const TEST_FIRST_EXPECTED_RED_MARKER = 'Test-first: expected-red';
 
 const TEST_FIRST_EXPECTED_RED_PATTERN =
-    /(?:^|[.;]\s*)test-first\s*:\s*expected-red(?=\s*(?:[.;]|$))/iu;
+    /(?:^|[.;]\s*)Test-first: expected-red(?=\s*(?:[.;]|$))/u;
 
 export function hasTestFirstExpectedRedDeclaration(
     taskEntry: Pick<TaskQueueEntry, 'notes'> | null | undefined

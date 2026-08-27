@@ -35,6 +35,7 @@ export interface RunIntermediateCommandOptions {
     preflightSha256?: unknown;
     coverageContractSha256?: unknown;
     expectFailure?: unknown;
+    signal?: AbortSignal;
     repoRoot?: unknown;
     eventsRoot?: unknown;
 }
@@ -399,7 +400,11 @@ export async function runIntermediateCommandCommand(
         options.outputPath,
     );
     const startedAt = Date.now();
-    const result = await executeCommandAsync(command, { cwd: repoRoot, timeoutMs });
+    const result = await executeCommandAsync(command, {
+        cwd: repoRoot,
+        timeoutMs,
+        signal: options.signal
+    });
     const durationMs = Date.now() - startedAt;
     const rawLines = result.outputLines;
     fs.mkdirSync(path.dirname(artifacts.outputPath), { recursive: true });

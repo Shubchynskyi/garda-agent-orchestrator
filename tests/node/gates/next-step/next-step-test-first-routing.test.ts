@@ -6,10 +6,12 @@ import * as path from 'node:path';
 import { runIntermediateCommandCommand } from '../../../../src/cli/commands/gates';
 import { appendTaskEventAsync } from '../../../../src/gate-runtime/task-events-io';
 import { buildTestFirstExpectedFailureRoute } from '../../../../src/gates/next-step/next-step-test-first-routing';
+import { resolveValidationDecisionRoute } from '../../../../src/gates/next-step/next-step-validation-routes';
 import {
     getChangedTestPathsTargetedByCommandTokens,
     isFocusedIntermediateCommand
 } from '../../../../src/gates/shared/focused-intermediate-command-grammar';
+import { hasTestFirstExpectedRedDeclaration } from '../../../../src/gates/test-first/test-first-declaration';
 import {
     createTempRepo,
     getOrchestratorRoot,
@@ -110,6 +112,61 @@ afterEach(() => {
 });
 
 describe('next-step test-first expected-red routing', () => {
+    it('requires the exact case-sensitive expected-red Notes marker', () => {
+        assert.equal(hasTestFirstExpectedRedDeclaration({ notes: 'Test-first: expected-red.' }), true);
+        assert.equal(hasTestFirstExpectedRedDeclaration({ notes: 'Prefix; Test-first: expected-red; suffix.' }), true);
+        for (const notes of [
+            'test-first: expected-red.',
+            'TEST-FIRST: EXPECTED-RED.',
+            'Test-first : expected-red.',
+            'Test-first:  expected-red.',
+            'Test-first: expected-red-extra.'
+        ]) {
+            assert.equal(hasTestFirstExpectedRedDeclaration({ notes }), false, notes);
+        }
+    });
+
+    it('selects expected-red before compile and full-suite validation in the lifecycle route', () => {
+        const evaluated: string[] = [];
+        const result = resolveValidationDecisionRoute({
+            lifecycleGateIds: ['compile-gate', 'full-suite-validation'],
+            resolveQualityChecklistRoute: () => null,
+            resolveBaselineOnlyPreImplementationRoute: () => {
+                evaluated.push('baseline');
+                return null;
+            },
+            resolveTestFirstExpectedFailureRoute: () => {
+                evaluated.push('expected-red');
+                return {
+                    nextGate: 'test-first-expected-failure',
+                    title: 'Record bounded expected-red failure.',
+                    reason: 'Expected-red evidence is required before implementation.',
+                    commands: []
+                };
+            },
+            resolveCompileGateRoute: () => {
+                evaluated.push('compile');
+                return null;
+            },
+            resolveAuditedNoOpState: () => {
+                evaluated.push('no-op');
+                return {
+                    required: false,
+                    passed: false,
+                    evidenceStatus: 'NOT_REQUIRED',
+                    command: 'record-no-op'
+                };
+            },
+            resolveFullSuiteValidationRoute: () => {
+                evaluated.push('full-suite');
+                return null;
+            }
+        });
+
+        assert.equal(result?.nextGate, 'test-first-expected-failure');
+        assert.deepEqual(evaluated, ['baseline', 'expected-red']);
+    });
+
     it('prints one guarded expected-failure command before compile', () => {
         const fixture = buildFixture();
 
