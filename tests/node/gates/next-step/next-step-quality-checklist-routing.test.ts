@@ -113,10 +113,6 @@ function qualityChecklistRepairAnswersCommandPath(taskId = TASK_ID): string {
     return `${qualityChecklistAnswersCommandPath(taskId)}.repair.json`;
 }
 
-function qualityChecklistRecoveryAnswersCommandPath(taskId = TASK_ID): string {
-    return `${qualityChecklistRepairAnswersCommandPath(taskId)}.recovery.json`;
-}
-
 function qualityChecklistRotatedRecoveryAnswersPath(repoRoot: string, taskId = TASK_ID): string {
     return `${qualityChecklistRepairAnswersPath(repoRoot, taskId)}.recovery.2.json`;
 }

@@ -39,7 +39,6 @@ import {
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
     writeManualReviewerHandoffFixture,
-    recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
     buildNoFindingsJsonReviewReport,
     buildFailedJsonReviewReport,
