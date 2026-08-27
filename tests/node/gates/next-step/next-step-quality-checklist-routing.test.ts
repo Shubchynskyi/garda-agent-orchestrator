@@ -1279,6 +1279,38 @@ describe('gates/next-step quality checklist routing', () => {
         assert.match(result.reason, /Simplify the routing helper/);
     });
 
+    it('prints the checklist rerun command after ACTION_REQUIRED answers are remediated', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'ACTION_REQUIRED');
+
+        const blocked = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(blocked.next_gate, 'implementation', blocked.reason);
+
+        const answersPath = qualityChecklistAnswersPath(repoRoot);
+        const answersTemplate = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            answers: Array<Record<string, unknown>>;
+        };
+        answersTemplate.answers = answersTemplate.answers.map((answer) => ({
+            ...answer,
+            status: 'PASS',
+            answer: `Remediated ${String(answer.rule_id)}.`,
+            actions_required: [],
+            actions_taken: [`Resolved ${String(answer.rule_id)} action.`]
+        }));
+        fs.writeFileSync(answersPath, JSON.stringify(answersTemplate, null, 2) + '\n', 'utf8');
+
+        const rerun = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(rerun.next_gate, 'quality-checklist', rerun.reason);
+        assert.equal(rerun.commands.length, 1);
+        assert.match(rerun.commands[0].command, /gate quality-checklist/u);
+        assert.match(rerun.commands[0].command, /quality-checklist-answers\.json/u);
+        assert.match(rerun.reason, /updated after ACTION_REQUIRED remediation/u);
+    });
+
     it('keeps T-839-derived ACTION_REQUIRED checklist findings ahead of full-suite and review routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot, {

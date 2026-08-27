@@ -9,7 +9,9 @@ import {
     resolveOptionalQualityChecksReviewFailureCadenceInterval,
 } from '../../core/workflow-config';
 import {
+    assessQualityChecklistAnswersTemplateFile,
     assessQualityChecklistPolicyCompatibility,
+    buildQualityChecklistArtifact,
     buildQualityChecklistCadenceSkipArtifact,
     materializeQualityChecklistAnswersTemplate,
     QUALITY_CHECKLIST_ID,
@@ -877,6 +879,52 @@ export function readQualityChecklistReadiness(options: {
             templateMaterializationError: templateMaterialization.error,
             answersTemplatePath: templateMaterialization.answersPath
         });
+    }
+
+    if (status === 'ACTION_REQUIRED') {
+        const templateMaterialization = materializePendingQualityChecklistAnswers(options);
+        const answersPath = templateMaterialization.answersPath;
+        if (answersPath && !templateMaterialization.error) {
+            try {
+                const assessment = assessQualityChecklistAnswersTemplateFile({
+                    repoRoot: options.repoRoot,
+                    taskId: options.taskId,
+                    preflightPath: options.preflightPath,
+                    answersPath
+                });
+                const candidateStatus = assessment.status === 'current' && assessment.template
+                    ? String(buildQualityChecklistArtifact({
+                        repoRoot: options.repoRoot,
+                        taskId: options.taskId,
+                        preflightPath: options.preflightPath,
+                        answers: assessment.template
+                    }).status || '').trim().toUpperCase()
+                    : '';
+                if (candidateStatus === 'PASS' || candidateStatus === 'WARN') {
+                    return buildReadiness({
+                        enabled,
+                        required,
+                        ready: false,
+                        status,
+                        evidenceStatus: 'stale',
+                        effect: 'stale',
+                        reason:
+                            'Quality checklist answers were updated after ACTION_REQUIRED remediation and now produce a non-blocking candidate. ' +
+                            'Rerun the quality checklist to replace the blocking artifact before compile, review, full-suite, or completion gates.',
+                        artifactPath,
+                        artifact,
+                        changedFilesCount,
+                        scopeCategory,
+                        enabledRuleCount: parseOptionalNumberField(artifact.enabled_rule_count) ?? enabledRuleCount,
+                        activeRuleCount: parseOptionalNumberField(artifact.active_rule_count) ?? activeRuleCount,
+                        skippedByScopeRuleCount: parseOptionalNumberField(artifact.skipped_by_scope_rule_count) ?? skippedByScopeRuleCount,
+                        answersTemplatePath: answersPath
+                    });
+                }
+            } catch {
+                // The executable command builder performs the same fail-closed assessment.
+            }
+        }
     }
 
     const effect = status === 'ACTION_REQUIRED'
