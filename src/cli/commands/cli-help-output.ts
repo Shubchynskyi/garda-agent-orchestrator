@@ -108,20 +108,27 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} review-catalog [list|validate] [--target-root PATH] [--bundle-root PATH] [--json]`,
             `${PRIMARY_CLI_NAME} review-catalog <show|explain> <review-id> [--profile NAME] [--json]`,
-            `${PRIMARY_CLI_NAME} review-catalog <create|update> <review-id> --display-label LABEL --skill-id ID --trigger-mode <manual|signals> [definition options]`,
+            `${PRIMARY_CLI_NAME} review-catalog create <review-id> --display-label LABEL --skill-id ID --trigger-mode <manual|signals> --coverage-category ID --role-id ID [--signal-id ID] [--focus-tag TAG]`,
+            `${PRIMARY_CLI_NAME} review-catalog update <review-id> [--display-label LABEL] [--skill-id ID] [--trigger-mode <manual|signals>] [--signal-id ID] [--coverage-category ID] [--role-id ID] [--focus-tag TAG]`,
             `${PRIMARY_CLI_NAME} review-catalog <enable|disable> <review-id>`,
             `${PRIMARY_CLI_NAME} review-catalog profile-bind <review-id> --profile NAME --state <disabled|auto|required>`,
-            `${PRIMARY_CLI_NAME} review-catalog dependency <review-id> --profile NAME <--depends-on ID|--clear-dependencies>`
+            `${PRIMARY_CLI_NAME} review-catalog dependency <review-id> --profile NAME (--depends-on ID | --clear-dependencies)`,
+            `${PRIMARY_CLI_NAME} review-catalog <mutation> <review-id> <same mutation options> --confirm --expected-state-sha256 SHA256 --expected-plan-sha256 SHA256 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} review-catalog <mutation> <review-id> <same mutation options> --apply --expected-state-sha256 SHA256 --expected-plan-sha256 SHA256 --confirmation-receipt-sha256 SHA256`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} review-catalog list --target-root "."`,
             `${PRIMARY_CLI_NAME} review-catalog explain architecture --profile balanced --target-root "."`,
-            `${PRIMARY_CLI_NAME} review-catalog enable architecture --target-root "."`
+            `${PRIMARY_CLI_NAME} review-catalog create architecture --display-label "Architecture review" --skill-id architecture-review --trigger-mode signals --signal-id architecture --coverage-category maintainability --role-id architecture-reviewer --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog enable architecture --confirm --expected-state-sha256 "<state-sha256>" --expected-plan-sha256 "<plan-sha256>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog enable architecture --apply --expected-state-sha256 "<state-sha256>" --expected-plan-sha256 "<plan-sha256>" --confirmation-receipt-sha256 "<receipt-sha256>" --target-root "."`
         ]),
         hints: Object.freeze([
             'A missing catalog remains legacy-compatible: the built-in review lanes and canonical verdict tokens still apply.',
             'Custom lanes are disabled by default. Raw prompt bodies and verdict-token overrides are not accepted.',
-            'Mutation commands default to preview, affect future task snapshots only, and require a separate confirmed apply bound to the preview hashes.'
+            'Mutation commands default to preview and affect future task snapshots only. Repeat the same mutation options for each later phase.',
+            'The separate --confirm phase requires fresh operator confirmation and the preview state/plan hashes; it returns a one-time confirmation receipt.',
+            'The separate --apply phase requires the same preview hashes and confirmation receipt; self-confirmation flags are rejected during apply.'
         ])
     }),
     templates: Object.freeze({

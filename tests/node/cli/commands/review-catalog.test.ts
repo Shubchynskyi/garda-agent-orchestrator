@@ -187,10 +187,33 @@ function createTransactionPlanFixture(workspace: TestWorkspace): {
     return { catalogPath, capabilitiesPath, beforeCapabilities, beforeStateSha256, plan };
 }
 
-test('review-catalog help explains compatibility, immutable snapshots, and guarded mutation phases', () => {
+test('review-catalog help exposes accurate definition options and executable guarded mutation phases', () => {
     const help = buildCommandHelpText('review-catalog').replace(/\u001b\[[0-9;]*m/gu, '');
+    const lines = help.split(/\r?\n/u).map((line) => line.trim());
+    const confirmLine = lines.find((line) => line.includes('review-catalog <mutation>') && line.includes('--confirm'));
+    const applyLine = lines.find((line) => line.includes('review-catalog <mutation>') && line.includes('--apply'));
 
     assert.match(help, /garda review-catalog \[list\|validate\]/u);
+    assert.match(
+        help,
+        /review-catalog create <review-id>.*--coverage-category ID --role-id ID/u
+    );
+    assert.match(help, /review-catalog update <review-id> \[--display-label LABEL\]/u);
+    assert.match(
+        help,
+        /review-catalog dependency <review-id> --profile NAME \(--depends-on ID \| --clear-dependencies\)/u
+    );
+    assert.doesNotMatch(help, /<--depends-on/u);
+    assert.ok(confirmLine, 'help must show the separate confirmation command');
+    assert.match(confirmLine, /--expected-state-sha256 SHA256/u);
+    assert.match(confirmLine, /--expected-plan-sha256 SHA256/u);
+    assert.match(confirmLine, /--operator-confirmed yes/u);
+    assert.match(confirmLine, /--operator-confirmed-at-utc/u);
+    assert.ok(applyLine, 'help must show the separate apply command');
+    assert.match(applyLine, /--expected-state-sha256 SHA256/u);
+    assert.match(applyLine, /--expected-plan-sha256 SHA256/u);
+    assert.match(applyLine, /--confirmation-receipt-sha256 SHA256/u);
+    assert.doesNotMatch(applyLine, /--operator-confirmed(?:-|\s)/u);
     assert.match(help, /missing catalog remains legacy-compatible/u);
     assert.match(help, /Custom lanes are disabled by default/u);
     assert.match(help, /preview/u);

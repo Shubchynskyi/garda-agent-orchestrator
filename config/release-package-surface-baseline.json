@@ -6,7 +6,7 @@
   },
   "metrics": {
     "fileCount": 1374,
-    "unpackedSizeBytes": 16426375,
+    "unpackedSizeBytes": 16429331,
     "lifecycleScripts": {
       "postpack": "node scripts/package-legacy-entrypoint-compat.cjs remove",
       "prepack": "npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create"
@@ -32,5 +32,5 @@
       "writeFile": 0
     }
   },
-  "rationale": "Review catalog CLI, UI, materialization, provider guidance, and documentation are intentionally included in the published package."
+  "rationale": "The audited review-catalog refresh added 41 files and 1,268,828 unpacked bytes (8.37%). Local pack smoke measures install and cold CLI startup with 60,000 ms and 10,000 ms regression ceilings; observed evidence is recorded in docs/release-readiness.md."
 }

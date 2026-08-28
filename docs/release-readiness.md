@@ -27,6 +27,27 @@ lockfile version fields, and `VERSION`. It then deletes only the checkout's
 ephemeral `refs/tags/v1.3.0` ref before running the unchanged preflight. No
 environment variable can make an assigned version pass readiness.
 
+### Review-catalog package-growth impact evidence
+
+The audited review-catalog baseline refresh increased the packed surface from
+1,333 files and 15,160,503 unpacked bytes to 1,374 files and 16,429,331 bytes:
+41 files (3.08%) and 1,268,828 bytes (8.37%). The added surface includes the
+compiled CLI/runtime changes, templates, provider guidance, and public
+documentation; it does not add consumer install lifecycle scripts or runtime
+dependencies.
+
+The local package smoke now treats install and cold CLI startup as measured
+release contracts. On Windows with Node 24.11.1 and npm 11.18.0, the exact
+focused command
+`node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts`
+measured a local tarball install at 6,218 ms and a packaged `--version` launch
+at 3,939 ms. An initial cold launch measured 6,191 ms and the exact rerun passed,
+so the deterministic regression ceilings are intentionally wider than a single
+sample: 60,000 ms for local install and 10,000 ms for cold `--version` startup.
+These ceilings catch material regressions without turning ordinary host-load
+variance into a flaky release failure; functional pack/install/invoke checks
+remain mandatory in the same test.
+
 ## 1.2.0
 
 - [x] Package metadata is aligned to `1.2.0` in `package.json`, `package-lock.json`, and `VERSION`.
