@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { readTaskQueueStatusToken } from '../../../src/core/active-task-state';
+import {
+    formatCanonicalTaskQueueStatusCell,
+    formatTaskQueueStatusCell,
+    readTaskQueueStatusToken
+} from '../../../src/core/active-task-state';
 import {
     formatActiveTaskQueueTable,
     parseCanonicalActiveTaskQueue,
@@ -48,6 +52,27 @@ test('formatActiveTaskQueueTable reflows only the canonical upper Active Queue t
     assert.match(formatted, /\| T-1\s+\| 🟦 TODO\s+\| P1\s+\| area\s+\| Short\s+\| me\s+\| 2026-06-04 \| balanced \| keep escaped \\\| pipe \|/);
     assert.match(formatted, /\| T-2222 \| 🟨 IN_PROGRESS \| P2\s+\| longer-area \| Much longer title \| agent \| 2026-06-04 \| strict\s+\| keep row order\s+\|/);
     assert.ok(formatted.includes('## Блок очереди\n| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |'));
+});
+
+test('formatActiveTaskQueueTable renders canonical markers for legacy and nested follow-up statuses', () => {
+    const content = [
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-1011 | DONE | P3 | reports | Ordinary task | agent | 2026-08-28 | fast | ordinary |',
+        '| T-1011-F1 | TODO | P3 | reports | Follow-up | agent | 2026-08-28 | fast | generated |',
+        '| T-1011-F1-F1 | IN_PROGRESS | P3 | reports | Nested follow-up | agent | 2026-08-28 | fast | generated |',
+        '| T-OTHER | 🟦 TODO | P3 | reports | Existing marker | agent | 2026-08-28 | fast | compatible |'
+    ].join('\n');
+
+    const parsed = parseCanonicalActiveTaskQueue(formatActiveTaskQueueTable(content));
+
+    assert.deepEqual(parsed.rows.map((row) => row.status), [
+        '🟩 DONE',
+        '🟦 TODO',
+        '🟨 IN_PROGRESS',
+        '🟦 TODO'
+    ]);
 });
 
 test('formatActiveTaskQueueTable leaves non-canonical tables unchanged', () => {
@@ -138,6 +163,13 @@ test('readTaskQueueStatusToken accepts canonical status and emoji prefix variant
     assert.equal(readTaskQueueStatusToken('🟨'), 'IN_PROGRESS');
     assert.equal(readTaskQueueStatusToken('🟫 SPLIT_REQUIRED'), 'SPLIT_REQUIRED');
     assert.equal(readTaskQueueStatusToken('🟪DECOMPOSED'), 'DECOMPOSED');
+});
+
+test('canonical task status formatting adds the marker to legacy status cells', () => {
+    assert.equal(formatCanonicalTaskQueueStatusCell('TODO'), '🟦 TODO');
+    assert.equal(formatCanonicalTaskQueueStatusCell('🟩DONE'), '🟩 DONE');
+    assert.equal(formatCanonicalTaskQueueStatusCell('unknown'), 'unknown');
+    assert.equal(formatTaskQueueStatusCell(' TODO ', 'DONE'), ' 🟩 DONE ');
 });
 
 test('buildTaskQueueStatusContract blocks agent-authored lifecycle status edits but allows non-status content', () => {

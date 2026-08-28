@@ -1154,7 +1154,7 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('syncTaskQueueStatus keeps plain TASK.md rows plain across lifecycle states', () => {
+    it('syncTaskQueueStatus canonicalizes plain TASK.md rows across lifecycle states', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900c-plain';
         seedTaskQueue(repoRoot, taskId, 'TODO');
@@ -1162,20 +1162,17 @@ describe('cli/commands/gates — task-start', () => {
         assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'IN_PROGRESS'), true);
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_PROGRESS');
         let taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
-        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*IN_PROGRESS\s*\|/);
-        assert.equal(taskFile.includes('🟨 IN_PROGRESS'), false);
+        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*🟨 IN_PROGRESS\s*\|/);
 
         assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'IN_REVIEW'), true);
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
         taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
-        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*IN_REVIEW\s*\|/);
-        assert.equal(taskFile.includes('🟧 IN_REVIEW'), false);
+        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*🟧 IN_REVIEW\s*\|/);
 
         assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'DONE'), true);
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
         taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
-        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*DONE\s*\|/);
-        assert.equal(taskFile.includes('🟩 DONE'), false);
+        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*🟩 DONE\s*\|/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1192,7 +1189,7 @@ describe('cli/commands/gates — task-start', () => {
         assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'IN_PROGRESS'), true);
 
         const taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
-        assert.match(taskFile, /\|\s*T-900c-escaped-notes\s*\|\s*IN_PROGRESS\s*\|/);
+        assert.match(taskFile, /\|\s*T-900c-escaped-notes\s*\|\s*🟨 IN_PROGRESS\s*\|/);
         assert.ok(taskFile.includes('before \\| blocked_reason_code=ESCAPED_PIPE'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

@@ -786,6 +786,28 @@ test('readCanonicalActiveQueueRows reads only the canonical upper Active Queue t
     assert.equal(result.unavailable.length, 0);
 });
 
+test('readCanonicalActiveQueueRows renders legacy statuses with canonical markers for ordinary and F tasks', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMdWithActiveRows(repoRoot, [
+        '| T-1011 | DONE | P3 | reports | Ordinary task | agent | 2026-08-28 | fast | ordinary |',
+        '| T-1011-F1 | TODO | P3 | reports | Follow-up | agent | 2026-08-28 | fast | generated |',
+        '| T-1011-F1-F1 | IN_PROGRESS | P3 | reports | Nested follow-up | agent | 2026-08-28 | fast | generated |'
+    ]);
+
+    const result = readCanonicalActiveQueueRows(repoRoot);
+
+    assert.deepEqual(result.rows.map((row) => row.status), [
+        '🟩 DONE',
+        '🟦 TODO',
+        '🟨 IN_PROGRESS'
+    ]);
+    assert.deepEqual(result.rows.map((row) => row.status_token), [
+        'DONE',
+        'TODO',
+        'IN_PROGRESS'
+    ]);
+});
+
 test('buildWorkflowConfigTab exposes read-only settings with commands and descriptions', () => {
     const repoRoot = makeTempRepo();
     writeWorkflowConfig(repoRoot);

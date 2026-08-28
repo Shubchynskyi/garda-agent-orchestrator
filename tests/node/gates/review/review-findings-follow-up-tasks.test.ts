@@ -899,9 +899,9 @@ describe('review findings follow-up task materialization', () => {
         assert.deepEqual(materialized.created_task_ids, [`${TASK_ID}-F1`]);
         const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
         assert.ok(childRow);
-        assert.equal(childRow.status, 'TODO');
+        assert.equal(childRow.status, '🟦 TODO');
         assert.equal(childRow.priority, 'P2');
-        assert.equal(rowFor(repoRoot, TASK_ID)?.status, 'IN_PROGRESS');
+        assert.equal(rowFor(repoRoot, TASK_ID)?.status, '🟨 IN_PROGRESS');
         assert.match(childRow.notes, /validation_sha256=/u);
         assert.match(childRow.notes, /validation_result_sha256=/u);
         assert.match(childRow.notes, /receipt_sha256=/u);
@@ -947,7 +947,7 @@ describe('review findings follow-up task materialization', () => {
         assert.deepEqual(materialized.created_task_ids, [`${TASK_ID}-F1`]);
         const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
         assert.ok(childRow);
-        assert.equal(childRow.status, 'TODO');
+        assert.equal(childRow.status, '🟦 TODO');
         assert.equal(childRow.profile, 'balanced');
         assert.match(childRow.notes, /review_follow_up_group_fingerprint=[0-9a-f]{64}/u);
         assert.match(childRow.notes, /review_follow_up_snapshot_sha256=a{64}/u);

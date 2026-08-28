@@ -1,7 +1,10 @@
 import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readTaskQueueStatusToken } from '../../core/active-task-state';
+import {
+    formatCanonicalTaskQueueStatusCell,
+    readTaskQueueStatusToken
+} from '../../core/active-task-state';
 import { parseCanonicalActiveTaskQueue, parseTaskMdTableRow } from '../../core/task-md-table';
 import { toPosix } from '../../gates/shared/helpers';
 import type { ReportDataUnavailableEntry, ReportTaskQueueRow } from './types';
@@ -54,7 +57,7 @@ export function readCanonicalActiveQueueRows(repoRoot: string): {
         }
         rows.push({
             task_id: row.taskId,
-            status: row.status,
+            status: formatCanonicalTaskQueueStatusCell(row.status),
             status_token: readTaskQueueStatusToken(row.status),
             priority: row.priority,
             area: row.area,
