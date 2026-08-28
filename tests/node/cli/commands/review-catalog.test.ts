@@ -363,13 +363,17 @@ test('review-catalog migrate rejects invalid legacy config without writes', () =
     }
 });
 
-test('review-catalog migrate rolls back interrupted normalized publication', () => {
+test('review-catalog migrate rolls every file back after profiles publication fails', () => {
     const workspace = createWorkspace();
     const catalogPath = path.join(workspace.configDir, 'review-catalog.json');
     const capabilitiesPath = path.join(workspace.configDir, 'review-capabilities.json');
+    const profilesPath = path.join(workspace.configDir, 'profiles.json');
     const capabilities = JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8'));
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
     fs.writeFileSync(capabilitiesPath, JSON.stringify(capabilities), 'utf8');
+    fs.writeFileSync(profilesPath, JSON.stringify(profiles), 'utf8');
     const capabilitiesBefore = fs.readFileSync(capabilitiesPath, 'utf8');
+    const profilesBefore = fs.readFileSync(profilesPath, 'utf8');
     try {
         const roots = resolveReviewCatalogRoots({
             targetRoot: workspace.repoRoot,
@@ -377,7 +381,11 @@ test('review-catalog migrate rolls back interrupted normalized publication', () 
         });
         const context = readReviewCatalogMigrationContext(roots);
         const plan = buildReviewCatalogMigrationPlan(context);
-        assert.ok(plan.changes.length >= 2);
+        assert.deepEqual(plan.changes.map((change) => change.relative_path), [
+            'live/config/review-catalog.json',
+            'live/config/review-capabilities.json',
+            'live/config/profiles.json'
+        ]);
         const confirmation = issueReviewCatalogConfirmationReceipt({
             repoRoot: workspace.repoRoot,
             bundleRoot: workspace.bundleRoot,
@@ -387,7 +395,7 @@ test('review-catalog migrate rolls back interrupted normalized publication', () 
             operatorConfirmedAtUtc: new Date().toISOString(),
             readCurrentStateSha256: () => readReviewCatalogMigrationContext(roots).migrationStateSha256
         });
-        let writes = 0;
+        const publishedPaths: string[] = [];
 
         assert.throws(
             () => commitReviewCatalogManagementPlan({
@@ -399,15 +407,19 @@ test('review-catalog migrate rolls back interrupted normalized publication', () 
                 confirmationReceiptSha256: confirmation.confirmation_receipt_sha256,
                 readCurrentStateSha256: () => readReviewCatalogMigrationContext(roots).migrationStateSha256,
                 writeFile: (filePath, content) => {
-                    writes += 1;
-                    if (writes === 2) throw new Error('injected migration publish failure');
                     fs.writeFileSync(filePath, content, 'utf8');
+                    publishedPaths.push(filePath);
+                    if (filePath === profilesPath) {
+                        throw new Error('injected failure after profiles publication');
+                    }
                 }
             }),
-            /rolled back|migration publish failure/iu
+            /rolled back|failure after profiles publication/iu
         );
+        assert.deepEqual(publishedPaths, [catalogPath, capabilitiesPath, profilesPath]);
         assert.equal(fs.existsSync(catalogPath), false);
         assert.equal(fs.readFileSync(capabilitiesPath, 'utf8'), capabilitiesBefore);
+        assert.equal(fs.readFileSync(profilesPath, 'utf8'), profilesBefore);
         const auditPath = path.join(workspace.bundleRoot, 'runtime', 'review-catalog-management-audit.jsonl');
         const states = fs.readFileSync(auditPath, 'utf8')
             .trim()
