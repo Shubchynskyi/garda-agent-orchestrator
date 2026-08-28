@@ -213,6 +213,20 @@ export function collectRequiredReviewEvidence(input: {
                     const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
                     if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
                         receipt = parsedReceipt as ReviewReceipt;
+                        const recordedReviewArtifactSha256 = getReceiptString(
+                            receipt,
+                            'review_artifact_sha256'
+                        )?.toLowerCase() ?? null;
+                        const actualReviewArtifactSha256 = fileSha256(artifactPath);
+                        if (
+                            recordedReviewArtifactSha256
+                            && recordedReviewArtifactSha256 !== actualReviewArtifactSha256
+                        ) {
+                            input.errors.push(
+                                `Required review receipt for '${reviewKey}' has review_artifact_sha256 ` +
+                                `that does not match the review artifact hash.`
+                            );
+                        }
                         input.errors.push(...getReviewReceiptExecutionEvidenceContractViolations({
                             reviewContext,
                             receipt: parsedReceipt as Record<string, unknown>

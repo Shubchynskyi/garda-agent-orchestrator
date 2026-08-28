@@ -189,7 +189,10 @@ interface DelegatedReviewFixture {
     launchArtifactPath: string;
 }
 
-function configureCustomCatalogFixture(repoRoot: string): void {
+function configureCustomCatalogFixture(
+    repoRoot: string,
+    lifecycleReviewType: string = ARCHITECTURE_REVIEW
+): void {
     const configRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
     const catalogPath = path.join(configRoot, 'review-catalog.json');
     const capabilitiesPath = path.join(configRoot, 'review-capabilities.json');
@@ -212,21 +215,40 @@ function configureCustomCatalogFixture(repoRoot: string): void {
         performance: false,
         infra: false,
         dependency: false,
-        [ARCHITECTURE_REVIEW]: true,
-        [LIBRARY_REVIEW]: false
+        [ARCHITECTURE_REVIEW]: lifecycleReviewType === ARCHITECTURE_REVIEW,
+        [LIBRARY_REVIEW]: lifecycleReviewType === LIBRARY_REVIEW
     };
     balanced.review_dependency_graph = {
-        preparation_order: ['code', ARCHITECTURE_REVIEW],
-        dependencies: { [ARCHITECTURE_REVIEW]: ['code'] }
+        preparation_order: ['code', lifecycleReviewType],
+        dependencies: { [lifecycleReviewType]: ['code'] }
     };
     fs.writeFileSync(profilesPath, `${JSON.stringify(profiles, null, 2)}\n`, 'utf8');
+
+    const dependencyReviewSkillPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'live',
+        'skills',
+        'dependency-review',
+        'SKILL.md'
+    );
+    fs.mkdirSync(path.dirname(dependencyReviewSkillPath), { recursive: true });
+    fs.writeFileSync(
+        dependencyReviewSkillPath,
+        '# Dependency review\n\nFixture review skill entrypoint.\n',
+        'utf8'
+    );
 }
 
-function seedCustomCatalogLifecycleTask(repoRoot: string, taskId: string): string {
+function seedCustomCatalogLifecycleTask(
+    repoRoot: string,
+    taskId: string,
+    lifecycleReviewType: string = ARCHITECTURE_REVIEW
+): string {
     seedTaskQueue(repoRoot, taskId);
     seedInitAnswers(repoRoot, 'Codex');
     const provisionalPreflightPath = writePreflight(repoRoot, taskId);
-    configureCustomCatalogFixture(repoRoot);
+    configureCustomCatalogFixture(repoRoot, lifecycleReviewType);
     initializeGitRepo(repoRoot);
     fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const customCatalogValue = 2;\n', 'utf8');
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
@@ -240,7 +262,7 @@ function seedCustomCatalogLifecycleTask(repoRoot: string, taskId: string): strin
             scope_content_sha256: snapshot.scope_content_sha256,
             scope_sha256: snapshot.scope_sha256
         },
-        required_reviews: { code: true, [ARCHITECTURE_REVIEW]: true },
+        required_reviews: { code: true, [lifecycleReviewType]: true },
         triggers: { runtime_changed: true, runtime_code_changed: true }
     });
     assert.equal(preflightPath, provisionalPreflightPath);
@@ -345,6 +367,13 @@ async function launchAuthenticatedReviewer(
         '--record-invocation'
     ], { cwd: repoRoot });
     assert.equal(completed.exitCode, 0, completed.errors.join('\n'));
+    attestReviewerInvocationForTest({
+        repoRoot,
+        taskId,
+        reviewType: fixture.reviewType,
+        reviewContextPath: fixture.reviewContextPath,
+        reviewerIdentity: fixture.reviewerIdentity
+    });
 }
 
 async function recordDelegatedReviewReport(
@@ -563,7 +592,7 @@ test('delegated catalog lifecycle records PASS receipt and rejects a forged comp
     const repoRoot = createTempRepo();
     const taskId = 'T-729-8B-catalog-pass';
     try {
-        const preflightPath = seedCustomCatalogLifecycleTask(repoRoot, taskId);
+        const preflightPath = seedCustomCatalogLifecycleTask(repoRoot, taskId, LIBRARY_REVIEW);
         const codeFixture = await buildDelegatedReviewFixture(repoRoot, taskId, preflightPath, 'code');
         attestReviewerInvocationForTest({
             repoRoot,
@@ -584,29 +613,23 @@ test('delegated catalog lifecycle records PASS receipt and rejects a forged comp
             repoRoot,
             taskId,
             preflightPath,
-            ARCHITECTURE_REVIEW
+            LIBRARY_REVIEW
         );
-        attestReviewerInvocationForTest({
-            repoRoot,
-            taskId,
-            reviewType: ARCHITECTURE_REVIEW,
-            reviewContextPath: fixture.reviewContextPath,
-            reviewerIdentity: fixture.reviewerIdentity
-        });
+        await launchAuthenticatedReviewer(repoRoot, taskId, fixture);
         const recorded = await recordDelegatedReviewReport(
             repoRoot,
             taskId,
             fixture,
-            buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId, ARCHITECTURE_REVIEW)
+            buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId, LIBRARY_REVIEW)
         );
         assert.equal(recorded.exitCode, 0, recorded.errors.join('\n'));
 
         const receiptPath = path.join(
             fixture.reviewsRoot,
-            `${taskId}-${ARCHITECTURE_REVIEW}-receipt.json`
+            `${taskId}-${LIBRARY_REVIEW}-receipt.json`
         );
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, any>;
-        assert.equal(receipt.review_type, ARCHITECTURE_REVIEW);
+        assert.equal(receipt.review_type, LIBRARY_REVIEW);
         assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
         assert.equal(receipt.reviewer_identity, fixture.reviewerIdentity);
         assert.equal(receipt.review_findings_disposition.verdict, 'pass_no_findings');
@@ -622,7 +645,7 @@ test('delegated catalog lifecycle records PASS receipt and rejects a forged comp
             codeReviewVerdict: 'REVIEW PASSED',
             reviewAuthorshipAttestationJson: JSON.stringify({
                 code: true,
-                [ARCHITECTURE_REVIEW]: true
+                [LIBRARY_REVIEW]: true
             }),
             outputFiltersPath: writeBudgetOutputFilters(repoRoot),
             emitMetrics: false
@@ -667,6 +690,8 @@ test('delegated catalog lifecycle records PASS receipt and rejects a forged comp
             errors: forgedErrors
         });
         assert.equal(forgedEvidence.receiptReviewTrustSummary?.status, 'UNAVAILABLE');
+        assert.ok(forgedErrors.length > 0, 'forged receipt must block completion evidence collection');
+        assert.match(forgedErrors.join('\n'), /receipt|review_artifact_sha256|artifact hash/iu);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -676,7 +701,7 @@ test('delegated catalog lifecycle records FAIL findings and scopes remediation a
     const repoRoot = createTempRepo();
     const taskId = 'T-729-8B-catalog-fail';
     try {
-        const preflightPath = seedCustomCatalogLifecycleTask(repoRoot, taskId);
+        const preflightPath = seedCustomCatalogLifecycleTask(repoRoot, taskId, LIBRARY_REVIEW);
         const codeFixture = await buildDelegatedReviewFixture(repoRoot, taskId, preflightPath, 'code');
         attestReviewerInvocationForTest({
             repoRoot,
@@ -697,23 +722,23 @@ test('delegated catalog lifecycle records FAIL findings and scopes remediation a
             repoRoot,
             taskId,
             preflightPath,
-            ARCHITECTURE_REVIEW
+            LIBRARY_REVIEW
         );
         await launchAuthenticatedReviewer(repoRoot, taskId, fixture);
         const recorded = await recordDelegatedReviewReport(
             repoRoot,
             taskId,
             fixture,
-            buildFailedJsonReviewReport(fixture.reviewContextPath, taskId, ARCHITECTURE_REVIEW)
+            buildFailedJsonReviewReport(fixture.reviewContextPath, taskId, LIBRARY_REVIEW)
         );
         assert.equal(recorded.exitCode, 0, recorded.errors.join('\n'));
 
         const receiptPath = path.join(
             fixture.reviewsRoot,
-            `${taskId}-${ARCHITECTURE_REVIEW}-receipt.json`
+            `${taskId}-${LIBRARY_REVIEW}-receipt.json`
         );
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, any>;
-        assert.equal(receipt.review_type, ARCHITECTURE_REVIEW);
+        assert.equal(receipt.review_type, LIBRARY_REVIEW);
         assert.equal(receipt.review_findings_disposition.verdict, 'fail_for_fix_now');
         assert.equal(receipt.review_findings_disposition.blocking_count, 1);
 
@@ -731,14 +756,14 @@ test('delegated catalog lifecycle records FAIL findings and scopes remediation a
 
         const baselinePath = path.join(
             fixture.reviewsRoot,
-            `${taskId}-${ARCHITECTURE_REVIEW}-remediation-baseline.json`
+            `${taskId}-${LIBRARY_REVIEW}-remediation-baseline.json`
         );
         const baselineSha256 = fileSha256(baselinePath);
         fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const remediated = true;\n', 'utf8');
         const delta = classifyReviewRemediationDelta({
             repoRoot,
             taskId,
-            reviewType: ARCHITECTURE_REVIEW,
+            reviewType: LIBRARY_REVIEW,
             baselineArtifactPath: baselinePath,
             baselineArtifactSha256: baselineSha256,
             currentChangedFiles: ['src/app.ts'],
@@ -750,11 +775,11 @@ test('delegated catalog lifecycle records FAIL findings and scopes remediation a
         const rerun = resolveReviewRemediationRerunLanes({
             policy,
             category: delta.category,
-            currentReviewType: ARCHITECTURE_REVIEW,
+            currentReviewType: LIBRARY_REVIEW,
             requiredReviews: preflight.required_reviews,
             reviewExecutionPolicyMode: 'strict_sequential'
         });
-        assert.deepEqual(rerun.ordered_rerun_lanes, [ARCHITECTURE_REVIEW]);
+        assert.deepEqual(rerun.ordered_rerun_lanes, [LIBRARY_REVIEW]);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
