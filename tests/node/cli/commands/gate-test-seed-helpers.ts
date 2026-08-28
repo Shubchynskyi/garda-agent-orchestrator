@@ -33,6 +33,7 @@ import {
 } from '../../../../src/gates/review-reuse';
 import {buildReviewTreeState} from '../../../../src/gates/review/review-tree-state';
 import {
+    buildReviewCoverageContract,
     type ReviewCoverageContract
 } from '../../../../src/gates/review/review-coverage-ledger';
 import {
@@ -46,6 +47,7 @@ import {
     type ReviewExecutionEvidenceBindings
 } from '../../../../src/gates/review/review-evidence-contract';
 import {
+    buildReviewRemediationReviewContract,
     type ReviewerRemediationCoverageDeclaration,
     type ReviewRemediationReviewContract
 } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
@@ -1045,6 +1047,17 @@ function buildReceiptBackedReviewContextFixture(
     && !Array.isArray(preflightFixture.preflight.metrics)
         ? preflightFixture.preflight.metrics as Record<string, unknown>
         : {};
+    const reviewExecution = buildReviewRemediationReviewContract({
+        taskId,
+        reviewType: reviewKey,
+        preflightSha256: preflightFixture.preflightSha256
+            || createHash('sha256').update(JSON.stringify(preflightFixture.preflight)).digest('hex'),
+        fullReviewScope: changedFiles
+    });
+    const coverageContract = buildReviewCoverageContract({
+        reviewType: reviewKey,
+        changedFiles
+    });
     const reviewTreeState = buildReviewTreeState({
         repoRoot,
         detectionSource: preflightFixture.preflight.detection_source || 'explicit_changed_files',
@@ -1053,6 +1066,7 @@ function buildReceiptBackedReviewContextFixture(
         metrics
     });
     const reviewContext = {
+        schema_version: 4,
         task_id: taskId,
         review_type: reviewKey,
         preflight_path: preflightPath.replace(/\\/g, '/'),
@@ -1064,6 +1078,13 @@ function buildReceiptBackedReviewContextFixture(
             metadata: null
         },
         tree_state: reviewTreeState,
+        coverage_contract: coverageContract,
+        coverage_scope: {
+            changed_files: changedFiles,
+            changed_file_count: changedFiles.length,
+            changed_files_sha256: createHash('sha256').update(changedFiles.join('\n')).digest('hex')
+        },
+        review_execution: reviewExecution,
         rule_context: {
             artifact_path: promptArtifactPath.replace(/\\/g, '/'),
             preferred_prompt_artifact: promptArtifactPath.replace(/\\/g, '/'),

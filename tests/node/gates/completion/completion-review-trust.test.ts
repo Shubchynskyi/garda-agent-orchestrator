@@ -302,6 +302,7 @@ describe('gates/completion review trust', () => {
             const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
             const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
             const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            assert.match(String(receipt.review_execution_contract_sha256 || ''), /^[a-f0-9]{64}$/u);
             receipt.preflight_sha256 = 'a'.repeat(64);
             receipt.domain_scope_fingerprints = buildDomainScopeFingerprints({
                 repoRoot,
