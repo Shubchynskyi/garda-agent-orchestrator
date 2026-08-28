@@ -20,6 +20,7 @@ import {
     getReviewFollowUpTaskClosurePolicySnapshotViolations,
     type ReviewFollowUpTaskClosurePolicySnapshot
 } from '../../core/review-follow-up-task-closure-policy';
+import { resolveCompiledReviewDependencyGraphFromPreflight } from '../../core/review-dependency-graph';
 import { allocateParentDerivedTaskIds } from '../../core/task-id-allocation';
 import {
     formatActiveTaskQueueTable,
@@ -2185,6 +2186,29 @@ function validateGroupedSourceCycleEvidence(params: {
     if (normalizeText(contextRead.value.review_type) !== params.reviewType) {
         violations.push('Review context review_type does not match the grouped follow-up source lane.');
     }
+    const preflightPath = path.join(params.reviewsRoot, `${params.taskId}-preflight.json`);
+    const preflightRead = readJsonFile(preflightPath, 'Preflight artifact');
+    violations.push(...preflightRead.violations);
+    if (!preflightRead.value) {
+        return violations;
+    }
+    try {
+        const dependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(preflightRead.value);
+        if (
+            dependencyGraph
+            && (
+                dependencyGraph.full_suite_barrier.enabled !== true
+                || !dependencyGraph.full_suite_barrier.before_review_ids.includes(params.reviewType)
+            )
+        ) {
+            return violations;
+        }
+    } catch (error: unknown) {
+        violations.push(
+            `Grouped follow-up source full-suite policy binding is invalid: ${errorMessage(error)}`
+        );
+        return violations;
+    }
     const fullSuite = isPlainRecord(contextRead.value.full_suite_validation)
         ? contextRead.value.full_suite_validation
         : null;
@@ -2504,13 +2528,15 @@ export function materializeReviewFindingsFollowUpTasks(
             receipt: receiptRead.value
         })
         : [];
-    const groupedRequiredReviewViolations = validateGroupedRequiredReviewCompletion({
-        repoRoot,
-        reviewsRoot,
-        taskId,
-        reviewType,
-        materializationContext
-    });
+    const groupedRequiredReviewViolations = disposition.items.some((item) => item.action === 'create_follow_up')
+        ? validateGroupedRequiredReviewCompletion({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            reviewType,
+            materializationContext
+        })
+        : [];
     const validationInventoryViolations = validationArtifact
         ? validateValidationInventoryShape(validationArtifact)
         : [];

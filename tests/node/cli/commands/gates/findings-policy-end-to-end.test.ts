@@ -184,7 +184,15 @@ describe('findings policy end-to-end lifecycle', () => {
             const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
                 coverage_contract: { obligations: Array<{ id: string }> };
                 task_scope: { changed_files: string[] };
+                full_suite_validation: unknown;
             };
+            const preflight = JSON.parse(fs.readFileSync(fixture.preflightPath, 'utf8')) as {
+                effective_review_snapshot: {
+                    review_dependency_graph: { full_suite_barrier: { enabled: boolean } };
+                };
+            };
+            assert.equal(preflight.effective_review_snapshot.review_dependency_graph.full_suite_barrier.enabled, false);
+            assert.equal(reviewContext.full_suite_validation, null);
             const report = buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId);
             const coverageLedger = report.coverage_ledger as {
                 entries: Array<{ finding_ids: string[] }>;
