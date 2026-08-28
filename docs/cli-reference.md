@@ -659,11 +659,17 @@ garda review-catalog enable|disable <review-id> --target-root "."
 garda review-catalog profile-bind <review-id> --profile <name> --state <disabled|auto|required> --target-root "."
 garda review-catalog dependency <review-id> --profile <name> --depends-on <review-id> --target-root "."
 garda review-catalog dependency <review-id> --profile <name> --clear-dependencies --target-root "."
+garda review-catalog migrate --target-root "."
+garda review-catalog migrate --confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601> --target-root "."
+garda review-catalog migrate --apply --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --confirmation-receipt-sha256 <hash> --target-root "."
 ```
 
 Notes:
 
 - A missing `live/config/review-catalog.json` is legacy-compatible: inspection exposes the built-in lanes with their canonical verdict tokens.
+- `migrate` is an explicit guarded migration for legacy configuration. Its first call is a dry-run that validates and normalizes the catalog, capabilities, and profiles, then reports parity hashes for required reviews, verdict/receipt tokens, dependency order, and task-report lanes without writing.
+- Migration retains `review-capabilities.json`, preserves its effective choices and the configured or implicit review-execution preset, and never enables custom lanes. It uses the same separate confirmation, one-time receipt, transaction lock, audit, backup, and rollback path as catalog mutations.
+- A stale workflow preset, invalid legacy config, interrupted publish, or parity mismatch fails closed. A repeated migration after successful normalization returns an unchanged preview and applies as `NO_CHANGE` when separately confirmed.
 - Custom lanes are declarative and disabled by default. The CLI rejects prompt bodies, verdict-token overrides, built-in replacement, and unrecognized fields.
 - `list`, `show`, `explain`, and `validate` are read-only. Mutations affect future task snapshots only.
 - A mutation call without a phase flag is preview-only. Confirm the exact preview with `--confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601>`, then apply it with `--apply`, the same expected hashes, and `--confirmation-receipt-sha256 <hash>`.

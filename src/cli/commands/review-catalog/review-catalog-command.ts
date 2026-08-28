@@ -9,6 +9,11 @@ import {
     buildReviewCatalogLaneExplanation,
     requireInspectionLane
 } from './review-catalog-inspection';
+import {
+    buildReviewCatalogMigrationPlan,
+    readReviewCatalogMigrationContext,
+    REVIEW_CATALOG_MIGRATION_OPERATION
+} from './review-catalog-migration';
 import { buildReviewCatalogManagementPlan } from './review-catalog-plan';
 import {
     readReviewCatalogManagedState,
@@ -23,6 +28,8 @@ import {
     issueReviewCatalogConfirmationReceipt
 } from './review-catalog-transaction';
 import type {
+    ReviewCatalogCommandRoots,
+    ReviewCatalogManagementPlan,
     ReviewCatalogMutationOperation,
     ReviewCatalogMutationRequest,
     ReviewCatalogProfileState
@@ -39,8 +46,19 @@ const INSPECTION_OPTIONS = {
     '--profile': { key: 'profileName', type: 'string' }
 };
 
-const MUTATION_OPTIONS = {
+const GUARDED_PHASE_OPTIONS = {
     ...SHARED_OPTIONS,
+    '--confirm': { key: 'confirm', type: 'boolean' },
+    '--apply': { key: 'apply', type: 'boolean' },
+    '--expected-state-sha256': { key: 'expectedStateSha256', type: 'string' },
+    '--expected-plan-sha256': { key: 'expectedPlanSha256', type: 'string' },
+    '--confirmation-receipt-sha256': { key: 'confirmationReceiptSha256', type: 'string' },
+    '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+    '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }
+};
+
+const MUTATION_OPTIONS = {
+    ...GUARDED_PHASE_OPTIONS,
     '--display-label': { key: 'displayLabel', type: 'string' },
     '--skill-id': { key: 'skillId', type: 'string' },
     '--trigger-mode': { key: 'triggerMode', type: 'string' },
@@ -51,15 +69,10 @@ const MUTATION_OPTIONS = {
     '--profile': { key: 'profileName', type: 'string' },
     '--state': { key: 'profileState', type: 'string' },
     '--depends-on': { key: 'dependencyIds', type: 'string[]' },
-    '--clear-dependencies': { key: 'clearDependencies', type: 'boolean' },
-    '--confirm': { key: 'confirm', type: 'boolean' },
-    '--apply': { key: 'apply', type: 'boolean' },
-    '--expected-state-sha256': { key: 'expectedStateSha256', type: 'string' },
-    '--expected-plan-sha256': { key: 'expectedPlanSha256', type: 'string' },
-    '--confirmation-receipt-sha256': { key: 'confirmationReceiptSha256', type: 'string' },
-    '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
-    '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }
+    '--clear-dependencies': { key: 'clearDependencies', type: 'boolean' }
 };
+
+const MIGRATION_OPTIONS = GUARDED_PHASE_OPTIONS;
 
 const MUTATION_OPERATIONS = new Set<ReviewCatalogMutationOperation>([
     'create',
@@ -214,16 +227,12 @@ function handleInspection(
     }, options);
 }
 
-function handleMutation(
-    operation: ReviewCatalogMutationOperation,
-    positionals: string[],
-    options: ParsedOptionsRecord
+function executeGuardedPlan(
+    roots: ReviewCatalogCommandRoots,
+    plan: ReviewCatalogManagementPlan,
+    options: ParsedOptionsRecord,
+    readCurrentStateSha256: () => string
 ): Record<string, unknown> {
-    const roots = resolveReviewCatalogRoots(options);
-    const state = readReviewCatalogManagedState(roots);
-    const reviewId = requireReviewId(positionals, operation);
-    const request = requestFromOptions(operation, reviewId, options);
-    const plan = buildReviewCatalogManagementPlan(state, request);
     const confirm = options.confirm === true;
     const apply = options.apply === true;
     if (confirm && apply) {
@@ -245,7 +254,7 @@ function handleMutation(
             expectedStateSha256: stringOption(options, 'expectedStateSha256') || '',
             expectedPlanSha256: stringOption(options, 'expectedPlanSha256') || '',
             operatorConfirmedAtUtc: stringOption(options, 'operatorConfirmedAtUtc') || '',
-            readCurrentStateSha256: () => readReviewCatalogManagedState(roots).stateSha256
+            readCurrentStateSha256
         });
         return printResult({
             ...buildMutationCommandResult(plan, null),
@@ -273,9 +282,39 @@ function handleMutation(
         expectedStateSha256: stringOption(options, 'expectedStateSha256') || '',
         expectedPlanSha256: stringOption(options, 'expectedPlanSha256') || '',
         confirmationReceiptSha256: stringOption(options, 'confirmationReceiptSha256') || '',
-        readCurrentStateSha256: () => readReviewCatalogManagedState(roots).stateSha256
+        readCurrentStateSha256
     });
     return printResult(buildMutationCommandResult(plan, transaction), options);
+}
+
+function handleMutation(
+    operation: ReviewCatalogMutationOperation,
+    positionals: string[],
+    options: ParsedOptionsRecord
+): Record<string, unknown> {
+    const roots = resolveReviewCatalogRoots(options);
+    const state = readReviewCatalogManagedState(roots);
+    const reviewId = requireReviewId(positionals, operation);
+    const request = requestFromOptions(operation, reviewId, options);
+    const plan = buildReviewCatalogManagementPlan(state, request);
+    return executeGuardedPlan(
+        roots,
+        plan,
+        options,
+        () => readReviewCatalogManagedState(roots).stateSha256
+    );
+}
+
+function handleMigration(options: ParsedOptionsRecord): Record<string, unknown> {
+    const roots = resolveReviewCatalogRoots(options);
+    const context = readReviewCatalogMigrationContext(roots);
+    const plan = buildReviewCatalogMigrationPlan(context);
+    return executeGuardedPlan(
+        roots,
+        plan,
+        options,
+        () => readReviewCatalogMigrationContext(roots).migrationStateSha256
+    );
 }
 
 export function handleReviewCatalog(
@@ -287,9 +326,10 @@ export function handleReviewCatalog(
     const action = hasExplicitAction ? firstArg : 'list';
     const actionArgv = hasExplicitAction ? commandArgv.slice(1) : commandArgv;
     const mutation = MUTATION_OPERATIONS.has(action as ReviewCatalogMutationOperation);
+    const migration = action === REVIEW_CATALOG_MIGRATION_OPERATION;
     const { options, positionals } = parseOptions(
         actionArgv,
-        mutation ? MUTATION_OPTIONS : INSPECTION_OPTIONS,
+        migration ? MIGRATION_OPTIONS : mutation ? MUTATION_OPTIONS : INSPECTION_OPTIONS,
         { allowPositionals: action === 'show' || action === 'explain' || mutation, maxPositionals: 1 }
     );
     if (options.help) {
@@ -306,7 +346,10 @@ export function handleReviewCatalog(
     if (mutation) {
         return handleMutation(action as ReviewCatalogMutationOperation, positionals, options as ParsedOptionsRecord);
     }
+    if (migration) {
+        return handleMigration(options as ParsedOptionsRecord);
+    }
     throw new Error(
-        `Unknown review-catalog action: ${action}. Allowed values: list, show, explain, validate, create, update, enable, disable, profile-bind, dependency.`
+        `Unknown review-catalog action: ${action}. Allowed values: list, show, explain, validate, migrate, create, update, enable, disable, profile-bind, dependency.`
     );
 }

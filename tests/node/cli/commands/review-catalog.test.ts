@@ -9,6 +9,11 @@ import { buildCommandHelpText } from '../../../../src/cli/commands/cli-help-outp
 import { resolveCommandParityPolicy } from '../../../../src/cli/commands/dispatch/parity-policy';
 import { handleReviewCatalog } from '../../../../src/cli/commands/review-catalog-command';
 import {
+    buildReviewCatalogMigrationPlan,
+    readReviewCatalogMigrationContext
+} from '../../../../src/cli/commands/review-catalog/review-catalog-migration';
+import { resolveReviewCatalogRoots } from '../../../../src/cli/commands/review-catalog/review-catalog-state';
+import {
     commitReviewCatalogManagementPlan,
     issueReviewCatalogConfirmationReceipt,
     type ReviewCatalogManagementPlan
@@ -80,6 +85,11 @@ function createWorkspace(): TestWorkspace {
         `${JSON.stringify(createProfiles(), null, 2)}\n`,
         'utf8'
     );
+    fs.writeFileSync(
+        path.join(configDir, 'workflow-config.json'),
+        `${JSON.stringify({ review_execution_policy: { mode: 'strict_sequential' } }, null, 2)}\n`,
+        'utf8'
+    );
     return { repoRoot, bundleRoot, configDir };
 }
 
@@ -99,6 +109,10 @@ function createArgs(workspace: TestWorkspace): string[] {
         '--focus-tag', 'maintainability',
         ...sharedArgs(workspace)
     ];
+}
+
+function migrationArgs(workspace: TestWorkspace): string[] {
+    return ['migrate', ...sharedArgs(workspace)];
 }
 
 function captureCommand(argv: string[]): { result: CommandResult; output: string } {
@@ -192,6 +206,9 @@ test('review-catalog help exposes accurate definition options and executable gua
     const lines = help.split(/\r?\n/u).map((line) => line.trim());
     const confirmLine = lines.find((line) => line.includes('review-catalog <mutation>') && line.includes('--confirm'));
     const applyLine = lines.find((line) => line.includes('review-catalog <mutation>') && line.includes('--apply'));
+    const migrationPreviewLine = lines.find((line) => line.includes('review-catalog migrate [--target-root'));
+    const migrationConfirmLine = lines.find((line) => line.includes('review-catalog migrate --confirm'));
+    const migrationApplyLine = lines.find((line) => line.includes('review-catalog migrate --apply'));
 
     assert.match(help, /garda review-catalog \[list\|validate\]/u);
     assert.match(
@@ -214,11 +231,224 @@ test('review-catalog help exposes accurate definition options and executable gua
     assert.match(applyLine, /--expected-plan-sha256 SHA256/u);
     assert.match(applyLine, /--confirmation-receipt-sha256 SHA256/u);
     assert.doesNotMatch(applyLine, /--operator-confirmed(?:-|\s)/u);
+    assert.ok(migrationPreviewLine, 'help must show migration dry-run');
+    assert.ok(migrationConfirmLine, 'help must show migration confirmation');
+    assert.match(migrationConfirmLine, /--operator-confirmed-at-utc/u);
+    assert.ok(migrationApplyLine, 'help must show migration apply');
+    assert.match(migrationApplyLine, /--confirmation-receipt-sha256 SHA256/u);
+    assert.doesNotMatch(migrationApplyLine, /--operator-confirmed(?:-|\s)/u);
     assert.match(help, /missing catalog remains legacy-compatible/u);
+    assert.match(help, /Migration is explicit and preview-only by default/u);
+    assert.match(help, /retains.*review execution mode/iu);
     assert.match(help, /Custom lanes are disabled by default/u);
     assert.match(help, /preview/u);
     assert.match(help, /future task snapshots only/u);
     assert.doesNotMatch(help, /supply.*prompt bod/u);
+});
+
+test('review-catalog migrate previews parity and applies normalized legacy config atomically', () => {
+    const workspace = createWorkspace();
+    const catalogPath = path.join(workspace.configDir, 'review-catalog.json');
+    const capabilitiesPath = path.join(workspace.configDir, 'review-capabilities.json');
+    const profilesPath = path.join(workspace.configDir, 'profiles.json');
+    const workflowPath = path.join(workspace.configDir, 'workflow-config.json');
+    const capabilitiesBefore = JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8'));
+    const profilesBefore = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const workflowBefore = fs.readFileSync(workflowPath, 'utf8');
+    try {
+        const args = migrationArgs(workspace);
+        const previewCapture = captureCommand(args);
+        const preview = previewCapture.result;
+        assert.equal(preview.action, 'migrate');
+        assert.equal(preview.mode, 'preview');
+        assert.equal(preview.status, 'PREVIEW');
+        assert.equal(preview.changed, true);
+        assert.equal(preview.migration_parity.status, 'PASS');
+        assert.equal(preview.migration_parity.source_catalog_mode, 'implicit_compatibility');
+        assert.equal(preview.migration_parity.target_catalog_mode, 'explicit_config');
+        assert.equal(preview.migration_parity.review_execution_mode, 'strict_sequential');
+        assert.ok(Object.values(preview.migration_parity.contracts).every((contract: any) => contract.equal));
+        const textPreview = captureCommand([
+            'migrate',
+            '--target-root', workspace.repoRoot,
+            '--bundle-root', workspace.bundleRoot
+        ]);
+        assert.match(textPreview.output, /MigrationParity: PASS/u);
+        assert.equal(fs.existsSync(catalogPath), false, 'migration preview must not write config');
+
+        const confirmation = confirmPreview(args, preview);
+        const applied = applyConfirmedPreview(args, preview, confirmation);
+        assert.equal(applied.status, 'APPLIED');
+        assert.ok(applied.audit_path && fs.existsSync(applied.audit_path));
+        assert.ok(applied.backup_path && fs.existsSync(applied.backup_path));
+        assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), {
+            version: 1,
+            custom_review_types: []
+        });
+        assert.deepEqual(JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8')), capabilitiesBefore);
+        assert.deepEqual(JSON.parse(fs.readFileSync(profilesPath, 'utf8')), profilesBefore);
+        assert.equal(fs.readFileSync(workflowPath, 'utf8'), workflowBefore);
+
+        const auditRecords = fs.readFileSync(applied.audit_path, 'utf8')
+            .trim()
+            .split(/\r?\n/u)
+            .map((line) => JSON.parse(line));
+        assert.deepEqual(auditRecords.map((record: CommandResult) => record.transaction_state), [
+            'PREPARED',
+            'COMMITTED'
+        ]);
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog migrate is idempotent after normalized apply', () => {
+    const workspace = createWorkspace();
+    try {
+        const args = migrationArgs(workspace);
+        const firstPreview = captureCommand(args).result;
+        applyPreview(args, firstPreview);
+
+        const repeatedPreview = captureCommand(args).result;
+        assert.equal(repeatedPreview.changed, false);
+        assert.equal(repeatedPreview.before_state_sha256, repeatedPreview.after_state_sha256);
+        assert.deepEqual(repeatedPreview.changed_files, []);
+        assert.equal(repeatedPreview.migration_parity.status, 'PASS');
+
+        const repeatedApply = applyPreview(args, repeatedPreview);
+        assert.equal(repeatedApply.status, 'NO_CHANGE');
+        assert.equal(repeatedApply.backup_path, null);
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog migrate rejects stale workflow state without writes', () => {
+    const workspace = createWorkspace();
+    const catalogPath = path.join(workspace.configDir, 'review-catalog.json');
+    const workflowPath = path.join(workspace.configDir, 'workflow-config.json');
+    try {
+        const args = migrationArgs(workspace);
+        const preview = captureCommand(args).result;
+        const confirmation = confirmPreview(args, preview);
+        fs.writeFileSync(
+            workflowPath,
+            `${JSON.stringify({ review_execution_policy: { mode: 'parallel_all' } }, null, 2)}\n`,
+            'utf8'
+        );
+
+        assert.throws(
+            () => applyConfirmedPreview(args, preview, confirmation),
+            /expected state sha-256|changed after preview|stale preview/iu
+        );
+        assert.equal(fs.existsSync(catalogPath), false);
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog migrate rejects invalid legacy config without writes', () => {
+    const workspace = createWorkspace();
+    const catalogPath = path.join(workspace.configDir, 'review-catalog.json');
+    const capabilitiesPath = path.join(workspace.configDir, 'review-capabilities.json');
+    try {
+        fs.writeFileSync(capabilitiesPath, '{"code":true,"unknown-lane":true}\n', 'utf8');
+        assert.throws(
+            () => captureCommand(migrationArgs(workspace)),
+            /unknown|review-capabilities/iu
+        );
+        assert.equal(fs.existsSync(catalogPath), false);
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog migrate rolls back interrupted normalized publication', () => {
+    const workspace = createWorkspace();
+    const catalogPath = path.join(workspace.configDir, 'review-catalog.json');
+    const capabilitiesPath = path.join(workspace.configDir, 'review-capabilities.json');
+    const capabilities = JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8'));
+    fs.writeFileSync(capabilitiesPath, JSON.stringify(capabilities), 'utf8');
+    const capabilitiesBefore = fs.readFileSync(capabilitiesPath, 'utf8');
+    try {
+        const roots = resolveReviewCatalogRoots({
+            targetRoot: workspace.repoRoot,
+            bundleRoot: workspace.bundleRoot
+        });
+        const context = readReviewCatalogMigrationContext(roots);
+        const plan = buildReviewCatalogMigrationPlan(context);
+        assert.ok(plan.changes.length >= 2);
+        const confirmation = issueReviewCatalogConfirmationReceipt({
+            repoRoot: workspace.repoRoot,
+            bundleRoot: workspace.bundleRoot,
+            plan,
+            expectedStateSha256: plan.before_state_sha256,
+            expectedPlanSha256: plan.plan_sha256,
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            readCurrentStateSha256: () => readReviewCatalogMigrationContext(roots).migrationStateSha256
+        });
+        let writes = 0;
+
+        assert.throws(
+            () => commitReviewCatalogManagementPlan({
+                repoRoot: workspace.repoRoot,
+                bundleRoot: workspace.bundleRoot,
+                plan,
+                expectedStateSha256: plan.before_state_sha256,
+                expectedPlanSha256: plan.plan_sha256,
+                confirmationReceiptSha256: confirmation.confirmation_receipt_sha256,
+                readCurrentStateSha256: () => readReviewCatalogMigrationContext(roots).migrationStateSha256,
+                writeFile: (filePath, content) => {
+                    writes += 1;
+                    if (writes === 2) throw new Error('injected migration publish failure');
+                    fs.writeFileSync(filePath, content, 'utf8');
+                }
+            }),
+            /rolled back|migration publish failure/iu
+        );
+        assert.equal(fs.existsSync(catalogPath), false);
+        assert.equal(fs.readFileSync(capabilitiesPath, 'utf8'), capabilitiesBefore);
+        const auditPath = path.join(workspace.bundleRoot, 'runtime', 'review-catalog-management-audit.jsonl');
+        const states = fs.readFileSync(auditPath, 'utf8')
+            .trim()
+            .split(/\r?\n/u)
+            .map((line) => JSON.parse(line).transaction_state);
+        assert.deepEqual(states, ['PREPARED', 'ROLLED_BACK']);
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog migrate never enables a custom lane', () => {
+    const workspace = createWorkspace();
+    const catalogPath = path.join(workspace.configDir, 'review-catalog.json');
+    const capabilitiesPath = path.join(workspace.configDir, 'review-capabilities.json');
+    try {
+        fs.writeFileSync(catalogPath, `${JSON.stringify({
+            version: 1,
+            custom_review_types: [{
+                id: 'architecture',
+                display_label: 'Architecture review',
+                enabled_by_default: false,
+                skill_id: 'architecture-review',
+                trigger: { mode: 'manual', signal_ids: [] },
+                coverage_category_ids: ['maintainability'],
+                reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['maintainability'] }
+            }]
+        }, null, 2)}\n`, 'utf8');
+        const capabilities = JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8'));
+        capabilities.architecture = false;
+        fs.writeFileSync(capabilitiesPath, `${JSON.stringify(capabilities, null, 2)}\n`, 'utf8');
+
+        const args = migrationArgs(workspace);
+        const preview = captureCommand(args).result;
+        assert.deepEqual(preview.migration_parity.custom_capability_changes, []);
+        const applied = applyPreview(args, preview);
+        assert.ok(['APPLIED', 'NO_CHANGE'].includes(applied.status));
+        assert.equal(JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8')).architecture, false);
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
 });
 
 test('review-catalog list and validate preserve built-in compatibility when the live catalog is absent', () => {

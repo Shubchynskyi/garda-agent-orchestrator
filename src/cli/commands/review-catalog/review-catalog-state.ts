@@ -42,7 +42,7 @@ export function serializeReviewCatalogManagedConfig(value: unknown): string {
     return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function readConfigText(filePath: string, required: boolean): string | null {
+export function readReviewCatalogManagedConfigText(filePath: string, required: boolean): string | null {
     if (!fs.existsSync(filePath)) {
         if (required) throw new Error(`Managed review config not found: ${filePath}`);
         return null;
@@ -101,7 +101,8 @@ export function resolveReviewCatalogRoots(options: ParsedOptionsRecord): ReviewC
         configDir,
         catalogPath: path.join(configDir, 'review-catalog.json'),
         capabilitiesPath: path.join(configDir, 'review-capabilities.json'),
-        profilesPath: path.join(configDir, 'profiles.json')
+        profilesPath: path.join(configDir, 'profiles.json'),
+        workflowConfigPath: path.join(configDir, 'workflow-config.json')
     };
 }
 
@@ -202,9 +203,9 @@ export function computeReviewCatalogStateSha256(fileTexts: Readonly<Record<strin
 }
 
 export function readReviewCatalogManagedState(roots: ReviewCatalogCommandRoots): ReviewCatalogManagedState {
-    const catalogText = readConfigText(roots.catalogPath, false);
-    const capabilitiesText = readConfigText(roots.capabilitiesPath, true);
-    const profilesText = readConfigText(roots.profilesPath, true);
+    const catalogText = readReviewCatalogManagedConfigText(roots.catalogPath, false);
+    const capabilitiesText = readReviewCatalogManagedConfigText(roots.capabilitiesPath, true);
+    const profilesText = readReviewCatalogManagedConfigText(roots.profilesPath, true);
     const catalogConfig = parseConfigText(catalogText, {
         version: REVIEW_CATALOG_SCHEMA_VERSION,
         custom_review_types: []

@@ -13,6 +13,21 @@ export function formatReviewCatalogResult(result: Record<string, unknown>, jsonM
             lines.push(`Lane: ${lane.id} (${lane.display_label}); capability=${lane.capability_enabled ? 'enabled' : 'disabled'}`);
             continue;
         }
+        if (key === 'migration_parity' && value && typeof value === 'object') {
+            const parity = value as {
+                status: string;
+                parity_sha256: string;
+                source_catalog_mode: string;
+                target_catalog_mode: string;
+                review_execution_mode: string;
+            };
+            lines.push(
+                `MigrationParity: ${parity.status}; sha256=${parity.parity_sha256}; `
+                + `catalog=${parity.source_catalog_mode}->${parity.target_catalog_mode}; `
+                + `review_execution=${parity.review_execution_mode}`
+            );
+            continue;
+        }
         if (Array.isArray(value)) {
             lines.push(`${key}: ${value.length > 0 ? value.map((entry) => (
                 typeof entry === 'string' ? entry : JSON.stringify(entry)
@@ -45,6 +60,7 @@ export function buildMutationCommandResult(
         changed_files: plan.changes.map(({ relative_path }) => relative_path),
         diff: plan.diff,
         explanation: plan.explanation,
+        ...(plan.migration_parity ? { migration_parity: plan.migration_parity } : {}),
         task_effect: {
             scope: 'future_tasks_only',
             active_task_snapshots_changed: false

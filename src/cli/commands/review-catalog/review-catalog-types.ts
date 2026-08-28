@@ -1,6 +1,7 @@
 import type { ReviewDependencyGraphDeclaration } from '../../../core/review-dependency-graph';
 import type { NormalizedReviewCatalog } from '../../../core/review-catalog';
 import type { ReviewCapabilitiesConfigMap } from '../../../core/review-capabilities';
+import type { ReviewCatalogMigrationParity } from '../../../core/review-catalog-migration';
 import type { ProfilesData } from '../../../policy/profile-resolver';
 
 export type ReviewCatalogMutationOperation =
@@ -41,6 +42,7 @@ export interface ReviewCatalogCommandRoots {
     catalogPath: string;
     capabilitiesPath: string;
     profilesPath: string;
+    workflowConfigPath: string;
 }
 
 export interface ReviewCatalogManagedState {
@@ -100,6 +102,7 @@ export interface ReviewCatalogManagementPlan {
     proposed_catalog?: ReviewCatalogConfigFile;
     proposed_capabilities?: ReviewCapabilitiesConfigMap;
     proposed_profiles?: ProfilesData;
+    migration_parity?: ReviewCatalogMigrationParity;
 }
 
 export interface ReviewCatalogInspectionLaneSummary {

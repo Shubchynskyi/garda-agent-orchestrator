@@ -240,7 +240,15 @@ garda review-catalog explain architecture --profile balanced --target-root "."
 garda review-catalog validate --target-root "."
 ```
 
-When the file is absent, these commands resolve the built-in compatibility catalog and validation still passes. Fresh init and reinit materialize the default `{ "version": 1, "custom_review_types": [] }` and preserve valid custom definitions, but the catalog is not a mandatory legacy manifest dependency before the dedicated migration release.
+When the file is absent, these commands resolve the built-in compatibility catalog and validation still passes. Fresh init and reinit materialize the default `{ "version": 1, "custom_review_types": [] }` and preserve valid custom definitions. Existing legacy workspaces remain untouched until an operator explicitly runs the guarded migration:
+
+```text
+garda review-catalog migrate --target-root "."
+garda review-catalog migrate --confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601> --target-root "."
+garda review-catalog migrate --apply --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --confirmation-receipt-sha256 <hash> --target-root "."
+```
+
+The preview proves that the normalized explicit catalog/profile/capability configuration preserves required reviews, verdict and receipt tokens, dependency order, task-report review lanes, and the configured or implicit review-execution preset. Migration retains the legacy capability source, preserves explicit capability choices, and leaves custom lanes disabled. Confirmation and apply bind both managed config and workflow policy state; invalid or stale input fails before writes, interrupted multi-file publication rolls back from the transaction backup, and a repeated normalized migration is an auditable `NO_CHANGE`.
 
 Mutation commands are `create`, `update`, `enable`, `disable`, `profile-bind`, and `dependency`. They never write immediately: the first call returns a semantic preview plus current-state and plan hashes; `--confirm` with fresh operator confirmation creates a one-time receipt; `--apply` consumes that receipt and revalidates the same hashes and managed filesystem boundaries under the transaction lock. Management is rejected while agent tasks are active.
 
