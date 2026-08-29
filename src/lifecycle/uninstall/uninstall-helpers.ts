@@ -124,14 +124,16 @@ export function tryDetectCanonicalEntrypointFromManagedFiles(targetRoot: string,
     return null;
 }
 
-export function normalizeTextAfterManagedBlockRemoval(content: string): string {
+export function normalizeTextAfterManagedBlockRemoval(content: string, preserveTrailingNewline = false): string {
     if (!content) return '';
     const eol = detectLineEnding(content);
     let normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const hadTrailingNewline = normalized.endsWith('\n');
     normalized = normalized.replace(/\n{3,}/g, '\n\n');
     const trimmed = normalized.trim();
     if (!trimmed) return '';
-    return trimmed.split('\n').join(eol);
+    const result = trimmed.split('\n').join(eol);
+    return preserveTrailingNewline && hadTrailingNewline ? `${result}${eol}` : result;
 }
 
 export function removeEmptyDirectoriesUpwards(startDirectory: string, targetRoot: string, dryRun: boolean): number {

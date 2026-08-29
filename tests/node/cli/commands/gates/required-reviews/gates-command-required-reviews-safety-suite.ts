@@ -14,6 +14,10 @@ import { runBuildReviewContextCommand } from '../../../../../../src/cli/commands
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
 import { buildReviewTreeState } from '../../../../../../src/gates/review/review-tree-state';
+import {
+    resolveReviewContextExecutionEvidenceBindings,
+    type ReviewExecutionEvidenceBindings
+} from '../../../../../../src/gates/review/review-evidence-contract';
 import { materializeReviewFindingsFollowUpTasks } from '../../../../../../src/gates/review/review-findings-follow-up-tasks';
 import {
     buildReviewerLaunchBindingSha256
@@ -107,6 +111,7 @@ function seedCompletedReviewerLaunchFixture(options: {
     reviewerIdentity: string;
     reviewContextSha256: string;
     routingEventSha256: string;
+    reviewExecutionBindings: ReviewExecutionEvidenceBindings;
 }): {
     launchArtifactPath: string;
     launchArtifactSha256: string;
@@ -154,7 +159,8 @@ function seedCompletedReviewerLaunchFixture(options: {
         output_template_sha256: launchInputEvidence.output_template_sha256,
         evidence_manifest_sha256: launchInputEvidence.evidence_manifest_sha256,
         launch_binding_sha256: launchBindingSha256,
-        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/')
+        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/'),
+        ...options.reviewExecutionBindings
     }, { passThru: true });
     const launchArtifactText = `${JSON.stringify({
         schema_version: 1,
@@ -176,6 +182,7 @@ function seedCompletedReviewerLaunchFixture(options: {
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         ...launchInputEvidence,
+        ...options.reviewExecutionBindings,
         fork_context: false
     }, null, 2)}\n`;
     fs.writeFileSync(launchArtifactPath, launchArtifactText, 'utf8');
@@ -345,6 +352,12 @@ function attestReviewerInvocationForTest(options: {
     const reviewContextSha256 = crypto.createHash('sha256')
         .update(fs.readFileSync(options.reviewContextPath))
         .digest('hex');
+    const reviewContext = JSON.parse(
+        fs.readFileSync(options.reviewContextPath, 'utf8')
+    ) as Record<string, unknown>;
+    const reviewExecutionEvidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
+    assert.ok(reviewExecutionEvidence.bindings, reviewExecutionEvidence.violations.join('\n'));
+    const reviewExecutionBindings = reviewExecutionEvidence.bindings;
     const reviewTreeStateSha256 = readReviewTreeStateSha256FromContextPath(options.reviewContextPath);
     const launchEvidence = seedCompletedReviewerLaunchFixture({
         repoRoot: options.repoRoot,
@@ -352,7 +365,8 @@ function attestReviewerInvocationForTest(options: {
         reviewType: options.reviewType,
         reviewerIdentity: options.reviewerIdentity,
         reviewContextSha256,
-        routingEventSha256: String(routedIntegrity.event_sha256).trim()
+        routingEventSha256: String(routedIntegrity.event_sha256).trim(),
+        reviewExecutionBindings
     });
     if (events.some((event) => (
         event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
@@ -386,7 +400,8 @@ function attestReviewerInvocationForTest(options: {
         launch_input_mode: launchEvidence.launchInputMode,
         launch_input_sha256: launchEvidence.launchInputSha256,
         copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
-        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
+        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC,
+        ...reviewExecutionBindings
     });
 }
 

@@ -569,7 +569,10 @@ function buildTaskStartReviewSnapshot(options: { zeroDiff?: boolean; requireCode
         catalog,
         profilePolicy,
         profileSnapshotSha256: 'a'.repeat(64),
-        legacyRequiredReviews: Object.fromEntries(catalog.review_types.map((lane) => [lane.id, false])),
+        legacyRequiredReviews: Object.fromEntries(catalog.review_types.map((lane) => [
+            lane.id,
+            options.requireCode === true && lane.id === 'code'
+        ])),
         scopeCategory: options.zeroDiff ? 'empty' : 'code',
         taskIntent: TASK_TITLE,
         changedFiles: options.zeroDiff ? [] : ['src/gates/next-step/next-step.ts'],

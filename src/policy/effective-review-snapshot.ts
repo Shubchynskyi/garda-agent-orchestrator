@@ -321,13 +321,6 @@ function selectBuiltInLane(
     profile: ProfileReviewCatalogLane,
     options: BuildEffectiveReviewSnapshotOptions
 ): Pick<EffectiveReviewSnapshotLane, 'selection' | 'trigger_reasons' | 'inactive_reasons'> {
-    if (!profile.active) {
-        return {
-            selection: 'inactive',
-            trigger_reasons: [],
-            inactive_reasons: [profile.inactive_reason || 'profile_or_capability_inactive']
-        };
-    }
     if (options.zeroDiffBaselineOnly) {
         return {
             selection: 'inactive',
@@ -335,11 +328,11 @@ function selectBuiltInLane(
             inactive_reasons: ['zero_diff_no_reviewable_scope']
         };
     }
-    if (profile.state === 'required') {
+    if (!profile.active) {
         return {
-            selection: 'required',
-            trigger_reasons: ['profile_state=required'],
-            inactive_reasons: []
+            selection: 'inactive',
+            trigger_reasons: [],
+            inactive_reasons: [profile.inactive_reason || 'profile_or_capability_inactive']
         };
     }
     if (options.legacyRequiredReviews[definition.id] === true) {
@@ -566,7 +559,17 @@ export function getEffectiveReviewSnapshotViolations(value: unknown): string[] {
                 && Array.isArray(rawLane.inactive_reasons)
                 && rawLane.inactive_reasons.length === 1
                 && rawLane.inactive_reasons[0] === 'zero_diff_no_reviewable_scope';
-            if (profile.active === true && profile.state === 'required' && selection !== 'required'
+            const builtInCompatibilityRequired = isJsonRecord(definition)
+                && definition.built_in === true
+                && isJsonRecord(inputs)
+                && isJsonRecord(inputs.legacy_required_reviews)
+                && inputs.legacy_required_reviews[id] === true;
+            const customProfileRequired = isJsonRecord(definition)
+                && definition.built_in === false
+                && profile.state === 'required';
+            if (profile.active === true
+                && (builtInCompatibilityRequired || customProfileRequired)
+                && selection !== 'required'
                 && !zeroDiffRequiredSuppression) {
                 violations.push(`Effective review snapshot required profile lane '${id || index}' must be required.`);
             }

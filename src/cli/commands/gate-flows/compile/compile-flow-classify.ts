@@ -29,7 +29,10 @@ import {
     collectKnownReviewSkillIds,
     resolveEffectiveReviewTaskIntent
 } from '../../../../policy/effective-review-snapshot';
-import { resolveProfileReviewCatalogPolicy } from '../../../../policy/profile-review-catalog-policy';
+import {
+    resolveLegacyCompatibilityReviewCatalogBinding,
+    resolveProfileReviewCatalogPolicy
+} from '../../../../policy/profile-review-catalog-policy';
 import {
     resolveTaskProfileReviewTriggerPolicy,
     resolveTaskProfileSelectionFromSnapshot,
@@ -535,6 +538,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
     let currentTaskSummary: string | null = null;
     let effectiveTaskPolicy: ReturnType<typeof resolveTaskProfileSelection>['effective_policy'] | null = null;
+    let zeroDiffBaselineOnlyNoReviewableScope = false;
     if (resolvedTaskId) {
         prePreflightSequenceLockHandle = acquireFilesystemLock(
             resolvePrePreflightSequenceLockPath(repoRoot, resolvedTaskId),
@@ -577,6 +581,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 taskModeEvidence.dirty_workspace_baseline?.changed_files || []
             )
         };
+        zeroDiffBaselineOnlyNoReviewableScope = profileGuardrailOptions.zeroDiffBaselineOnly;
         if (
             taskModeEvidence.evidence_status === 'PASS'
             && taskModeEvidence.profile_policy_snapshot_status === 'PASS'
@@ -1031,7 +1036,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 };
             }
         }
-        if (resolvedTaskId && taskModeEvidenceForOptionalSkills?.profile_policy_snapshot) {
+        if (resolvedTaskId && taskModeEvidenceForOptionalSkills) {
             const taskProfileSnapshot = taskModeEvidenceForOptionalSkills.profile_policy_snapshot;
             const knownReviewSkillIds = collectKnownReviewSkillIds(
                 readSkillsHeadlinesIfPresent(orchestratorRoot)?.payload.skills
@@ -1040,16 +1045,24 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 path.join(orchestratorRoot, 'live', 'config', 'review-catalog.json'),
                 { knownSkillIds: knownReviewSkillIds }
             );
-            const profileCatalogPolicy = resolveProfileReviewCatalogPolicy(
-                taskProfileSnapshot.source.effective_profile,
-                taskProfileSnapshot.review_lane_selection.profile_review_policy,
-                taskProfileSnapshot.review_lane_selection.review_capabilities,
-                catalog
-            );
+            const legacyCompatibilityBinding = taskProfileSnapshot
+                ? null
+                : resolveLegacyCompatibilityReviewCatalogBinding(reviewCapabilities, catalog);
+            const profileCatalogPolicy = taskProfileSnapshot
+                ? resolveProfileReviewCatalogPolicy(
+                    taskProfileSnapshot.source.effective_profile,
+                    taskProfileSnapshot.review_lane_selection.profile_review_policy,
+                    taskProfileSnapshot.review_lane_selection.review_capabilities,
+                    catalog
+                )
+                : legacyCompatibilityBinding!.profile_policy;
+            const fullSuiteValidation = taskProfileSnapshot?.review_execution_policy.full_suite_validation
+                || loadFullSuiteValidationConfig(repoRoot);
             const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
                 catalog,
                 profilePolicy: profileCatalogPolicy,
-                profileSnapshotSha256: taskProfileSnapshot.snapshot_hash,
+                profileSnapshotSha256: taskProfileSnapshot?.snapshot_hash
+                    || legacyCompatibilityBinding!.profile_snapshot_sha256,
                 legacyRequiredReviews: result.required_reviews,
                 scopeCategory: result.scope_category,
                 taskIntent: resolveEffectiveReviewTaskIntent(options.taskIntent, currentTaskSummary),
@@ -1060,13 +1073,12 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 ),
                 optionalSkillIds: optionalSkillSelectionPreview?.payload.selected_installed_skills
                     .map((skill) => skill.id) || [],
-                zeroDiffBaselineOnly: result.zero_diff_guard.status === 'BASELINE_ONLY',
-                reviewExecutionPolicyMode: taskProfileSnapshot.review_execution_policy.mode,
+                zeroDiffBaselineOnly: zeroDiffBaselineOnlyNoReviewableScope,
+                reviewExecutionPolicyMode: taskProfileSnapshot?.review_execution_policy.mode
+                    || reviewExecutionPolicy.mode,
                 reviewDependencyGraph:
-                    taskProfileSnapshot.review_execution_policy.review_dependency_graph,
-                fullSuiteValidation:
-                    taskProfileSnapshot.review_execution_policy.full_suite_validation
-                    || loadFullSuiteValidationConfig(repoRoot)
+                    taskProfileSnapshot?.review_execution_policy.review_dependency_graph,
+                fullSuiteValidation
             });
             result.effective_review_snapshot = effectiveReviewSnapshot;
             if (result.review_execution_policy && effectiveReviewSnapshot.review_dependency_graph) {

@@ -18,10 +18,17 @@ import {
     buildReviewerLaunchBindingSha256
 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
 import {
+    resolveReviewExecutionRuntimeBindings,
+    type ReviewExecutionRuntimeBindings
+} from '../../../../../../src/cli/commands/gate-review-handlers/context/review-context-runtime-validation';
+import {
     applyReviewerRoutingMetadata
 } from '../../../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegation-policy';
+import {
+    buildReviewRemediationReviewContract
+} from '../../../../../../src/gates/review-remediation/review-remediation-review-contract';
 
 import {
     createTempRepo,
@@ -91,6 +98,7 @@ function seedCompletedReviewerLaunchFixture(options: {
     reviewerIdentity: string;
     reviewContextSha256: string;
     routingEventSha256: string;
+    reviewExecutionBindings: ReviewExecutionRuntimeBindings;
 }): {
     launchArtifactPath: string;
     launchArtifactSha256: string;
@@ -138,7 +146,8 @@ function seedCompletedReviewerLaunchFixture(options: {
         output_template_sha256: launchInputEvidence.output_template_sha256,
         evidence_manifest_sha256: launchInputEvidence.evidence_manifest_sha256,
         launch_binding_sha256: launchBindingSha256,
-        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/')
+        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/'),
+        ...options.reviewExecutionBindings
     }, { passThru: true });
     const launchArtifactText = `${JSON.stringify({
         schema_version: 1,
@@ -160,6 +169,7 @@ function seedCompletedReviewerLaunchFixture(options: {
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         ...launchInputEvidence,
+        ...options.reviewExecutionBindings,
         fork_context: false
     }, null, 2)}\n`;
     fs.writeFileSync(launchArtifactPath, launchArtifactText, 'utf8');
@@ -215,12 +225,24 @@ function manualReviewContextBindingFixture(repoRoot: string, taskId: string, rev
         ? createHash('sha256').update(fs.readFileSync(preflightPath)).digest('hex')
         : null;
     const treeState = manualReviewContextTreeStateFixture(repoRoot, taskId);
+    const preflight = fs.existsSync(preflightPath)
+        ? JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>
+        : {};
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+        : [];
     return {
         ...(treeState ? { schema_version: 2, tree_state: treeState } : {}),
         task_id: taskId,
         review_type: reviewType,
         preflight_path: preflightPath.replace(/\\/g, '/'),
         preflight_sha256: preflightSha256,
+        review_execution: buildReviewRemediationReviewContract({
+            taskId,
+            reviewType,
+            preflightSha256: preflightSha256 || '0'.repeat(64),
+            fullReviewScope: changedFiles
+        }),
         rule_context: manualReviewContextRuleContextFixture(repoRoot, taskId, reviewType)
     };
 }
@@ -366,6 +388,10 @@ function attestReviewerInvocationForTest(options: {
         reviewerSessionId: options.reviewerIdentity,
         fallbackReason: null
     });
+    const reviewContext = JSON.parse(
+        fs.readFileSync(options.reviewContextPath, 'utf8')
+    ) as Record<string, unknown>;
+    const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(reviewContext);
     const crypto = require('node:crypto');
     const reviewContextSha256 = crypto.createHash('sha256')
         .update(fs.readFileSync(options.reviewContextPath))
@@ -377,7 +403,8 @@ function attestReviewerInvocationForTest(options: {
         reviewType: options.reviewType,
         reviewerIdentity: options.reviewerIdentity,
         reviewContextSha256,
-        routingEventSha256: String(routedIntegrity.event_sha256).trim()
+        routingEventSha256: String(routedIntegrity.event_sha256).trim(),
+        reviewExecutionBindings
     });
     if (events.some((event) => (
         event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
@@ -411,7 +438,8 @@ function attestReviewerInvocationForTest(options: {
         launch_input_mode: launchEvidence.launchInputMode,
         launch_input_sha256: launchEvidence.launchInputSha256,
         copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
-        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
+        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC,
+        ...reviewExecutionBindings
     });
 }
 

@@ -141,7 +141,11 @@ export function runReviewFlowPreflightPipeline(
         },
         loadPreflight({ input: currentInput, parsed }) {
             return buildValidatedPreflight(
-                validatePreflightForReview(parsed.resolvedPreflightPath, currentInput.taskId)
+                validatePreflightForReview(
+                    parsed.resolvedPreflightPath,
+                    currentInput.taskId,
+                    String(currentInput.taskModePath || '')
+                )
             );
         },
         evaluateTimelineReadiness({ input: currentInput, parsed, preflight }) {

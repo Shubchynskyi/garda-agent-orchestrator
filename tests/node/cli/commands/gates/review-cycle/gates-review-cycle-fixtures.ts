@@ -211,7 +211,8 @@ function writeProfilesConfig(repoRoot: string): string {
                     materialization_mode: 'grouped_by_parent'
                 },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
-                skills: { auto_suggest: true }
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
             },
             strict: {
                 depth: 3,
@@ -232,7 +233,8 @@ function writeProfilesConfig(repoRoot: string): string {
                     materialization_mode: 'per_finding'
                 },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
-                skills: { auto_suggest: true }
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
             }
         },
         user_profiles: {}

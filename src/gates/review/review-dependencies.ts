@@ -18,6 +18,9 @@ import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-s
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from '../required-reviews/required-reviews-check';
 import { resolveCanonicalReviewContextPath } from '../review-context/review-context-paths';
 import {
+    jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation,
+    jsonReviewFindingsArtifactHasActiveFindings,
+    parseJsonReviewFindingsArtifact,
     reviewContextRequiresFindingsOnlyArtifact,
     resolveReviewFindingsArtifactVerdictToken
 } from './review-findings-artifact-verdict';
@@ -332,7 +335,32 @@ export function assessUpstreamReviewDependencyStatus(options: {
     const failToken = resolveReviewFailToken(options.upstreamReviewType);
     const reviewContextSha256 = String(gateHelpers.fileSha256(reviewContextPath) || '').trim().toLowerCase() || null;
     const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
-    if (!requiresFindingsOnlyArtifact) {
+    if (requiresFindingsOnlyArtifact) {
+        const findingsReport = parseJsonReviewFindingsArtifact(
+            artifactContent,
+            undefined,
+            reviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+        );
+        if (!findingsReport) {
+            return blockedDependencyStatus(
+                options.upstreamReviewType,
+                'missing_upstream_pass',
+                `review artifact verdict is 'missing' instead of '${passToken || 'unknown'}'`
+            );
+        }
+        if (
+            failToken
+            && jsonReviewFindingsArtifactHasActiveFindings(findingsReport)
+            && !jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation(findingsReport)
+        ) {
+            return blockedDependencyStatus(
+                options.upstreamReviewType,
+                'missing_upstream_pass',
+                `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
+                `'${options.upstreamReviewType}' review before launching dependent reviews`
+            );
+        }
+    } else {
         const reviewVerdict = resolveReviewFindingsArtifactVerdictToken({
             content: artifactContent,
             passToken,

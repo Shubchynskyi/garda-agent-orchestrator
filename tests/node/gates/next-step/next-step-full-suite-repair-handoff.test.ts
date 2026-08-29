@@ -280,6 +280,7 @@ describe('next-step full-suite repair child handoff', () => {
             fullSuiteArtifactPath: fullSuitePath
         });
         assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        seedStartedTask(repoRoot, childTaskIds[0]);
         writePreflight(
             repoRoot,
             childTaskIds[0],

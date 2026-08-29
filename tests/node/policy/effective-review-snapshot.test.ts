@@ -542,18 +542,18 @@ test('task audit rejects gate-derived custom trust when receipt lane evidence is
     }
 });
 
-test('explicit built-in profile policy takes precedence over compatibility requirements', () => {
-    const requiredByProfile = buildSnapshot('auto', {
+test('built-in compatibility decisions preserve contextual profile guardrails', () => {
+    const lightenedByGuardrail = buildSnapshot('auto', {
         legacyRequiredReviews: { code: false }
     }, { profileOverrides: { code: true } });
     const disabledByProfile = buildSnapshot('auto', {
         legacyRequiredReviews: { code: true }
     }, { profileOverrides: { code: false } });
 
-    assert.equal(requiredByProfile.required_reviews.code, true);
+    assert.equal(lightenedByGuardrail.required_reviews.code, false);
     assert.deepEqual(
-        requiredByProfile.lanes.find((lane) => lane.id === 'code')?.trigger_reasons,
-        ['profile_state=required']
+        lightenedByGuardrail.lanes.find((lane) => lane.id === 'code')?.trigger_reasons,
+        ['built_in_compatibility_not_required']
     );
     assert.equal(disabledByProfile.required_reviews.code, false);
     assert.deepEqual(
@@ -752,6 +752,11 @@ test('rejects catalog and profile drift before downstream review routing', () =>
             JSON.stringify({ version: 1, custom_review_types: [] }),
             'utf8'
         );
+        fs.writeFileSync(
+            path.join(reviewsDir, 'T-729-3-task-mode.json'),
+            JSON.stringify({ profile_policy_snapshot_required: false }),
+            'utf8'
+        );
         const preflightPath = path.join(reviewsDir, 'T-729-3-preflight.json');
         fs.writeFileSync(preflightPath, JSON.stringify({
             task_id: 'T-729-3',
@@ -853,11 +858,25 @@ test('downstream routing preserves frozen policy across non-routing profile drif
             profile_policy_snapshot: frozenProfileSnapshot,
             effective_review_snapshot: snapshot
         }), 'utf8');
-        fs.writeFileSync(path.join(reviewsDir, 'T-729-3-task-mode.json'), JSON.stringify({
+        const defaultTaskModePath = path.join(reviewsDir, 'T-729-3-task-mode.json');
+        fs.writeFileSync(defaultTaskModePath, JSON.stringify({
             profile_policy_snapshot: frozenProfileSnapshot
         }), 'utf8');
 
         assert.deepEqual(validatePreflightForReview(preflightPath, 'T-729-3').errors, []);
+
+        const customTaskModePath = path.join(tmpRoot, 'custom-artifacts', 'T-729-3-task-mode.json');
+        fs.mkdirSync(path.dirname(customTaskModePath), { recursive: true });
+        fs.renameSync(defaultTaskModePath, customTaskModePath);
+        assert.ok(validatePreflightForReview(preflightPath, 'T-729-3').errors.some(
+            (error) => /Path not found|ENOENT/u.test(error)
+        ));
+        assert.deepEqual(
+            validatePreflightForReview(preflightPath, 'T-729-3', customTaskModePath).errors,
+            []
+        );
+        fs.renameSync(customTaskModePath, defaultTaskModePath);
+
         fs.appendFileSync(path.join(configDir, 'profiles.json'), '\n', 'utf8');
 
         assert.deepEqual(validatePreflightForReview(preflightPath, 'T-729-3').errors, []);

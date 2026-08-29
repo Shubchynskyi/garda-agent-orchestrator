@@ -27,7 +27,8 @@ export function assertGateChainDecision(
         assert.fail(
             `Expected GateChain output for edge "${expected.edgeId}" with status "${expected.status}" not found.\n` +
             `Available GateChain lines: ${availableEdges || 'none'}\n` +
-            `Total output lines: ${outputLines.length}`
+            `Total output lines: ${outputLines.length}\n` +
+            `Output:\n${outputLines.join('\n')}`
         );
     }
 

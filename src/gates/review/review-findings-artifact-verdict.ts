@@ -82,7 +82,8 @@ export function findJsonReviewMissingFocusedValidationTestPaths(report: ReviewFi
 
 export function parseJsonReviewFindingsArtifact(
     content: string,
-    expectedReviewExecutionContract?: ReviewRemediationReviewContract
+    expectedReviewExecutionContract?: ReviewRemediationReviewContract,
+    coverageContract?: ReviewCoverageContract | null
 ): ReviewFindingsReport | null {
     const parsed = parseJsonReviewFindingsArtifactObject(content);
     if (!parsed) {
@@ -91,6 +92,12 @@ export function parseJsonReviewFindingsArtifact(
     const validation = validateReviewFindingsReport(parsed, {
         expectedTaskId: String(parsed.task_id || '').trim(),
         expectedReviewType: String(parsed.review_type || '').trim(),
+        ...(coverageContract
+            ? {
+                expectedCoverageObligationIds: getCoverageObligationIds(coverageContract),
+                expectedChangedFilePaths: getCoverageChangedFilePaths(coverageContract)
+            }
+            : {}),
         expectedReviewExecutionContract,
         allowStructuralOnlyReviewExecution: !expectedReviewExecutionContract
     });

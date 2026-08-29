@@ -147,7 +147,7 @@ function buildSnapshot(options: {
         catalog,
         profilePolicy,
         profileSnapshotSha256: options.profileSnapshotSha256 || PROFILE_SNAPSHOT_SHA256,
-        legacyRequiredReviews: {},
+        legacyRequiredReviews: { code: true, test: true },
         scopeCategory: 'code',
         taskIntent: options.taskIntent || 'Change the architecture boundary in the library package',
         changedFiles: options.changedFiles || ['packages/library/src/index.ts'],

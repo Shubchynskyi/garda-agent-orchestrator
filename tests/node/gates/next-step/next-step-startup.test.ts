@@ -19,6 +19,7 @@ import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { createNextStepResolutionContext } from '../../../../src/gates/next-step/next-step-resolution-context';
 import { resolveNextStepFromCliOptions } from '../../../../src/gates/next-step/next-step';
@@ -114,6 +115,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -604,7 +606,8 @@ describe('gates/next-step startup routing', () => {
                         scoped_diffs: true,
                         compact_reviewer_output: true
                     },
-                    skills: { auto_suggest: true }
+                    skills: { auto_suggest: true },
+                    task_decomposition: { enabled: false }
                 },
                 strict: {
                     description: 'Strict',
@@ -617,7 +620,8 @@ describe('gates/next-step startup routing', () => {
                         scoped_diffs: true,
                         compact_reviewer_output: false
                     },
-                    skills: { auto_suggest: true }
+                    skills: { auto_suggest: true },
+                    task_decomposition: { enabled: false }
                 }
             },
             user_profiles: {}
@@ -876,8 +880,8 @@ describe('gates/next-step startup routing', () => {
             version: 1,
             active_profile: 'balanced',
             built_in_profiles: {
-                balanced: { description: 'Balanced', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true } },
-                strict: { description: 'Strict changed later', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true } }
+                balanced: { description: 'Balanced', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true }, task_decomposition: { enabled: false } },
+                strict: { description: 'Strict changed later', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true }, task_decomposition: { enabled: false } }
             },
             user_profiles: {}
         });

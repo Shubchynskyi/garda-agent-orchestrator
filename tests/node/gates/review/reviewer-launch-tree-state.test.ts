@@ -17,6 +17,7 @@ import {
     handleRecordReviewRouting,
     handleRecordReviewerDelegationStarted
 } from '../../../../src/cli/commands/gate-review-handlers';
+import { bindFixtureEffectiveReviewSnapshot } from '../../cli/commands/gate-test-seed-helpers';
 
 const REVIEWER_IDENTITY = 'agent:019de361-0000-7000-a000-000000000001';
 
@@ -94,7 +95,8 @@ function makeStagedReviewContextFixture(taskId: string): {
         triggers: { runtime_changed: true, runtime_code_changed: true }
     });
 
-    fs.writeFileSync(resolveTaskModeArtifactPath(repoRoot, taskId, ''), `${JSON.stringify(buildTaskModeArtifact({
+    const taskModePath = resolveTaskModeArtifactPath(repoRoot, taskId, '');
+    fs.writeFileSync(taskModePath, `${JSON.stringify(buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
         requestedDepth: 2,
@@ -108,6 +110,7 @@ function makeStagedReviewContextFixture(taskId: string): {
         reviewerSubagentLaunchStatus: 'launchable',
         reviewerSubagentLaunchRoute: 'AGENTS.md'
     }), null, 2)}\n`, 'utf8');
+    bindFixtureEffectiveReviewSnapshot(repoRoot, taskId, 'code', preflightPath, taskModePath);
 
     const contextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
     buildReviewContext({

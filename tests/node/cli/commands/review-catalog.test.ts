@@ -201,6 +201,11 @@ function createTransactionPlanFixture(workspace: TestWorkspace): {
     return { catalogPath, capabilitiesPath, beforeCapabilities, beforeStateSha256, plan };
 }
 
+function addTransactionLockAlias(bundleRoot: string): void {
+    const lockPath = path.join(bundleRoot, 'runtime', 'review-catalog-management.lock');
+    fs.linkSync(lockPath, `${lockPath}.alias`);
+}
+
 test('review-catalog help exposes accurate definition options and executable guarded mutation phases', () => {
     const help = buildCommandHelpText('review-catalog').replace(/\u001b\[[0-9;]*m/gu, '');
     const lines = help.split(/\r?\n/u).map((line) => line.trim());
@@ -664,6 +669,75 @@ test('review-catalog rejects a concurrent management lock without changing confi
         assert.equal(fs.existsSync(path.join(workspace.configDir, 'review-catalog.json')), false);
     } finally {
         if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog confirmation surfaces a lock-release failure after creating the receipt', () => {
+    const workspace = createWorkspace();
+    const fixture = createTransactionPlanFixture(workspace);
+    try {
+        assert.throws(
+            () => issueReviewCatalogConfirmationReceipt({
+                repoRoot: workspace.repoRoot,
+                bundleRoot: workspace.bundleRoot,
+                plan: fixture.plan,
+                expectedStateSha256: fixture.beforeStateSha256,
+                expectedPlanSha256: fixture.plan.plan_sha256,
+                operatorConfirmedAtUtc: new Date().toISOString(),
+                readCurrentStateSha256: () => {
+                    addTransactionLockAlias(workspace.bundleRoot);
+                    return fixture.beforeStateSha256;
+                }
+            }),
+            (error: unknown) => {
+                assert.ok(error instanceof Error);
+                assert.equal(error instanceof AggregateError, false);
+                assert.match(error.message, /transaction lock changed before release/iu);
+                return true;
+            }
+        );
+    } finally {
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('review-catalog apply preserves operation failure when lock release also fails', () => {
+    const workspace = createWorkspace();
+    const fixture = createTransactionPlanFixture(workspace);
+    try {
+        const confirmation = issueReviewCatalogConfirmationReceipt({
+            repoRoot: workspace.repoRoot,
+            bundleRoot: workspace.bundleRoot,
+            plan: fixture.plan,
+            expectedStateSha256: fixture.beforeStateSha256,
+            expectedPlanSha256: fixture.plan.plan_sha256,
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            readCurrentStateSha256: () => fixture.beforeStateSha256
+        });
+
+        assert.throws(
+            () => commitReviewCatalogManagementPlan({
+                repoRoot: workspace.repoRoot,
+                bundleRoot: workspace.bundleRoot,
+                plan: fixture.plan,
+                expectedStateSha256: fixture.beforeStateSha256,
+                expectedPlanSha256: fixture.plan.plan_sha256,
+                confirmationReceiptSha256: confirmation.confirmation_receipt_sha256,
+                readCurrentStateSha256: () => {
+                    addTransactionLockAlias(workspace.bundleRoot);
+                    throw new Error('injected apply failure');
+                }
+            }),
+            (error: unknown) => {
+                assert.ok(error instanceof AggregateError);
+                assert.equal(error.errors.length, 2);
+                assert.match(String(error.errors[0]), /injected apply failure/iu);
+                assert.match(String(error.errors[1]), /transaction lock changed before release/iu);
+                return true;
+            }
+        );
+    } finally {
         fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
     }
 });

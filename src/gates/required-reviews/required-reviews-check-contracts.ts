@@ -3,8 +3,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildReviewVerdictTokenSet } from '../../gate-runtime/review-context';
 import { resolveBundleName } from '../../core/constants';
+import { loadFullSuiteValidationConfig } from '../../core/full-suite-validation-config';
+import { readReviewCapabilitiesConfigFile } from '../../core/review-capabilities';
 import { readReviewCatalogConfigFile } from '../../core/review-catalog';
-import { resolveProfileReviewCatalogPolicy } from '../../policy/profile-review-catalog-policy';
+import { loadReviewExecutionPolicyConfig } from '../../core/review-execution-policy';
+import {
+    resolveLegacyCompatibilityReviewCatalogBinding,
+    resolveProfileReviewCatalogPolicy
+} from '../../policy/profile-review-catalog-policy';
 import {
     buildTaskProfilePolicySnapshot,
     type TaskProfilePolicySnapshot
@@ -17,7 +23,7 @@ import {
 } from '../../policy/effective-review-snapshot';
 import { readSkillsHeadlinesIfPresent } from '../../runtime/skill-headlines-store';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
-import { fileSha256 } from '../shared/helpers';
+import { fileSha256, resolvePathInsideRepo } from '../shared/helpers';
 
 const BUILT_IN_REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
@@ -169,7 +175,11 @@ export function testExpectedVerdict(errors: string[], label: string, required: b
     errors.push(`${label} is not required. Expected 'NOT_REQUIRED' or '${passVerdict}', got '${actualVerdict}'.`);
 }
 
-export function validatePreflightForReview(preflightPath: string, explicitTaskId: string) {
+export function validatePreflightForReview(
+    preflightPath: string,
+    explicitTaskId: string,
+    explicitTaskModePath = ''
+) {
     let preflight;
     try {
         preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
@@ -254,11 +264,9 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
                     );
                 }
             }
-            const profileSnapshotSha256 = String(
-                preflight.profile_policy_snapshot?.snapshot_hash || ''
-            ).trim().toLowerCase();
             try {
                 const bundleRoot = path.dirname(path.dirname(path.dirname(path.resolve(preflightPath))));
+                const repoRoot = path.dirname(bundleRoot);
                 const knownReviewSkillIds = collectKnownReviewSkillIds(
                     readSkillsHeadlinesIfPresent(bundleRoot)?.payload.skills
                 );
@@ -266,44 +274,77 @@ export function validatePreflightForReview(preflightPath: string, explicitTaskId
                     path.join(bundleRoot, 'live', 'config', 'review-catalog.json'),
                     { knownSkillIds: knownReviewSkillIds }
                 );
-                assertEffectiveReviewSnapshotCurrent(
-                    snapshot,
-                    currentCatalog,
-                    profileSnapshotSha256
-                );
-                const taskModePath = path.join(
+                const defaultTaskModePath = path.join(
                     path.dirname(path.resolve(preflightPath)),
                     `${resolvedTaskId}-task-mode.json`
                 );
+                const taskModePath = explicitTaskModePath.trim()
+                    ? resolvePathInsideRepo(
+                        explicitTaskModePath,
+                        path.dirname(bundleRoot),
+                        { enforceInside: true }
+                    )
+                    : defaultTaskModePath;
+                if (!taskModePath) {
+                    throw new Error('Task-mode artifact path must resolve inside the repository root.');
+                }
                 const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8'));
                 const frozenProfileSnapshot = taskMode.profile_policy_snapshot;
-                const currentProfilePolicy = resolveProfileReviewCatalogPolicy(
-                    frozenProfileSnapshot.source.effective_profile,
-                    frozenProfileSnapshot.review_lane_selection.profile_review_policy,
-                    frozenProfileSnapshot.review_lane_selection.review_capabilities,
-                    currentCatalog
-                );
-                const liveProfileSnapshot = buildTaskProfilePolicySnapshot(
-                    bundleRoot,
-                    frozenProfileSnapshot.source.task_profile,
-                    {
-                        reviewExecutionPolicyMode: frozenProfileSnapshot.review_execution_policy.mode,
-                        reviewExecutionPolicyConfigured: frozenProfileSnapshot.review_execution_policy.configured,
-                        fullSuiteValidationEnabled:
-                            frozenProfileSnapshot.review_execution_policy.full_suite_validation?.enabled,
-                        fullSuiteValidationPlacement:
-                            frozenProfileSnapshot.review_execution_policy.full_suite_validation?.placement,
-                        lockTimestampUtc: frozenProfileSnapshot.lock_timestamp_utc
+                if (frozenProfileSnapshot == null) {
+                    if (taskMode.profile_policy_snapshot_required === true) {
+                        throw new Error(
+                            'Task-mode artifact requires a frozen profile policy snapshot, but none is present.'
+                        );
                     }
-                );
-                assertReviewProfileInputsCurrent(frozenProfileSnapshot, liveProfileSnapshot, currentCatalog);
-                assertEffectiveReviewSnapshotCurrent(
-                    snapshot,
-                    currentCatalog,
-                    String(frozenProfileSnapshot.snapshot_hash || '').trim().toLowerCase(),
-                    currentProfilePolicy,
-                    frozenProfileSnapshot.review_execution_policy
-                );
+                    const currentCapabilities = readReviewCapabilitiesConfigFile(
+                        path.join(bundleRoot, 'live', 'config', 'review-capabilities.json')
+                    );
+                    const compatibilityBinding = resolveLegacyCompatibilityReviewCatalogBinding(
+                        currentCapabilities,
+                        currentCatalog
+                    );
+                    const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
+                    const fullSuiteValidation = loadFullSuiteValidationConfig(repoRoot);
+                    assertEffectiveReviewSnapshotCurrent(
+                        snapshot,
+                        currentCatalog,
+                        compatibilityBinding.profile_snapshot_sha256,
+                        compatibilityBinding.profile_policy,
+                        {
+                            mode: reviewExecutionPolicy.mode,
+                            review_dependency_graph: null,
+                            full_suite_validation: fullSuiteValidation
+                        }
+                    );
+                } else {
+                    const currentProfilePolicy = resolveProfileReviewCatalogPolicy(
+                        frozenProfileSnapshot.source.effective_profile,
+                        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+                        frozenProfileSnapshot.review_lane_selection.review_capabilities,
+                        currentCatalog
+                    );
+                    const liveProfileSnapshot = buildTaskProfilePolicySnapshot(
+                        bundleRoot,
+                        frozenProfileSnapshot.source.task_profile,
+                        {
+                            reviewExecutionPolicyMode: frozenProfileSnapshot.review_execution_policy.mode,
+                            reviewExecutionPolicyConfigured: frozenProfileSnapshot.review_execution_policy.configured,
+                            fullSuiteValidationEnabled:
+                                frozenProfileSnapshot.review_execution_policy.full_suite_validation?.enabled,
+                            fullSuiteValidationPlacement:
+                                frozenProfileSnapshot.review_execution_policy.full_suite_validation?.placement,
+                            lockTimestampUtc: frozenProfileSnapshot.lock_timestamp_utc
+                        }
+                    );
+                    assertReviewProfileInputsCurrent(frozenProfileSnapshot, liveProfileSnapshot, currentCatalog);
+                    assertEffectiveReviewSnapshotCurrent(
+                        snapshot,
+                        currentCatalog,
+                        String(frozenProfileSnapshot.snapshot_hash || '').trim().toLowerCase(),
+                        currentProfilePolicy,
+                        frozenProfileSnapshot.review_execution_policy
+                    );
+                }
             } catch (error: unknown) {
                 errors.push(error instanceof Error ? error.message : String(error));
             }

@@ -110,13 +110,13 @@ describe('gates/next-step review cycle guard config', () => {
 
     it('blocks next-step when present workflow config is not an object', () => {
         const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         fs.writeFileSync(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
             JSON.stringify(['not-a-workflow-config'], null, 2),
             'utf8'
         );
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -192,4 +192,3 @@ describe('gates/next-step review cycle guard config', () => {
     });
 
 });
-

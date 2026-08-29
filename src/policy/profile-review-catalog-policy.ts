@@ -40,6 +40,11 @@ export interface ProfileReviewCatalogPolicyAnalysis {
     issues: string[];
 }
 
+export interface LegacyCompatibilityReviewCatalogBinding {
+    profile_policy: ResolvedProfileReviewCatalogPolicy;
+    profile_snapshot_sha256: string;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -158,4 +163,26 @@ export function resolveProfileReviewCatalogPolicy(
         throw new Error(analysis.issues.join(' '));
     }
     return analysis.policy;
+}
+
+export function resolveLegacyCompatibilityReviewCatalogBinding(
+    capabilities: ReviewCapabilitiesConfigMap,
+    catalog: NormalizedReviewCatalog
+): LegacyCompatibilityReviewCatalogBinding {
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        'legacy-compatibility',
+        {},
+        capabilities,
+        catalog
+    );
+    const profileSnapshotSha256 = createHash('sha256').update(JSON.stringify({
+        schema_version: 1,
+        mode: 'legacy_builtin_compatibility',
+        catalog_sha256: catalog.catalog_sha256,
+        profile_policy_sha256: profilePolicy.policy_sha256
+    }), 'utf8').digest('hex');
+    return deepFreeze({
+        profile_policy: profilePolicy,
+        profile_snapshot_sha256: profileSnapshotSha256
+    });
 }

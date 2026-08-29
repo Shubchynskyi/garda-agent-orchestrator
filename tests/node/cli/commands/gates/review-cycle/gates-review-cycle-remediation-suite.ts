@@ -1052,7 +1052,7 @@ describe('cli/commands/gates – review-cycle remediation reuse basics', {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /RemediationFixClassification: test_hook_isolation; invalidated_review_types=code; preserved_review_types=refactor, security, test/);
+        assert.match(output, /RemediationFixClassification: test_hook_isolation; invalidated_review_types=code, test; preserved_review_types=security, refactor/);
         assert.match(output, /PreparedReviewTypes: none/);
         assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
         assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
@@ -1195,7 +1195,7 @@ describe('cli/commands/gates – review-cycle remediation reuse basics', {
                 preflightPath,
                 outputPath: path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)
             }),
-            /timeline integrity is not current: FAILED/
+            /persisted remediation timeline failed hash-chain integrity validation/
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1297,7 +1297,7 @@ describe('cli/commands/gates – review-cycle remediation reuse basics', {
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
 
         const output = restartResult.outputLines.join('\n');
-        assert.match(output, /RemediationFixClassification: unknown; invalidated_review_types=code, refactor, security; preserved_review_types=none/);
+        assert.match(output, /RemediationFixClassification: unknown; invalidated_review_types=code, security, refactor; preserved_review_types=none/);
         assert.match(output, /PreparedReviewTypes: none/);
         assert.match(output, /PendingReviewTypes: code, security, refactor/);
         const resumedReuse = await resumeReviewReuseAfterChecklist(
@@ -1392,7 +1392,7 @@ describe('cli/commands/gates – review-cycle remediation reuse basics', {
         assert.equal(remediationArtifact.status, 'BLOCKED');
         assert.equal(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).category,
-            'unknown'
+            'runtime_behavior'
         );
         assert.equal(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).scope_category,

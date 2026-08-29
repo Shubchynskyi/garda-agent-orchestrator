@@ -11,6 +11,13 @@ import {
 import {
     getWorkspaceSnapshotCached as getSourceWorkspaceSnapshotCached
 } from '../../../../src/gates/workspace/workspace-snapshot-cache';
+import {
+    buildRulePackArtifact as buildSourceRulePackArtifact,
+    type BuildRulePackArtifactOptions,
+    type RulePackArtifact
+} from '../../../../src/gates/rule-pack';
+import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { bindFixtureEffectiveReviewSnapshot } from '../../cli/commands/gate-test-seed-helpers';
 import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 
 function ensureGitWorkspaceFixture(repoRoot: string, changedFiles: readonly string[]): void {
@@ -86,6 +93,80 @@ export function buildDefaultWorkflowConfig(): WorkflowConfigData {
     return config;
 }
 
+export function writeBalancedTestProfilesConfig(repoRoot: string): string {
+    const configPath = path.join(
+        path.resolve(repoRoot),
+        'garda-agent-orchestrator',
+        'live',
+        'config',
+        'profiles.json'
+    );
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, `${JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced next-step test profile',
+                depth: 2,
+                review_policy: { code: 'auto', test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
+            }
+        },
+        user_profiles: {}
+    }, null, 2)}\n`, 'utf8');
+    return configPath;
+}
+
+export { bindFixtureEffectiveReviewSnapshot };
+
+export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): RulePackArtifact {
+    if (options.stage === 'POST_PREFLIGHT' && options.preflightPath) {
+        const preflightPath = path.resolve(options.preflightPath);
+        if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            if (preflight.effective_review_snapshot === undefined) {
+                const requiredReviews = preflight.required_reviews
+                && typeof preflight.required_reviews === 'object'
+                && !Array.isArray(preflight.required_reviews)
+                    ? preflight.required_reviews as Record<string, unknown>
+                    : {};
+                const reviewKey = Object.entries(requiredReviews)
+                    .find(([, required]) => required === true)?.[0] || 'code';
+                bindFixtureEffectiveReviewSnapshot(
+                    options.repoRoot,
+                    options.taskId,
+                    reviewKey,
+                    preflightPath,
+                    String(options.taskModePath || ''),
+                    { ensureSkillEntrypoints: false }
+                );
+                const boundPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+                appendTaskEvent(
+                    path.join(path.resolve(options.repoRoot), 'garda-agent-orchestrator'),
+                    options.taskId,
+                    'PREFLIGHT_CLASSIFIED',
+                    'INFO',
+                    'Fixture preflight classified with immutable review routing evidence.',
+                    {
+                        output_path: preflightPath.replace(/\\/g, '/'),
+                        effective_review_snapshot: boundPreflight.effective_review_snapshot
+                    }
+                );
+            }
+        }
+    }
+    return buildSourceRulePackArtifact(options);
+}
+
 export { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
 export {
     COPILOT_PROVIDER_ENV_KEYS,
@@ -108,7 +189,6 @@ export {
     readReadyFinalReportSummary
 } from '../../../../src/gates/next-step/next-step-closeout-status-readers';
 export { assessProjectMemoryImpact, getProjectMemoryImpactLifecycleEvidence } from '../../../../src/gates/project-memory-impact';
-export { buildRulePackArtifact } from '../../../../src/gates/rule-pack';
 export { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
 export { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from '../../../../src/gates/task-audit/task-audit-summary';
 export { buildTaskModeArtifact } from '../../../../src/gates/task-mode';

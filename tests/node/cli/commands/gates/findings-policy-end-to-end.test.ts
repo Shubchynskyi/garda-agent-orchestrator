@@ -417,7 +417,7 @@ describe('findings policy end-to-end lifecycle', () => {
 
             const premature = syncDecomposedParentsToDone(repoRoot, parentTaskId, [parentTaskId]);
             assert.equal(premature.outcome, 'write_failed');
-            assert.match(premature.error_message || '', new RegExp(`${followUpTaskId} \\(TODO\\)`, 'u'));
+            assert.match(premature.error_message || '', new RegExp(`${followUpTaskId} \\((?:🟦 )?TODO\\)`, 'u'));
 
             const followUpPreflightPath = writePreflight(repoRoot, followUpTaskId, {
                 scope_category: 'code',

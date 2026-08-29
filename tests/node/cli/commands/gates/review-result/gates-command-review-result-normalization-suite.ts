@@ -153,7 +153,11 @@ function followUpClosureScenarioInput(
     taskId: string,
     skipLowFindings: boolean,
     forbidChildTasks: boolean
-): { taskNotes: string; profilePolicySnapshot: Record<string, unknown> } {
+): {
+    taskNotes: string;
+    parentTask: { taskId: string; notes: string };
+    profilePolicySnapshot: Record<string, unknown>;
+} {
     const parentTaskId = taskId.replace(/-F[1-9][0-9]*$/u, '');
     const parentNotes = `Review follow-up tasks materialized: \`${taskId}\`; artifact `
         + `\`garda-agent-orchestrator/runtime/reviews/${parentTaskId}-review-findings-follow-up-tasks.json\`.`;
@@ -164,6 +168,7 @@ function followUpClosureScenarioInput(
         });
     return {
         taskNotes,
+        parentTask: { taskId: parentTaskId, notes: parentNotes },
         profilePolicySnapshot: {
             ...balancedProfilePolicySnapshot(),
             review_follow_up_task_closure_policy: resolveReviewFollowUpTaskClosurePolicy(taskNotes, {
@@ -2011,6 +2016,7 @@ describe('gates command review result - normalization', () => {
                 taskId: 'T-979-10-F1',
                 profilePolicySnapshot: skipLowClosure.profilePolicySnapshot,
                 taskNotes: skipLowClosure.taskNotes,
+                parentTask: skipLowClosure.parentTask,
                 subject: 'finding' as const,
                 severity: 'low' as const,
                 expectedVerdict: 'REVIEW PASSED',
@@ -2024,6 +2030,7 @@ describe('gates command review result - normalization', () => {
                 taskId: 'T-979-11-F1',
                 profilePolicySnapshot: forbidChildClosure.profilePolicySnapshot,
                 taskNotes: forbidChildClosure.taskNotes,
+                parentTask: forbidChildClosure.parentTask,
                 subject: 'finding' as const,
                 severity: 'low' as const,
                 expectedVerdict: 'REVIEW FAILED',
@@ -2037,6 +2044,7 @@ describe('gates command review result - normalization', () => {
                 taskId: 'T-979-12-F1',
                 profilePolicySnapshot: forbidChildResidualClosure.profilePolicySnapshot,
                 taskNotes: forbidChildResidualClosure.taskNotes,
+                parentTask: forbidChildResidualClosure.parentTask,
                 subject: 'residual_risk' as const,
                 severity: null,
                 expectedVerdict: 'REVIEW FAILED',
@@ -2055,6 +2063,7 @@ describe('gates command review result - normalization', () => {
                     repoRoot,
                     taskId: scenario.taskId,
                     ...('taskNotes' in scenario ? { taskNotes: scenario.taskNotes } : {}),
+                    ...('parentTask' in scenario ? { parentTask: scenario.parentTask } : {}),
                     preflightOverrides: {
                         profile_policy_snapshot: scenario.profilePolicySnapshot
                     }

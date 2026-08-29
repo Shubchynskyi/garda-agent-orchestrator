@@ -6,6 +6,9 @@ import * as path from 'node:path';
 import { normalizeReviewCatalog } from '../../../../../src/core/review-catalog';
 import type { ReviewCapabilitiesConfigMap } from '../../../../../src/core/review-capabilities';
 import { buildEffectiveReviewSnapshot } from '../../../../../src/policy/effective-review-snapshot';
+import type {
+    TaskProfilePolicySnapshotReviewExecutionPolicy
+} from '../../../../../src/policy/task-profile-policy-snapshot';
 import { resolveProfileReviewCatalogPolicy } from '../../../../../src/policy/profile-review-catalog-policy';
 import { resolveReviewContextLaneBinding } from '../../../../../src/gates/review-context/review-context-lane';
 import { buildScopedDiff } from '../../../../../src/gates/preflight/build-scoped-diff';
@@ -68,7 +71,8 @@ function buildPreflight(
     customState: boolean | 'auto' = true,
     profileSnapshotSha256 = 'a'.repeat(64),
     frozenProfilePolicy?: Readonly<Record<string, boolean | 'auto'>>,
-    frozenCapabilities?: ReviewCapabilitiesConfigMap
+    frozenCapabilities?: ReviewCapabilitiesConfigMap,
+    frozenReviewExecutionPolicy?: TaskProfilePolicySnapshotReviewExecutionPolicy
 ): Record<string, unknown> {
     const catalog = normalizeReviewCatalog(customCatalogDocument());
     const capabilities = frozenCapabilities ?? Object.fromEntries(
@@ -89,7 +93,10 @@ function buildPreflight(
         taskIntent: 'Inspect an architecture boundary',
         changedFiles: ['src/architecture.ts'],
         taskTriggers: {},
-        zeroDiffBaselineOnly: false
+        zeroDiffBaselineOnly: false,
+        reviewExecutionPolicyMode: frozenReviewExecutionPolicy?.mode,
+        reviewDependencyGraph: frozenReviewExecutionPolicy?.review_dependency_graph,
+        fullSuiteValidation: frozenReviewExecutionPolicy?.full_suite_validation
     });
     return {
         required_reviews: snapshot.required_reviews,
@@ -198,6 +205,7 @@ async function seedCustomReviewCliFixture(
                 profile_review_policy: Record<string, boolean | 'auto'>;
                 review_capabilities: ReviewCapabilitiesConfigMap;
             };
+            review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
         };
     };
     const workspaceSnapshot = getWorkspaceSnapshot(
@@ -210,10 +218,12 @@ async function seedCustomReviewCliFixture(
         true,
         taskMode.profile_policy_snapshot.snapshot_hash,
         taskMode.profile_policy_snapshot.review_lane_selection.profile_review_policy,
-        taskMode.profile_policy_snapshot.review_lane_selection.review_capabilities
+        taskMode.profile_policy_snapshot.review_lane_selection.review_capabilities,
+        taskMode.profile_policy_snapshot.review_execution_policy
     );
     const snapshot = customPreflight.effective_review_snapshot as {
         required_reviews: Record<string, boolean>;
+        review_dependency_graph?: unknown;
     };
     const preflightPath = writePreflight(repoRoot, taskId, {
         detection_source: 'explicit_changed_files',
@@ -229,6 +239,12 @@ async function seedCustomReviewCliFixture(
         required_reviews: snapshot.required_reviews,
         effective_review_snapshot: customPreflight.effective_review_snapshot,
         profile_policy_snapshot: taskMode.profile_policy_snapshot,
+        review_execution_policy: {
+            mode: taskMode.profile_policy_snapshot.review_execution_policy.mode,
+            visible_summary_line:
+                `Review execution policy: ${taskMode.profile_policy_snapshot.review_execution_policy.mode}`,
+            dependency_graph: snapshot.review_dependency_graph
+        },
         triggers: { runtime_changed: true, runtime_code_changed: true }
     });
     const postPreflightRules = loadPostPreflightRulePack(repoRoot, taskId, preflightPath);

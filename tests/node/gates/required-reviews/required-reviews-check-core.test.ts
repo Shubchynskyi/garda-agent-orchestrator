@@ -31,6 +31,10 @@ import {
 import {
     validateReviewFindingsContract
 } from '../../../../src/gates/review/review-findings-artifact-verdict';
+import { buildReviewReceipt } from '../../../../src/gate-runtime/review-context';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import { REVIEW_FINDINGS_SCHEMA_VERSION } from '../../../../src/gates/review/review-findings-schema';
+import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
 
 function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -52,15 +56,39 @@ function writeAcceptedFindingsValidationReceipt(options: {
     treeStateSha256: string;
     coverageContract: Record<string, unknown>;
 }): void {
-    const artifactSha256 = sha256File(options.artifactPath);
+    const reviewContext = JSON.parse(fs.readFileSync(options.contextPath, 'utf8')) as Record<string, unknown>;
+    const coverageObligations = Array.isArray(options.coverageContract.obligations)
+        ? options.coverageContract.obligations as Array<Record<string, unknown>>
+        : [];
+    const reviewExecution = buildReviewRemediationReviewContract({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: 'a'.repeat(64),
+        fullReviewScope: coverageObligations.map((entry) => String(entry.target || '')).filter(Boolean)
+    });
+    reviewContext.schema_version = 4;
+    reviewContext.review_execution = reviewExecution;
+    writeJson(options.contextPath, reviewContext);
     const contextSha256 = sha256File(options.contextPath);
+    const report = JSON.parse(fs.readFileSync(options.artifactPath, 'utf8')) as Record<string, unknown>;
+    report.schema_version = REVIEW_FINDINGS_SCHEMA_VERSION;
+    report.review_context_sha256 = contextSha256;
+    report.review_execution = {
+        mode: reviewExecution.mode,
+        contract_sha256: reviewExecution.contract_sha256,
+        covered_delta_targets: [],
+        inspected_prior_finding_ids: []
+    };
+    writeJson(options.artifactPath, report);
+    const artifactSha256 = sha256File(options.artifactPath);
     const validation = validateReviewFindingsContract({
         content: fs.readFileSync(options.artifactPath, 'utf8'),
         expectedTaskId: options.taskId,
         expectedReviewType: options.reviewType,
         expectedReviewContextSha256: contextSha256,
         expectedTreeStateSha256: options.treeStateSha256,
-        coverageContract: options.coverageContract as never
+        coverageContract: options.coverageContract as never,
+        expectedReviewExecutionContract: reviewExecution
     });
     assert.equal(validation.valid, true, validation.violations.join(' '));
     const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
@@ -78,13 +106,26 @@ function writeAcceptedFindingsValidationReceipt(options: {
     });
     writeJson(validationArtifactPath, validationArtifact);
     const validationArtifactSha256 = sha256File(validationArtifactPath);
+    const executionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings!;
+    const receipt = buildReviewReceipt({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: null,
+        scopeSha256: null,
+        reviewContextSha256: contextSha256,
+        reviewTreeStateSha256: options.treeStateSha256,
+        reviewExecutionMode: executionBindings.review_execution_mode,
+        reviewExecutionContractSha256: executionBindings.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: executionBindings.review_execution_full_scope_sha256,
+        reviewExecutionCompleteScopeLineageSha256:
+            executionBindings.review_execution_complete_scope_lineage_sha256,
+        reviewExecutionFindingReconciliationSha256:
+            executionBindings.review_execution_finding_reconciliation_sha256,
+        reviewArtifactSha256: artifactSha256
+    }) as unknown as Record<string, unknown>;
     writeJson(options.artifactPath.replace(/\.md$/u, '-receipt.json'), {
-        task_id: options.taskId,
-        review_type: options.reviewType,
+        ...receipt,
         review_output_sha256: artifactSha256,
-        review_artifact_sha256: artifactSha256,
-        review_context_sha256: contextSha256,
-        review_tree_state_sha256: options.treeStateSha256,
         review_findings_validation: {
             artifact_path: validationArtifactPath.replace(/\\/g, '/'),
             artifact_sha256: validationArtifactSha256,
@@ -94,6 +135,21 @@ function writeAcceptedFindingsValidationReceipt(options: {
             accepted: validationArtifact.validation_result.accepted,
             validation_result_sha256: validationArtifact.validation_result_sha256,
             violation_count: validationArtifact.validation_result.violations.length
+        },
+        review_output_contract: {
+            schema_version: 1,
+            format: 'findings_json',
+            report_sha256: sha256Text(`${JSON.stringify(validation.report, null, 2)}\n`),
+            validation_artifact_sha256: validationArtifactSha256,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            raw_output_sha256: artifactSha256,
+            review_artifact_sha256: artifactSha256,
+            review_context_sha256: contextSha256,
+            review_tree_state_sha256: options.treeStateSha256,
+            coverage_contract_sha256: String(options.coverageContract.contract_sha256 || ''),
+            ...executionBindings,
+            reviewer_identity: null,
+            reviewer_provenance_event_sha256: null
         }
     });
 }

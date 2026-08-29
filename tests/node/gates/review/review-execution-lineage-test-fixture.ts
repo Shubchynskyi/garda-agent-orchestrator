@@ -57,6 +57,7 @@ export function writeSchema4ReviewPackage(options: {
     reviewType: string;
     preflightPath: string;
     preflight: Record<string, unknown>;
+    residualRisks?: readonly string[];
 }): Schema4ReviewPackage {
     const changedFiles = Array.isArray(options.preflight.changed_files)
         ? options.preflight.changed_files.map(String)
@@ -135,7 +136,14 @@ export function writeSchema4ReviewPackage(options: {
             inspected_prior_finding_ids: []
         },
         findings: { critical: [], high: [], medium: [], low: [] },
-        residual_risks: [],
+        residual_risks: (options.residualRisks || []).map((description, index) => ({
+            id: `R-${String(index + 1).padStart(3, '0')}`,
+            description,
+            evidence: [{
+                location: `${evidenceFile}:1`,
+                observation: 'The residual risk remains active for downstream review authorization.'
+            }]
+        })),
         reviewer_notes: []
     };
     const artifactPath = path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`);

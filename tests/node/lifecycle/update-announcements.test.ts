@@ -129,6 +129,33 @@ test('release 1.3.0 registry announces review actions and F-task policy checks',
     }
 });
 
+test('release 1.4.0 registry announces review catalog validation and optional migration', () => {
+    const repoRoot = process.cwd();
+    const bundleRoot = makeTempBundleRoot();
+    const liveConfigDir = path.join(bundleRoot, 'live', 'config');
+    try {
+        fs.copyFileSync(
+            path.join(repoRoot, 'template', 'config', 'update-messages.json'),
+            path.join(liveConfigDir, 'update-messages.json')
+        );
+        fs.writeFileSync(
+            path.join(bundleRoot, 'CHANGELOG.md'),
+            ['# Changelog', '', '## 1.4.0', '- release note'].join('\n'),
+            'utf8'
+        );
+
+        const result = collectUpdateAnnouncements(bundleRoot, '1.3.0', '1.4.0');
+        const message = result.updateMessages.find((entry) => entry.version === '1.4.0');
+        assert.equal(message?.title, 'Extensible reviews and safer remediation');
+        assert.ok(message?.body.some((line) => line.includes('garda review-catalog validate')));
+        assert.ok(message?.body.some((line) => line.includes('without a mandatory migration')));
+        assert.ok(message?.body.some((line) => line.includes('garda review-catalog migrate')));
+        assert.ok(message?.body.some((line) => line.includes('read-only')));
+    } finally {
+        cleanupBundleRoot(bundleRoot);
+    }
+});
+
 test('buildUpdateResult and buildUpdateReportLines include announcement payload', () => {
     const announcements = {
         updateMessages: [

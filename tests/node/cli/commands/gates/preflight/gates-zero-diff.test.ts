@@ -18,6 +18,7 @@ import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
 import {
+    bindFixtureEffectiveReviewSnapshot,
     initializeGitRepo,
     writeBudgetOutputFilters
 } from '../../gate-test-seed-helpers';
@@ -30,8 +31,14 @@ function createTempRepo(): string {
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'skills', 'code-review'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    fs.writeFileSync(
+        path.join(root, 'garda-agent-orchestrator', 'live', 'skills', 'code-review', 'SKILL.md'),
+        '# code-review fixture\n',
+        'utf8'
+    );
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
     workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
@@ -309,6 +316,7 @@ function loadPostPreflightRulePack(
     artifactPath = '',
     taskModePath = ''
 ) {
+    bindFixtureEffectiveReviewSnapshot(repoRoot, taskId, 'code', preflightPath, taskModePath);
     if (ensurePreflightClassified) {
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
     }

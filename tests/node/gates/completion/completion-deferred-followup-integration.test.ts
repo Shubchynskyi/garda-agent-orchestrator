@@ -43,6 +43,21 @@ function writeStrictCompletionWorkflowConfig(repoRoot: string): void {
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
 }
 
+function writeStrictProfilesConfig(repoRoot: string): void {
+    const profiles = JSON.parse(
+        fs.readFileSync(path.resolve('template', 'config', 'profiles.json'), 'utf8')
+    ) as {
+        active_profile: string;
+        built_in_profiles: Record<string, { task_decomposition?: { enabled: boolean } }>;
+    };
+    profiles.active_profile = 'strict';
+    profiles.built_in_profiles.strict.task_decomposition = { enabled: false };
+    writeJson(
+        path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'),
+        profiles
+    );
+}
+
 function writePassedReviewGate(repoRoot: string, taskId: string, preflightPath: string, reviewType: 'code' | 'test', verdict: string): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     const preflightHash = fileSha256(preflightPath);
@@ -101,9 +116,10 @@ function runDeferredFollowupIntegrationScenario(options: {
 }): void {
     const repoRoot = createTempRepo();
     try {
-        seedTaskQueue(repoRoot, options.taskId, 'IN_PROGRESS');
+        seedTaskQueue(repoRoot, options.taskId, 'IN_PROGRESS', 'strict');
         seedInitAnswers(repoRoot, 'Codex');
         writeStrictCompletionWorkflowConfig(repoRoot);
+        writeStrictProfilesConfig(repoRoot);
         const preflightPath = writePreflight(repoRoot, options.taskId, {
             scope_category: options.scopeCategory,
             required_reviews: {
@@ -156,6 +172,7 @@ function runDeferredFollowupIntegrationScenario(options: {
             options.verdict
         ], {
             allowLegacyManualReviewContext: true,
+            legacyMarkdownArtifact: true,
             rawArtifactContent: true
         });
         writePassedReviewGate(repoRoot, options.taskId, preflightPath, options.reviewType, options.verdict);

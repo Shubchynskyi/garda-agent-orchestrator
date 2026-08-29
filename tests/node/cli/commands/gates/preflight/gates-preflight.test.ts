@@ -988,19 +988,30 @@ describe('cli/commands/gates — preflight', () => {
 
     it('freezes explicit follow-up task closure policy across completed-task re-entry and preflight evidence', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-979-follow-up-closure-policy';
+        const parentTaskId = 'T-979';
+        const taskId = `${parentTaskId}-F1`;
         try {
             const profilesPath = seedSnapshotFreezeProfiles(repoRoot);
             writeSnapshotFreezeTriggerConfig(repoRoot);
+            const seedFollowUpTaskQueue = (status: string, profile: string, childNotes: string): void => {
+                const parentNotes = `Review follow-up tasks materialized: \`${taskId}\`; artifact `
+                    + `\`garda-agent-orchestrator/runtime/reviews/${parentTaskId}-review-follow-up-tasks.json\`.`;
+                fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                    '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+                    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                    `| ${parentTaskId} | DONE | P1 | test | Parent review task | unassigned | 2026-03-28 | default | ${parentNotes} |`,
+                    `| ${taskId} | ${status} | P1 | test | Follow-up review task | unassigned | 2026-03-28 | ${profile} | ${childNotes} |`
+                ].join('\n'), 'utf8');
+            };
             const notes = [
-                'Child of `T-979`.',
+                `Child of \`${parentTaskId}\`.`,
                 `review_follow_up_group_fingerprint=${'d'.repeat(64)}.`,
                 formatReviewFollowUpTaskClosurePolicyMetadata({
                     skip_low_findings: true,
                     forbid_child_tasks: false
                 })
             ].join(' ');
-            seedTaskQueue(repoRoot, taskId, 'TODO', 'default', notes);
+            seedFollowUpTaskQueue('TODO', 'default', notes);
             seedInitAnswers(repoRoot);
 
             runEnterTaskMode({
@@ -1032,14 +1043,14 @@ describe('cli/commands/gates — preflight', () => {
 
             mutateActiveProfileToStrict(profilesPath);
             const driftedNotes = [
-                'Child of `T-979`.',
+                `Child of \`${parentTaskId}\`.`,
                 `review_follow_up_group_fingerprint=${'e'.repeat(64)}.`,
                 formatReviewFollowUpTaskClosurePolicyMetadata({
                     skip_low_findings: false,
                     forbid_child_tasks: true
                 })
             ].join(' ');
-            seedTaskQueue(repoRoot, taskId, 'DONE', 'strict', driftedNotes);
+            seedFollowUpTaskQueue('DONE', 'strict', driftedNotes);
             initializeGitRepo(repoRoot);
 
             runEnterTaskMode({

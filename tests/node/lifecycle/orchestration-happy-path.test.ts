@@ -226,6 +226,31 @@ function configureReviewCapabilities(bundleRoot: string): void {
     }, null, 2) + '\n');
 }
 
+function seedFixtureTestReviewSkill(bundleRoot: string): void {
+    const sourcePath = path.join(
+        findRepoRoot(),
+        'template',
+        'skill-packs',
+        'quality-architecture',
+        'skills',
+        'testing-strategy',
+        'SKILL.md'
+    );
+    writeTextFile(
+        path.join(bundleRoot, 'live', 'skills', 'testing-strategy', 'SKILL.md'),
+        fs.readFileSync(sourcePath, 'utf8')
+    );
+}
+
+function disableFixtureTaskDecomposition(bundleRoot: string): void {
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+        built_in_profiles: Record<string, { task_decomposition?: { enabled?: boolean } }>;
+    };
+    profiles.built_in_profiles.balanced.task_decomposition = { enabled: false };
+    fs.writeFileSync(profilesPath, `${JSON.stringify(profiles, null, 2)}\n`, 'utf8');
+}
+
 function applyTinyFixtureDiff(workspaceRoot: string): void {
     writeTextFile(path.join(workspaceRoot, 'tests', 'app.test.ts'), [
         'import assert from "node:assert/strict";',
@@ -366,6 +391,8 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         seedFixtureProject(workspaceRoot);
         configureWorkflow(bundleRoot);
         configureReviewCapabilities(bundleRoot);
+        seedFixtureTestReviewSkill(bundleRoot);
+        disableFixtureTaskDecomposition(bundleRoot);
         const agentInitResult = runAgentInit({
             targetRoot: workspaceRoot,
             activeAgentFiles: 'AGENTS.md',

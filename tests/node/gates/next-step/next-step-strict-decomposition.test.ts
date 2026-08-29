@@ -781,7 +781,7 @@ describe('gates/next-step strict decomposition', () => {
         assert.ok(result.reason.includes('linked parent-derived strict child tasks match the decision artifact'));
         assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
         assert.ok(result.reason.includes('exclude suspended siblings'));
-        assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | 🟪 DECOMPOSED |`));
         assert.ok(events.includes('"event_type":"STRICT_DECOMPOSITION_SPLIT_ROUTED"'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_WIP_CAPTURED"'));
         assert.equal(wip.status, 'FOUND');

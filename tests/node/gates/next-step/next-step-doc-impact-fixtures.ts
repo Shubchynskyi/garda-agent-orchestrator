@@ -125,6 +125,27 @@ export function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                review_policy: { code: 'auto', test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [

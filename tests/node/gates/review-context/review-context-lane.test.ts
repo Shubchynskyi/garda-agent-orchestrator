@@ -24,6 +24,17 @@ import {
 import { buildScopedDiff } from '../../../../src/gates/preflight/build-scoped-diff';
 import { resolveCatalogReviewSkillBinding } from '../../../../src/gates/review-context/build-review-context';
 import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
+import { buildReviewReceipt } from '../../../../src/gate-runtime/review-context';
+import { fileSha256 } from '../../../../src/gate-runtime/hash';
+import {
+    buildReviewFindingsValidationArtifact,
+    getReviewFindingsValidationArtifactPath
+} from '../../../../src/gates/review/review-findings-validation-artifact';
+import { validateReviewFindingsContract } from '../../../../src/gates/review/review-findings-artifact-verdict';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import type {
+    ReviewRemediationReviewContract
+} from '../../../../src/gates/review-remediation/review-remediation-review-contract';
 import { buildFocusedRecoveryCoverageContractSha256 } from '../../../../src/gates/next-step/next-step';
 import { getReusedReviewCoverageContractViolations } from '../../../../src/gates/review-reuse/review-reuse-materialization';
 import { buildReviewCoverageAuditSummary } from '../../../../src/gates/task-audit/task-audit-summary-review-coverage';
@@ -469,29 +480,152 @@ describe('catalog-backed review context lane binding', () => {
                 preflight: activePreflight,
                 repoRoot
             }).contract;
+            const contextSha256 = fileSha256(outputPath);
+            const preflightSha256 = fileSha256(activePreflightPath);
+            assert.ok(contextSha256);
+            assert.ok(preflightSha256);
+            const reviewTreeStateSha256 = result.tree_state.tree_state_sha256;
+            const reviewExecution = result.review_execution as ReviewRemediationReviewContract;
+            const reviewArtifactPath = path.join(
+                reviewsRoot,
+                'T-729-4A-fixture-architecture-boundary.md'
+            );
+            const reviewReport = {
+                schema_version: 2,
+                task_id: 'T-729-4A-fixture',
+                review_type: 'architecture-boundary',
+                review_context_sha256: contextSha256,
+                tree_state_sha256: reviewTreeStateSha256,
+                validation_notes: [{
+                    id: 'N-001',
+                    topic: 'custom review lane lifecycle',
+                    note: 'Validated custom review lane coverage, immutable skill binding, and audit propagation.',
+                    evidence: [{
+                        location: 'src/architecture.ts:1',
+                        observation: 'Inspected the architecture boundary source selected by the custom lane.'
+                    }]
+                }],
+                coverage_ledger: {
+                    coverage_contract_sha256: auditCoverage.contract_sha256,
+                    entries: auditCoverage.obligations.map((obligation) => ({
+                        obligation_id: obligation.id,
+                        evidence: [{
+                            location: 'src/architecture.ts:1',
+                            observation: `Validated custom review obligation ${obligation.id}.`
+                        }],
+                        finding_ids: []
+                    }))
+                },
+                review_execution: {
+                    mode: reviewExecution.mode,
+                    contract_sha256: reviewExecution.contract_sha256,
+                    covered_delta_targets: [],
+                    inspected_prior_finding_ids: []
+                },
+                findings: { critical: [], high: [], medium: [], low: [] },
+                residual_risks: [],
+                reviewer_notes: []
+            };
+            fs.writeFileSync(reviewArtifactPath, `${JSON.stringify(reviewReport, null, 2)}\n`, 'utf8');
+            const reviewArtifactSha256 = fileSha256(reviewArtifactPath);
+            assert.ok(reviewArtifactSha256);
+            const validation = validateReviewFindingsContract({
+                content: fs.readFileSync(reviewArtifactPath, 'utf8'),
+                expectedTaskId: 'T-729-4A-fixture',
+                expectedReviewType: 'architecture-boundary',
+                expectedReviewContextSha256: contextSha256,
+                expectedTreeStateSha256: reviewTreeStateSha256,
+                coverageContract: auditCoverage,
+                expectedReviewExecutionContract: reviewExecution
+            });
+            assert.equal(validation.valid, true, validation.violations.join('\n'));
+            const validationArtifactPath = getReviewFindingsValidationArtifactPath(reviewArtifactPath);
+            const scopeSha256 = 'c'.repeat(64);
+            const reviewScopeSha256 = 'd'.repeat(64);
+            const codeScopeSha256 = 'e'.repeat(64);
+            const validationArtifact = buildReviewFindingsValidationArtifact({
+                taskId: 'T-729-4A-fixture',
+                reviewType: 'architecture-boundary',
+                validation,
+                reviewOutputSha256: reviewArtifactSha256,
+                reviewArtifactPath,
+                reviewArtifactSha256,
+                reviewContextPath: outputPath,
+                reviewContextSha256: contextSha256,
+                preflightPath: activePreflightPath,
+                preflightSha256,
+                scopeSha256,
+                reviewScopeSha256,
+                codeScopeSha256,
+                reviewTreeStateSha256,
+                coverageContract: auditCoverage
+            });
+            fs.writeFileSync(
+                validationArtifactPath,
+                `${JSON.stringify(validationArtifact, null, 2)}\n`,
+                'utf8'
+            );
+            const validationArtifactSha256 = fileSha256(validationArtifactPath);
+            assert.ok(validationArtifactSha256);
+            const executionEvidence = resolveReviewContextExecutionEvidenceBindings(
+                result as unknown as Record<string, unknown>
+            );
+            assert.ok(executionEvidence.bindings, executionEvidence.violations.join('\n'));
+            const receipt = buildReviewReceipt({
+                taskId: 'T-729-4A-fixture',
+                reviewType: 'architecture-boundary',
+                preflightSha256,
+                scopeSha256,
+                reviewScopeSha256,
+                codeScopeSha256,
+                reviewContextSha256: contextSha256,
+                reviewTreeStateSha256,
+                reviewExecutionMode: executionEvidence.bindings.review_execution_mode,
+                reviewExecutionContractSha256:
+                    executionEvidence.bindings.review_execution_contract_sha256,
+                reviewExecutionFullScopeSha256:
+                    executionEvidence.bindings.review_execution_full_scope_sha256,
+                reviewExecutionCompleteScopeLineageSha256:
+                    executionEvidence.bindings.review_execution_complete_scope_lineage_sha256,
+                reviewExecutionFindingReconciliationSha256:
+                    executionEvidence.bindings.review_execution_finding_reconciliation_sha256,
+                reviewArtifactSha256,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:architecture-reviewer',
+                trustLevel: 'INDEPENDENT_AUDITED'
+            }) as unknown as Record<string, unknown>;
+            receipt.review_output_sha256 = reviewArtifactSha256;
+            receipt.review_coverage = validation.coverage_validation;
+            receipt.review_findings_validation = {
+                artifact_path: validationArtifactPath.replace(/\\/gu, '/'),
+                artifact_sha256: validationArtifactSha256,
+                snapshot_path: null,
+                snapshot_sha256: null,
+                status: validationArtifact.validation_result.status,
+                accepted: validationArtifact.validation_result.accepted,
+                validation_result_sha256: validationArtifact.validation_result_sha256,
+                violation_count: validationArtifact.validation_result.violations.length
+            };
+            receipt.review_output_contract = {
+                coverage_contract_sha256: auditCoverage.contract_sha256,
+                validation_artifact_sha256: validationArtifactSha256,
+                validation_result_sha256: validationArtifact.validation_result_sha256,
+                ...executionEvidence.bindings
+            };
             fs.writeFileSync(path.join(
                 reviewsRoot,
                 'T-729-4A-fixture-architecture-boundary-receipt.json'
-            ), JSON.stringify({
-                review_coverage: {
-                    status: 'PASS',
-                    required: auditCoverage.required,
-                    contract_sha256: auditCoverage.contract_sha256,
-                    obligation_count: auditCoverage.obligation_count,
-                    completed_obligation_count: auditCoverage.obligation_count,
-                    omitted_obligation_ids: [],
-                    duplicate_obligation_ids: [],
-                    unknown_obligation_ids: [],
-                    finding_ids: [],
-                    violations: []
-                }
-            }, null, 2), 'utf8');
+            ), `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
             const auditSummary = buildReviewCoverageAuditSummary({
                 reviewsRoot,
                 taskId: 'T-729-4A-fixture',
                 requiredReviews: { 'architecture-boundary': true }
             });
-            assert.equal(auditSummary.status, 'COMPLETE');
+            assert.equal(
+                auditSummary.status,
+                'COMPLETE',
+                JSON.stringify(auditSummary.entries[0]?.violations)
+            );
             assert.equal(auditSummary.entries[0]?.contract_sha256, auditCoverage.contract_sha256);
 
             const inactivePreflight = buildCustomPreflight(false);

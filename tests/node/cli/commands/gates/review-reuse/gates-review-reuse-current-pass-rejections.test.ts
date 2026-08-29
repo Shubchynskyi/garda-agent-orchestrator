@@ -41,6 +41,9 @@ import {
 import {
     validateReviewFindingsContract
 } from '../../../../../../src/gates/review/review-findings-artifact-verdict';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../../../src/gates/review/review-evidence-contract';
+import { REVIEW_FINDINGS_SCHEMA_VERSION } from '../../../../../../src/gates/review/review-findings-schema';
+import type { ReviewRemediationReviewContract } from '../../../../../../src/gates/review-remediation/review-remediation-review-contract';
 
 function sha256Text(text: string): string {
     return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -60,6 +63,7 @@ function buildMissingFocusedValidationReport(options: {
     reviewContextSha256: string;
     treeStateSha256: string;
     coverageContract: Record<string, unknown>;
+    reviewExecution: ReviewRemediationReviewContract;
     includeNonBlockingFinding?: boolean;
 }): Record<string, unknown> {
     const obligations = Array.isArray(options.coverageContract.obligations)
@@ -71,11 +75,17 @@ function buildMissingFocusedValidationReport(options: {
     const marker = '[garda:evidence-only:missing-focused-validation] test=tests/app.test.ts; action=run-and-record-focused-test';
     const findingIds = options.includeNonBlockingFinding ? ['F-000', 'F-001'] : ['F-000'];
     return {
-        schema_version: 1,
+        schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
         task_id: options.taskId,
         review_type: options.reviewType,
         review_context_sha256: options.reviewContextSha256,
         tree_state_sha256: options.treeStateSha256,
+        review_execution: {
+            mode: options.reviewExecution.mode,
+            contract_sha256: options.reviewExecution.contract_sha256,
+            covered_delta_targets: [],
+            inspected_prior_finding_ids: []
+        },
         validation_notes: [
             {
                 id: 'N-001',
@@ -171,6 +181,8 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
     const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
     const reviewContextSha256 = sha256Text(reviewContextText);
     const coverageContract = reviewContext.coverage_contract as Record<string, unknown>;
+    const reviewExecution = reviewContext.review_execution as ReviewRemediationReviewContract;
+    const reviewExecutionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings!;
     const treeStateSha256 = getReviewTreeStateSha256FromFixtureContext(reviewContext);
     assert.ok(treeStateSha256);
     const report = buildMissingFocusedValidationReport({
@@ -179,6 +191,7 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
         reviewContextSha256,
         treeStateSha256,
         coverageContract,
+        reviewExecution,
         includeNonBlockingFinding: options.includeNonBlockingFinding
     });
     writeJson(artifactPath, report);
@@ -190,7 +203,8 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: treeStateSha256,
         coverageContract: coverageContract as never,
-        repoRoot: options.repoRoot
+        repoRoot: options.repoRoot,
+        expectedReviewExecutionContract: reviewExecution
     });
     assert.equal(validation.valid, true, validation.violations.join('\n'));
 
@@ -243,7 +257,10 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
     receipt.review_coverage = validation.coverage_validation;
     receipt.review_output_format = 'findings_json';
     receipt.review_output_schema_version = validation.report?.schema_version ?? null;
-    receipt.review_findings_report_sha256 = validation.report ? sha256Text(JSON.stringify(validation.report)) : null;
+    const reportSha256 = validation.report
+        ? sha256Text(`${JSON.stringify(validation.report, null, 2)}\n`)
+        : null;
+    receipt.review_findings_report_sha256 = reportSha256;
     receipt.review_findings_report = validation.report;
     receipt.review_findings_validation = {
         artifact_path: path.normalize(validationArtifactPath).replace(/\\/g, '/'),
@@ -273,7 +290,7 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
     receipt.review_output_contract = {
         schema_version: 1,
         format: 'findings_json',
-        report_sha256: validation.report ? sha256Text(JSON.stringify(validation.report)) : null,
+        report_sha256: reportSha256,
         validation_artifact_sha256: validationArtifactSha256,
         validation_result_sha256: validationArtifact.validation_result_sha256,
         disposition_artifact_sha256: dispositionArtifactSha256,
@@ -283,6 +300,7 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: treeStateSha256,
         coverage_contract_sha256: coverageContract.contract_sha256,
+        ...reviewExecutionBindings,
         reviewer_identity: receipt.reviewer_identity,
         reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
     };

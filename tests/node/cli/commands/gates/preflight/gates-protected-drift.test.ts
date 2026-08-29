@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { writeBudgetOutputFilters } from '../../gate-test-helpers';
+import {
+    bindFixtureEffectiveReviewSnapshot,
+    writeBudgetOutputFilters
+} from '../../gate-test-helpers';
 import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
@@ -86,8 +89,14 @@ function createTempRepo(): string {
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'skills', 'code-review'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    fs.writeFileSync(
+        path.join(root, 'garda-agent-orchestrator', 'live', 'skills', 'code-review', 'SKILL.md'),
+        '# code-review fixture\n',
+        'utf8'
+    );
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
     workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
@@ -813,6 +822,7 @@ function loadPostPreflightRulePack(
     artifactPath = '',
     taskModePath = ''
 ) {
+    bindFixtureEffectiveReviewSnapshot(repoRoot, taskId, 'code', preflightPath, taskModePath);
     if (ensurePreflightClassified) {
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
     }

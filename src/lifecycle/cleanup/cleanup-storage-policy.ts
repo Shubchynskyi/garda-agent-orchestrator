@@ -5,7 +5,10 @@ import {
     invalidateIndex as invalidateReviewsIndex,
     rebuildIndex
 } from '../../gate-runtime/reviews-index';
-import { parseActiveReviewArtifactTaskId } from '../../core/task-ids';
+import {
+    parseActiveReviewArtifactTaskId,
+    parseStructuredTaskArtifactTaskId
+} from '../../core/task-ids';
 import { ensureWithinRoot } from '../generic-utils';
 import type {
     ReviewArtifactRetentionMode,
@@ -245,6 +248,7 @@ export function applyStoragePolicy(
         }
         const taskId = parseActiveReviewArtifactTaskId(entry, protectedTaskIds)
             ?? indexedTaskIdsByFileName.get(entry)
+            ?? parseStructuredTaskArtifactTaskId(entry)
             ?? null;
         if (!taskId) continue;
         if (targetTaskIds && !targetTaskIds.has(taskId)) {

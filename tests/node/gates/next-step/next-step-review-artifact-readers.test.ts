@@ -279,8 +279,22 @@ function writeFindingsReviewPackage(options: {
         reviewer_identity: `agent:${options.taskId}-${options.reviewType}`,
         reviewer_provenance_event_sha256: null
     };
+    const reusedExecutionBindings = options.receiptOverrides?.reused_existing_review === true
+        ? {
+            reused_from_review_execution_mode: reviewExecutionBindings.review_execution_mode,
+            reused_from_review_execution_contract_sha256:
+                reviewExecutionBindings.review_execution_contract_sha256,
+            reused_from_review_execution_full_scope_sha256:
+                reviewExecutionBindings.review_execution_full_scope_sha256,
+            reused_from_review_execution_complete_scope_lineage_sha256:
+                reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+            reused_from_review_execution_finding_reconciliation_sha256:
+                reviewExecutionBindings.review_execution_finding_reconciliation_sha256
+        }
+        : {};
     writeJson(path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}-receipt.json`), {
         ...receipt,
+        ...reusedExecutionBindings,
         ...(options.receiptOverrides || {})
     });
 }
@@ -1002,7 +1016,7 @@ test('readReviewArtifactState rejects malformed findings JSON instead of derivin
 
     assert.equal(state.verdictToken, 'CODE REVIEW FAILED');
     assert.equal(state.failed, true);
-    assert.equal(state.failureKind, 'review-validation-rejected');
+    assert.equal(state.failureKind, 'review-correction-full-review-required');
     assert.equal(state.reviewFindingsValidationRejected, true);
     assert.ok(state.violations.some((violation) => violation.includes('review findings validation artifact is rejected')));
 });

@@ -98,7 +98,7 @@ describe('gates/next-step split-required latch finalization', () => {
         assert.equal(doneResult.status, 'DONE');
         assert.equal(stableDoneResult.status, 'DONE');
         assert.equal(stableDoneResult.next_gate, null);
-        assert.ok(taskMd.includes('| T-652 | DONE |'));
+        assert.ok(taskMd.includes('| T-652 | 🟩 DONE |'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
         assert.ok(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'));
         assert.equal((events.match(/"event_type":"SPLIT_REQUIRED_RESTORED"/g) || []).length, 0);
@@ -129,7 +129,7 @@ describe('gates/next-step split-required latch finalization', () => {
 
         assert.equal(decomposedResult.status, 'DECOMPOSED');
         assert.equal(doneResult.status, 'DONE');
-        assert.ok(taskMd.includes('| T-506 | DONE |'));
+        assert.ok(taskMd.includes('| T-506 | 🟩 DONE |'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
         assert.ok(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'));
     });
@@ -182,7 +182,7 @@ describe('gates/next-step split-required latch finalization', () => {
         assert.ok(result.reason.includes('stayed permanent after later status/config/scope drift'));
         assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
         assert.ok(result.reason.includes('keep current-child tests covered, exclude suspended siblings, leave an already-suitable command unchanged'));
-        assert.ok(taskMd.includes('| T-646 | DECOMPOSED |'));
+        assert.ok(taskMd.includes('| T-646 | 🟪 DECOMPOSED |'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
     });

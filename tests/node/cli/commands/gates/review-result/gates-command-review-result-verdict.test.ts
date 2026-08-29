@@ -537,6 +537,7 @@ describe('gates command review result - verdict validation', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -603,7 +604,10 @@ describe('gates command review result - verdict validation', () => {
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), false);
-        assert.ok(capturedErrors.some((line) => line.includes('trivial or obviously synthetic')));
+        assert.ok(
+            capturedErrors.some((line) => line.includes('trivial or obviously synthetic')),
+            capturedErrors.join('\n')
+        );
         assert.ok(capturedErrors.some((line) => line.includes('Minimal compliant PASS review template')));
         assert.ok(capturedErrors.some((line) => line.includes('## Findings by Severity')));
         assert.ok(capturedErrors.some((line) => line.includes('## Residual Risks')));
@@ -627,6 +631,7 @@ describe('gates command review result - verdict validation', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -693,7 +698,10 @@ describe('gates command review result - verdict validation', () => {
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
         assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
-        assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")));
+        assert.ok(
+            capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")),
+            capturedErrors.join('\n')
+        );
         assert.ok(!capturedErrors.some((line) => line.includes('Minimal compliant PASS review template')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);

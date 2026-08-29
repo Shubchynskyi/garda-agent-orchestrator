@@ -266,7 +266,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             }
 
             const updatedContent = content.replace(pattern, '');
-            const normalized = normalizeTextAfterManagedBlockRemoval(updatedContent);
+            const normalized = normalizeTextAfterManagedBlockRemoval(updatedContent, true);
             updateOrRemoveFile(filePath, relativePath, normalized);
         }
 

@@ -154,7 +154,8 @@ export function makeTempRepo(): string {
                     scoped_diffs: true,
                     compact_reviewer_output: true
                 },
-                skills: { auto_suggest: true }
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
             }
         },
         user_profiles: {}

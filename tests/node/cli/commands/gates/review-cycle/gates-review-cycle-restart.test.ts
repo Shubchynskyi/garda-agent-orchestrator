@@ -1858,8 +1858,17 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
         fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.mkdirSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'skills', 'code-review'),
+            { recursive: true }
+        );
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'skills', 'code-review', 'SKILL.md'),
+            '# code-review fixture\n',
+            'utf8'
+        );
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
@@ -2146,83 +2155,11 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const rejectedLaunchArtifact = JSON.parse(
             fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')
         ) as Record<string, unknown>;
-        assert.equal(rejectedLaunchArtifact.attestation_state, 'launch_failed');
-        assert.equal(rejectedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(rejectedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(rejectedLaunchArtifact.launch_failure_stage, undefined);
         const reportCorrectionRoute = resolveNextStep({ taskId, repoRoot });
-        assert.equal(reportCorrectionRoute.next_gate, 'record-review-result', reportCorrectionRoute.reason);
-
-        const currentReviewContext = JSON.parse(fs.readFileSync(codeReviewContextPath, 'utf8')) as {
-            coverage_contract: {
-                contract_sha256: string;
-                obligations: Array<{ id: string; kind: string; target: string }>;
-            };
-            tree_state: {
-                tree_state_sha256: string;
-            };
-        };
-        const coverageObligationIds = currentReviewContext.coverage_contract.obligations.map(
-            (obligation) => obligation.id
-        );
-        const defaultEvidenceFile = currentReviewContext.coverage_contract.obligations.find(
-            (obligation) => obligation.kind === 'file'
-        )?.target || 'src/app.ts';
-        const correctedFinding = {
-            id: 'F-001',
-            title: 'Fixture active finding',
-            description: 'Seeded failed-review fixture finding for review-cycle recovery behavior.',
-            evidence: [{
-                location: `${defaultEvidenceFile}:1`,
-                observation: 'The fixture intentionally records an active finding.'
-            }],
-            coverage_obligation_ids: coverageObligationIds
-        };
-        fs.writeFileSync(rejectedReviewOutputPath, JSON.stringify({
-            schema_version: 1,
-            task_id: taskId,
-            review_type: 'code',
-            review_context_sha256: fileSha256(codeReviewContextPath),
-            tree_state_sha256: currentReviewContext.tree_state.tree_state_sha256,
-            validation_notes: [{
-                id: 'N-001',
-                topic: 'fixture-scope',
-                note: 'Validated the complete code fixture scope and every generated coverage obligation.',
-                evidence: [{
-                    location: `${defaultEvidenceFile}:1`,
-                    observation: 'Concrete fixture evidence covers the code review scope.'
-                }]
-            }],
-            coverage_ledger: {
-                coverage_contract_sha256: currentReviewContext.coverage_contract.contract_sha256,
-                entries: currentReviewContext.coverage_contract.obligations.map((obligation) => ({
-                    obligation_id: obligation.id,
-                    evidence: [{
-                        location: `${obligation.kind === 'file' ? obligation.target : defaultEvidenceFile}:1`,
-                        observation: `Concrete fixture evidence covers ${obligation.kind} ${obligation.target}.`
-                    }],
-                    finding_ids: ['F-001']
-                }))
-            },
-            findings: {
-                critical: [],
-                high: [correctedFinding],
-                medium: [],
-                low: []
-            },
-            residual_risks: [],
-            reviewer_notes: []
-        }, null, 2) + '\n', 'utf8');
-        await handleRecordReviewResult([
-            '--task-id', taskId,
-            '--review-type', 'code',
-            '--preflight-path', preflightPath,
-            '--review-context-path', codeReviewContextPath,
-            '--review-output-path', rejectedReviewOutputPath,
-            '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', rejectedReviewerIdentity,
-            '--repo-root', repoRoot
-        ]);
-        const rejectedRecoveryRoute = resolveNextStep({ taskId, repoRoot });
-        assert.equal(rejectedRecoveryRoute.next_gate, 'record-review-result', rejectedRecoveryRoute.reason);
+        assert.equal(reportCorrectionRoute.next_gate, 'restart-review-cycle', reportCorrectionRoute.reason);
+        assert.match(reportCorrectionRoute.reason, /cannot safely continue/u);
 
         const restartResult = await runRestartReviewCycleCommand({
             repoRoot,

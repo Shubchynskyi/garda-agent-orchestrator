@@ -693,7 +693,7 @@ describe('cli/commands/gates', () => {
         assert.ok(finalUserReport.includes('GARDA FINAL REPORT'));
         assert.ok(finalUserReport.includes(`Task: ${taskId}`));
         assert.ok(finalUserReport.includes('Status: DONE'));
-        assert.ok(finalUserReport.includes('Review Timing Warning:\nnone'));
+        assert.ok(!finalUserReport.includes('Process warnings:'));
         assert.ok(!finalUserReport.includes('PathMode:'));
         assert.ok(!finalUserReport.includes('Commit Readiness:'));
         assert.ok(!finalUserReport.includes('Operator Question:'));

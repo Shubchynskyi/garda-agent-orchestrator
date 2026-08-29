@@ -26,6 +26,7 @@ import {
     seedInitAnswers,
     seedReusableReviewEvidence,
     seedTaskQueue,
+    writeBalancedProfilesConfig,
     writeCompilePassEvidence,
     writePreflight,
     writeReviewCapabilitiesConfig
@@ -91,9 +92,38 @@ describe('gate build-review-context CLI flow binding', () => {
 
     it('accepts an extensible review type while preserving canonical path resolution', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-review-context-cli-binding-invalid-review';
+        const taskId = 'T-review-context-cli-binding-extensible-review';
+        const reviewType = 'architecture-boundary';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        writeBalancedProfilesConfig(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        const configRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+        const profilesPath = path.join(configRoot, 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: { balanced: { review_policy: Record<string, unknown> } };
+        };
+        profiles.built_in_profiles.balanced.review_policy[reviewType] = true;
+        fs.writeFileSync(profilesPath, `${JSON.stringify(profiles, null, 2)}\n`, 'utf8');
+        const capabilitiesPath = path.join(configRoot, 'review-capabilities.json');
+        const capabilities = JSON.parse(fs.readFileSync(capabilitiesPath, 'utf8')) as Record<string, boolean>;
+        capabilities[reviewType] = true;
+        fs.writeFileSync(capabilitiesPath, `${JSON.stringify(capabilities, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(configRoot, 'review-catalog.json'), `${JSON.stringify({
+            version: 1,
+            custom_review_types: [{
+                id: reviewType,
+                display_label: 'Architecture boundary review',
+                enabled_by_default: false,
+                skill_id: 'code-review',
+                trigger: { mode: 'manual', signal_ids: [] },
+                coverage_category_ids: ['maintainability'],
+                reviewer_role: {
+                    role_id: 'architecture-reviewer',
+                    focus_tags: ['maintainability']
+                }
+            }]
+        }, null, 2)}\n`, 'utf8');
         initializeGitRepo(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 7;\n', 'utf8');
         const preflightPath = writePreflight(repoRoot, taskId);
@@ -101,12 +131,12 @@ describe('gate build-review-context CLI flow binding', () => {
 
         const result = await runBuildReviewContextCommand({
             repoRoot,
-            reviewType: 'unknown-review-type',
+            reviewType,
             depth: '2',
             preflightPath
         });
         const expectedPath = normalizePath(
-            path.join(getReviewsRoot(repoRoot), `${taskId}-unknown-review-type-review-context.json`)
+            path.join(getReviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`)
         );
         assert.equal(result.outputPath, expectedPath);
         assert.equal(fs.existsSync(result.outputPath), true);

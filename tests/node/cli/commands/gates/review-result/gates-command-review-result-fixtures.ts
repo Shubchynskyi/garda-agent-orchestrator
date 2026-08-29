@@ -1040,10 +1040,28 @@ export async function seedPromptBoundReviewFixture(options: {
     reviewerIdentity?: string;
     preflightOverrides?: Record<string, unknown>;
     taskNotes?: string;
+    parentTask?: {
+        taskId: string;
+        notes: string;
+    };
 }) {
     const provider = options.provider || 'Codex';
     const reviewerIdentity = options.reviewerIdentity || `agent:${options.taskId}-reviewer`;
     seedTaskQueue(options.repoRoot, options.taskId);
+    if (options.parentTask) {
+        const taskPath = path.join(options.repoRoot, 'TASK.md');
+        const taskContent = fs.readFileSync(taskPath, 'utf8');
+        const separator = '| --- | --- | --- | --- | --- | --- | --- | --- | --- |';
+        assert.ok(taskContent.includes(separator));
+        fs.writeFileSync(
+            taskPath,
+            taskContent.replace(
+                separator,
+                `${separator}\n| ${options.parentTask.taskId} | IN_PROGRESS | P1 | test | Parent review task | unassigned | 2026-03-28 | balanced | ${options.parentTask.notes} |`
+            ),
+            'utf8'
+        );
+    }
     const requestedProfileId = String(
         ((options.preflightOverrides?.profile_policy_snapshot as Record<string, any> | undefined)
             ?.review_finding_policy as Record<string, unknown> | undefined)?.policy_id || ''

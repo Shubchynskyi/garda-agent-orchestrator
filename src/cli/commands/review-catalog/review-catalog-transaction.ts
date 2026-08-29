@@ -193,6 +193,45 @@ function releaseTransactionLock(lockPath: string, lockFd: number): void {
     fs.unlinkSync(lockPath);
 }
 
+function runWithTransactionLock<T>(
+    bundleRoot: string,
+    combinedFailureMessage: string,
+    operation: () => T
+): T {
+    const { lockPath, lockFd } = acquireTransactionLock(bundleRoot);
+    let outcome: { value: T } | null = null;
+    let primaryError: unknown;
+    let lockReleaseError: unknown;
+    let hasPrimaryError = false;
+    let hasLockReleaseError = false;
+    try {
+        outcome = { value: operation() };
+    } catch (error: unknown) {
+        primaryError = error;
+        hasPrimaryError = true;
+    } finally {
+        try {
+            releaseTransactionLock(lockPath, lockFd);
+        } catch (error: unknown) {
+            lockReleaseError = error;
+            hasLockReleaseError = true;
+        }
+    }
+    if (hasPrimaryError && hasLockReleaseError) {
+        throw new AggregateError([primaryError, lockReleaseError], combinedFailureMessage);
+    }
+    if (hasPrimaryError) {
+        throw primaryError;
+    }
+    if (hasLockReleaseError) {
+        throw lockReleaseError;
+    }
+    if (outcome === null) {
+        throw new Error('Review catalog transaction completed without a result.');
+    }
+    return outcome.value;
+}
+
 function resolveConfirmationDirectory(bundleRoot: string, consumed = false): string {
     const confirmationRoot = path.join(bundleRoot, 'runtime', 'review-catalog-confirmations');
     ensureRealDirectoryInsideBundle(bundleRoot, confirmationRoot, 'Review catalog confirmation directory');
@@ -338,9 +377,7 @@ export function issueReviewCatalogConfirmationReceipt(
         instruction: 'Obtain explicit operator confirmation after inspecting the preview.'
     });
     requireOperatorOnlyContext(options.repoRoot, options.bundleRoot, 'Review catalog confirmation');
-    const { lockPath, lockFd } = acquireTransactionLock(options.bundleRoot);
-    let primaryError: unknown = null;
-    try {
+    const issueConfirmationReceipt = (): ReviewCatalogConfirmationResult => {
         requireOperatorOnlyContext(options.repoRoot, options.bundleRoot, 'Review catalog confirmation');
         if (options.readCurrentStateSha256() !== expectedStateSha256) {
             throw new Error('Managed review configuration changed after preview; stale preview cannot be confirmed.');
@@ -359,22 +396,12 @@ export function issueReviewCatalogConfirmationReceipt(
             confirmation_receipt_path: normalizeOutputPath(receiptPath),
             confirmed_at_utc: options.operatorConfirmedAtUtc
         };
-    } catch (error: unknown) {
-        primaryError = error;
-        throw error;
-    } finally {
-        try {
-            releaseTransactionLock(lockPath, lockFd);
-        } catch (error: unknown) {
-            if (primaryError) {
-                throw new AggregateError(
-                    [primaryError, error],
-                    'Review catalog confirmation failed and its lock could not be released safely.'
-                );
-            }
-            throw error;
-        }
-    }
+    };
+    return runWithTransactionLock(
+        options.bundleRoot,
+        'Review catalog confirmation failed and its lock could not be released safely.',
+        issueConfirmationReceipt
+    );
 }
 
 function appendAuditRecord(
@@ -579,9 +606,7 @@ export function commitReviewCatalogManagementPlan(
         throw new Error('Expected plan SHA-256 does not match the review-catalog preview plan.');
     }
     assertManagedChanges(options.bundleRoot, options.plan.changes);
-    const { lockPath, lockFd } = acquireTransactionLock(options.bundleRoot);
-    let primaryError: unknown = null;
-    try {
+    const commitPlan = (): ReviewCatalogTransactionResult => {
         assertManagedConfigDirectoryCurrent(options.bundleRoot);
         const currentStateSha256 = options.readCurrentStateSha256();
         assertManagedConfigDirectoryCurrent(options.bundleRoot);
@@ -667,20 +692,10 @@ export function commitReviewCatalogManagementPlan(
             backup_path: null,
             protected_manifest_path: normalizeOutputPath(protectedManifestPath)
         };
-    } catch (error: unknown) {
-        primaryError = error;
-        throw error;
-    } finally {
-        try {
-            releaseTransactionLock(lockPath, lockFd);
-        } catch (error: unknown) {
-            if (primaryError) {
-                throw new AggregateError(
-                    [primaryError, error],
-                    'Review catalog transaction failed and its lock could not be released safely.'
-                );
-            }
-            throw error;
-        }
-    }
+    };
+    return runWithTransactionLock(
+        options.bundleRoot,
+        'Review catalog transaction failed and its lock could not be released safely.',
+        commitPlan
+    );
 }

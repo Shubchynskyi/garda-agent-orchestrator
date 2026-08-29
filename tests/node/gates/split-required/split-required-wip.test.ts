@@ -133,7 +133,7 @@ describe('split-required WIP capture and restore', () => {
         const wipCapture = splitArtifact.wip_capture as Record<string, unknown>;
         assert.equal(wipCapture.status, 'CAPTURED');
         assert.ok((splitArtifact.next_actions as string[]).includes('preview_or_restore_selected_wip_in_child_task'));
-        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
     });
 
     it('captures tracked and task-owned untracked files, suspends the worktree, and restores all files explicitly', () => {
