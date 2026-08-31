@@ -492,29 +492,32 @@ test('review-catalog list and validate preserve built-in compatibility when the 
 });
 
 test('review-catalog routes through parity-protected CLI dispatch', async () => {
-    const repoRoot = process.cwd();
-    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
-    const argv = ['list', '--target-root', repoRoot, '--bundle-root', bundleRoot, '--json'];
-    const policy = resolveCommandParityPolicy('review-catalog', argv);
-    assert.equal(policy.mode, 'block');
-    assert.equal(path.resolve(policy.root), path.resolve(repoRoot));
-
-    const originalLog = console.log;
-    const lines: string[] = [];
-    console.log = (...items: unknown[]) => lines.push(items.join(' '));
+    const workspace = createWorkspace();
     try {
-        await dispatchCliCommand({
-            commandName: 'review-catalog',
-            commandArgv: argv,
-            packageJson: PACKAGE_JSON,
-            packageRoot: repoRoot,
-            globalFlags: { offline: false, forceNetwork: false }
-        });
-        const payload = JSON.parse(lines.join('\n'));
-        assert.equal(payload.action, 'list');
-        assert.ok(Array.isArray(payload.lanes));
+        const argv = ['list', ...sharedArgs(workspace)];
+        const policy = resolveCommandParityPolicy('review-catalog', argv);
+        assert.equal(policy.mode, 'block');
+        assert.equal(path.resolve(policy.root), path.resolve(workspace.repoRoot));
+
+        const originalLog = console.log;
+        const lines: string[] = [];
+        console.log = (...items: unknown[]) => lines.push(items.join(' '));
+        try {
+            await dispatchCliCommand({
+                commandName: 'review-catalog',
+                commandArgv: argv,
+                packageJson: PACKAGE_JSON,
+                packageRoot: process.cwd(),
+                globalFlags: { offline: false, forceNetwork: false }
+            });
+            const payload = JSON.parse(lines.join('\n'));
+            assert.equal(payload.action, 'list');
+            assert.ok(Array.isArray(payload.lanes));
+        } finally {
+            console.log = originalLog;
+        }
     } finally {
-        console.log = originalLog;
+        fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
     }
 });
 
