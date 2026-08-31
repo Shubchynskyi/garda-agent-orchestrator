@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.1
+## 1.4.2
 
 ### Extensible Review Catalog
 
@@ -26,7 +26,7 @@
 
 ### Reliability And Compatibility
 
-- Fixed clean-checkout release validation on Node 22 for Windows, isolated review-catalog tests from ignored materialized configuration, and made the Windows package-install performance ceiling resilient to shared-runner filesystem variance without weakening the functional timeout.
+- Fixed clean-checkout release validation on Node 22 for Windows, isolated review-catalog tests from ignored materialized configuration, serialized mutable review-cycle fixtures on concurrent Linux runners, and made the Windows package-install performance ceiling resilient to shared-runner filesystem variance without weakening the functional timeout.
 - Strengthened semantic-cycle rebind and resume transactions, mutation-journal recovery, lifecycle-event reconstruction, full-review reuse, correction rollback, materialized follow-up reconciliation, and frozen-policy handling across configuration drift.
 - Fixed review-catalog transaction cleanup so lock-release failures are reported without throwing from `finally`, while simultaneous operation and cleanup failures retain both causes.
 - Fixed downstream review and rule-pack validation for repositories that keep the task-mode artifact at an explicit non-default path; the supplied path remains constrained to the repository boundary.

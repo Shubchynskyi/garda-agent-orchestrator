@@ -4,27 +4,27 @@ This tracked checklist is the release-cut source of truth for static readiness.
 Local `TASK.md` and `TASK_DONE.md` files are intentionally gitignored operator
 queues and must not be treated as publish blockers by release validation.
 
-## 1.4.1
+## 1.4.2
 
-- [x] Package metadata is aligned to `1.4.1` in `package.json`, `package-lock.json`, `VERSION`, and the tracked package-surface baseline.
-- [x] `CHANGELOG.md` starts with a populated `1.4.1` section, while release readiness verifies that the complete released tail beginning at `1.3.0` remains content-identical to the `v1.3.0` tag.
-- [x] Release readiness rejects any existing `v1.4.1` tag. The publish workflow independently validates tag/version parity and rejects both reruns and any distinct prior `publish.yml` run for the same tag through read-only GitHub Actions history.
+- [x] Package metadata is aligned to `1.4.2` in `package.json`, `package-lock.json`, `VERSION`, and the tracked package-surface baseline.
+- [x] `CHANGELOG.md` starts with a populated `1.4.2` section, while release readiness verifies that the complete released tail beginning at `1.3.0` remains content-identical to the `v1.3.0` tag.
+- [x] Release readiness rejects any existing `v1.4.2` tag. The publish workflow independently validates tag/version parity and rejects both reruns and any distinct prior `publish.yml` run for the same tag through read-only GitHub Actions history.
 - [x] All commits after `v1.3.0` were audited by conventional prefix; the history includes the intentional `dev`-to-`master` release merge, no explicit breaking-change markers, and no tracked-file deletions.
-- [x] The erroneous unpublished `v1.4.0` tag failed validation before npm staging, was removed, and is not reused; `v1.4.1` is a fresh release identity on verified `master` history.
+- [x] The unpublished `v1.4.0` and `v1.4.1` tags both failed validation before npm staging, were removed, and are not reused; `v1.4.2` is a fresh release identity on verified `master` history.
 - [x] README, CLI, Node runtime, Node platform, and release-runbook compatibility references name the `1.4.x` line and preserve the Node 22.13+/24 support matrix.
 - [x] Release notes cover the guarded review catalog, compatibility migration, dynamic review ordering, authenticated delta/full remediation, correction and recovery hardening, workflow manifests, operator UI changes, and safer uninstall behavior.
-- [x] The bundled `1.4.1` update announcement gives existing users an actionable catalog validation command and keeps explicit migration optional and preview-only.
+- [x] The bundled `1.4.2` update announcement gives existing users an actionable catalog validation command and keeps explicit migration optional and preview-only.
 - [x] All tracked Markdown documents are covered by the repository-relative link validator, and package smoke separately validates links in the installed public-document surface.
 - [x] Published tarballs retain the compiled-only CLI contract and omit `src/**`, `tests/**`, `.node-build/**`, and `.scripts-build/**`.
-- [x] The deterministic offline package-surface baseline is refreshed from the final `1.4.1` packed surface with a release-audit rationale.
+- [x] The deterministic offline package-surface baseline is refreshed from the final `1.4.2` packed surface with a release-audit rationale.
 - [x] `.github/workflows/publish.yml` remains the primary Trusted Publishing workflow for `v*` tags, and its `npm-release` GitHub Environment is release-tag restricted.
 - [x] npm Trusted Publisher settings remain GitHub Actions publisher `Shubchynskyi` / `garda-agent-orchestrator` / `publish.yml`, with allowed action `npm stage publish`.
 - [x] The public package still requires npm-side staged approval with maintainer 2FA; after verification, Publishing access can remain `Require two-factor authentication and disallow tokens`.
-- [x] Post-publish verification includes npm `latest`, package integrity/provenance visibility, and `npx --yes garda-agent-orchestrator@1.4.1 --version`.
+- [x] Post-publish verification includes npm `latest`, package integrity/provenance visibility, and `npx --yes garda-agent-orchestrator@1.4.2 --version`.
 - [x] Frozen profile/effective-review-snapshot behavior is aligned across compile, POST_PREFLIGHT rule-pack, required-review, and `next-step` flows; the final full Node suite completes without failures.
 - [x] Review selection, findings/disposition, final closeout, review-cycle restart, public-command inventory, lifecycle cleanup, and lifecycle writer-audit regressions are resolved and covered by focused plus full-suite tests.
-- [x] The tracked package metadata, template, update announcement, and release documentation report `1.4.1`; embedded-bundle parity remains explicitly skipped when no tracked embedded items exist.
-- [x] The final handoff contract requires a clean-tree `npm run release:preflight` on Node 24 and the supported Node 22.13+ line; creating or pushing `v1.4.1` and approving the staged npm release remain explicit operator actions after the release commit.
+- [x] The tracked package metadata, template, update announcement, and release documentation report `1.4.2`; embedded-bundle parity remains explicitly skipped when no tracked embedded items exist.
+- [x] The final handoff contract requires a clean-tree `npm run release:preflight` on Node 24 and the supported Node 22.13+ line; creating or pushing `v1.4.2` and approving the staged npm release remain explicit operator actions after the release commit.
 
 ### Current validation decision
 
@@ -45,17 +45,17 @@ There are no remaining known code or test blockers. The worktree intentionally
 contains the uncommitted release preparation, so it is ready for a release
 commit but not yet for a tag. After that commit, run the exact clean-tree
 `npm run release:preflight` on Node 24 and the supported Node 22.13+ line before
-creating `v1.4.1`; the target tag is currently unassigned.
+creating `v1.4.2`; the target tag is currently unassigned.
 
-The local proof intentionally runs before `v1.4.1` exists. After the operator
+The local proof intentionally runs before `v1.4.2` exists. After the operator
 pushes the tag, the workflow verifies that tag against `package.json`, both
 lockfile version fields, and `VERSION`. It then deletes only the checkout's
-ephemeral `refs/tags/v1.4.1` ref before running the unchanged preflight. No
+ephemeral `refs/tags/v1.4.2` ref before running the unchanged preflight. No
 environment variable can make an assigned version pass readiness.
 
 ### Package-growth impact evidence
 
-Compared with the published `1.3.0` baseline, the final `1.4.1` packed surface
+Compared with the published `1.3.0` baseline, the final `1.4.2` packed surface
 grows from 1,333 files and 15,160,503 unpacked bytes to 1,377 files and
 16,471,563 bytes: 44 files (3.30%) and 1,311,060 bytes (8.65%). The increase is
 the compiled review-catalog, remediation, workflow-manifest, UI, template, and
