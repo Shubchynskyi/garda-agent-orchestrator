@@ -5,6 +5,13 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import type { EffectiveReviewExecutionPolicyMode } from '../../../../src/core/review-execution-policy';
+import type { FullSuiteValidationPlacement } from '../../../../src/core/workflow-config';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import { buildTaskProfilePolicySnapshot } from '../../../../src/policy/task-profile-policy-snapshot';
 import {
     buildReviewReuseCandidatesForDiagnostics,
     formatNextStepText,
@@ -132,6 +139,27 @@ export function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                review_policy: { code: true, test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -239,6 +267,7 @@ export function writeStrictDecompositionDecision(
     taskId: string,
     options: {
         decision?: 'atomic' | 'single-cycle' | 'split-required';
+        taskProfile?: string;
         taskSummary?: string;
         expectedReviewTypes?: string[];
         proposedChildTaskIds?: string[];
@@ -250,6 +279,7 @@ export function writeStrictDecompositionDecision(
         buildStrictDecompositionDecisionArtifact({
             taskId,
             decision,
+            taskProfile: options.taskProfile,
             taskSummary: options.taskSummary || 'Seeded next-step task',
             reason: 'This strict task is intentionally bounded for the current lifecycle cycle.',
             scopeRisk: 'The scope is constrained by the test fixture and must keep normal review gates.',
@@ -496,7 +526,7 @@ export function writePreflight(
     requiredReviews: Record<string, boolean>,
     options: {
         seedPostPreflight?: boolean;
-        reviewPolicyMode?: string;
+        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
     } = {}
@@ -513,6 +543,75 @@ export function writePreflight(
         })
         : null;
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const workflowConfig = JSON.parse(fs.readFileSync(
+        path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+        'utf8'
+    )) as Record<string, unknown>;
+    const fullSuiteConfig = workflowConfig.full_suite_validation as Record<string, unknown> | undefined;
+    const fullSuitePlacement = String(
+        fullSuiteConfig?.placement || 'before_test_review'
+    ) as FullSuiteValidationPlacement;
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+        reviewExecutionPolicyMode: reviewPolicyMode,
+        reviewExecutionPolicyConfigured: true,
+        fullSuiteValidationEnabled: fullSuiteConfig?.enabled === true,
+        fullSuiteValidationPlacement: fullSuitePlacement,
+        lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+    });
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+    Object.assign(taskMode, {
+        task_profile: 'balanced',
+        profile_selection_source: 'task_queue',
+        active_profile: 'balanced',
+        profile_source: 'built_in',
+        runtime_active_profile: 'balanced',
+        runtime_profile_source: 'built_in',
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot: profilePolicySnapshot
+    });
+    writeJson(taskModePath, taskMode);
+    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    });
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
+    appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+    appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        profilePolicySnapshot.source.effective_profile,
+        profilePolicySnapshot.review_lane_selection.profile_review_policy,
+        profilePolicySnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: profilePolicySnapshot.snapshot_hash,
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: 'code',
+        taskIntent: 'Exercise next-step review reuse routing',
+        changedFiles,
+        taskTriggers: {},
+        reviewExecutionPolicyMode: reviewPolicyMode,
+        reviewDependencyGraph: null,
+        fullSuiteValidation: {
+            enabled: fullSuiteConfig?.enabled === true,
+            placement: fullSuitePlacement
+        },
+        includeDependencyGraph: true
+    });
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -527,16 +626,22 @@ export function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
+        profile_policy_snapshot: {
+            snapshot_hash: profilePolicySnapshot.snapshot_hash
+        },
         review_execution_policy: {
             mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
-        }
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     if (options.seedPostPreflight !== false) {
-        seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        seedPostPreflightRulePack(repoRoot, taskId, preflightPath, taskModePath);
     }
     return preflightPath;
 }

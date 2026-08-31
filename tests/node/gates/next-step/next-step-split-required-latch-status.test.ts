@@ -206,7 +206,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(result.reason.includes('13>12'), false);
         assert.ok(text.includes('Status: SPLIT_REQUIRED'));
         assert.ok(text.includes('NextGate: split-required-latch'));
-        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
         assert.equal(fs.existsSync(latchPath), true);
         const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as Record<string, unknown>;
@@ -379,7 +379,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(result.next_gate, 'compile-gate', result.reason);
         assert.ok(result.commands[0].command.includes('gate compile-gate'));
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
-        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`), false);
     });
 
     it('does not latch localization-only UI i18n scopes by raw language-pack file count', () => {
@@ -479,7 +479,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(result.next_gate, 'compile-gate', result.reason);
         assert.ok(result.commands[0].command.includes('gate compile-gate'));
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
-        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`), false);
     });
 
     it('falls back to raw line budget when companion UI i18n effective line metric is missing', () => {
@@ -670,7 +670,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(result.next_gate, 'split-required-latch');
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes('permanent for this task attempt'));
-        assert.ok(taskMd.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
         assert.ok(text.includes('Status: SPLIT_REQUIRED'));
     });
@@ -701,7 +701,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(result.next_gate, 'split-required-latch');
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes('permanent for this task attempt'));
-        assert.ok(taskMd.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
     });
 
@@ -727,7 +727,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.notEqual(result.status, 'DONE');
         assert.equal(result.next_gate, 'split-required-latch');
         assert.ok(result.reason.includes('permanent for this task attempt'));
-        assert.ok(taskMd.includes('| T-649 | SPLIT_REQUIRED |'));
+        assert.ok(taskMd.includes('| T-649 | 🟫 SPLIT_REQUIRED |'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
         assert.equal(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'), false);
         assert.equal(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'), false);

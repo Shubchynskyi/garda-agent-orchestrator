@@ -26,6 +26,9 @@ import {
 import {
     getStringField
 } from './next-step-lifecycle-command-builders';
+import {
+    suspendStrictDecompositionWipIfRequired
+} from './next-step-strict-decomposition-wip';
 import type {
     NextStepArtifactState,
     NextStepCommand,
@@ -83,6 +86,8 @@ const STRICT_DECOMPOSITION_BROAD_DOMAIN_THRESHOLD = 3;
 export interface StrictDecompositionDecisionRequirement {
     required: boolean;
     taskSummary: string;
+    taskProfile: string;
+    taskDecompositionProvenance: string;
     riskSignals: string[];
 }
 
@@ -139,17 +144,10 @@ function getStrictDecompositionDecisionTaskSummary(
     return getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
 }
 
-function isStrictProfileSelected(
-    taskEntry: TaskQueueEntry | null,
+function isTaskDecompositionEnabled(
     profileSummary: NextStepProfileSummary | null
 ): boolean {
-    const profile = String(
-        profileSummary?.effective_profile
-        || profileSummary?.task_selected_profile
-        || taskEntry?.profile
-        || ''
-    ).trim().toLowerCase();
-    return profile === 'strict';
+    return profileSummary?.task_decomposition_enabled === true;
 }
 
 function getPreflightTriggers(preflight: Record<string, unknown> | null): Record<string, unknown> {
@@ -303,10 +301,21 @@ export function buildStrictDecompositionDecisionRequirement(params: {
     requiredReviewTypes: string[];
 }): StrictDecompositionDecisionRequirement {
     const taskSummary = getStrictDecompositionDecisionTaskSummary(params.taskId, params.taskEntry, params.taskMode);
-    if (!isStrictProfileSelected(params.taskEntry, params.profileSummary)) {
+    const taskProfile = String(
+        params.profileSummary?.effective_profile
+        || params.profileSummary?.task_selected_profile
+        || params.taskEntry?.profile
+        || ''
+    ).trim().toLowerCase();
+    const taskDecompositionProvenance = String(
+        params.profileSummary?.task_decomposition_provenance || 'unavailable'
+    );
+    if (!isTaskDecompositionEnabled(params.profileSummary)) {
         return {
             required: false,
             taskSummary,
+            taskProfile,
+            taskDecompositionProvenance,
             riskSignals: []
         };
     }
@@ -326,6 +335,8 @@ export function buildStrictDecompositionDecisionRequirement(params: {
         return {
             required: false,
             taskSummary,
+            taskProfile,
+            taskDecompositionProvenance,
             riskSignals: []
         };
     }
@@ -334,6 +345,8 @@ export function buildStrictDecompositionDecisionRequirement(params: {
     return {
         required: riskSignals.length > 0,
         taskSummary,
+        taskProfile,
+        taskDecompositionProvenance,
         riskSignals
     };
 }
@@ -341,6 +354,7 @@ export function buildStrictDecompositionDecisionRequirement(params: {
 function buildStrictDecompositionDecisionCommand(params: {
     cliPrefix: string;
     taskId: string;
+    taskProfile: string;
     taskSummary: string;
     riskSignals: string[];
     requiredReviewTypes: string[];
@@ -349,9 +363,10 @@ function buildStrictDecompositionDecisionCommand(params: {
         `${params.cliPrefix} gate record-strict-decomposition-decision`,
         `--task-id ${quoteCommandValue(params.taskId)}`,
         `--decision ${quoteCommandValue('<atomic|single-cycle|split-required>')}`,
+        `--task-profile ${quoteCommandValue(params.taskProfile)}`,
         `--task-summary ${quoteCommandValue(params.taskSummary)}`,
-        `--reason ${quoteCommandValue('<why this strict task is atomic, single-cycle, or must split>')}`,
-        `--scope-risk ${quoteCommandValue(`Strict decomposition prompt required by next-step risk signals: ${params.riskSignals.join(', ')}.`)}`
+        `--reason ${quoteCommandValue('<why this decomposition-enabled task is atomic, single-cycle, or must split>')}`,
+        `--scope-risk ${quoteCommandValue(`Guarded decomposition prompt required by next-step risk signals: ${params.riskSignals.join(', ')}.`)}`
     ];
     const expectedReviewTypes = params.requiredReviewTypes.length > 0 ? params.requiredReviewTypes : ['none'];
     for (const reviewType of expectedReviewTypes) {
@@ -393,16 +408,18 @@ export function resolveStrictDecompositionContinuationRoute(params: {
         params.repoRoot,
         params.taskId,
         '',
-        params.requirement.taskSummary
+        params.requirement.taskSummary,
+        params.requirement.taskProfile
     );
     const artifactState = buildStrictDecompositionEvidenceArtifactState(params.repoRoot, evidence);
     if (evidence.evidence_status !== 'PASS') {
         return {
             status: 'BLOCKED',
             nextGate: 'record-strict-decomposition-decision',
-            title: 'Record strict decomposition decision before implementation.',
+            title: 'Record guarded decomposition decision before implementation.',
             reason:
-                'This strict task is risky or umbrella-shaped, so next-step requires a current strict decomposition decision before ordinary classify, compile, review, full-suite, completion, or implementation continuation. ' +
+                'This task has frozen guarded decomposition enabled and is risky or umbrella-shaped, so next-step requires a current decomposition decision before ordinary classify, compile, review, full-suite, completion, or implementation continuation. ' +
+                `Capability provenance: ${formatNextStepInlineValue(params.requirement.taskDecompositionProvenance)}. ` +
                 `Evidence status: ${formatNextStepInlineValue(evidence.evidence_status)}. ` +
                 `Risk signals: ${formatNextStepInlineList(params.requirement.riskSignals)}. ` +
                 'Choose atomic, single-cycle, or split-required explicitly; when choosing split-required, add --work-package-contract-path with the root-cause contract artifact. ' +
@@ -413,6 +430,7 @@ export function resolveStrictDecompositionContinuationRoute(params: {
                     buildStrictDecompositionDecisionCommand({
                         cliPrefix: params.cliPrefix,
                         taskId: params.taskId,
+                        taskProfile: params.requirement.taskProfile,
                         taskSummary: params.requirement.taskSummary,
                         riskSignals: params.requirement.riskSignals,
                         requiredReviewTypes: params.requiredReviewTypes
@@ -430,6 +448,41 @@ export function resolveStrictDecompositionContinuationRoute(params: {
 
     if (evidence.decision !== 'split-required') {
         return null;
+    }
+
+    const wipSuspension = suspendStrictDecompositionWipIfRequired({
+        repoRoot: params.repoRoot,
+        taskId: params.taskId,
+        evidence
+    });
+    const wipArtifactState = wipSuspension.manifest_path
+        ? {
+            key: 'strict-decomposition-wip',
+            path: toRepoDisplayPath(params.repoRoot, wipSuspension.manifest_path),
+            exists: true
+        }
+        : null;
+    if (wipSuspension.status === 'BLOCKED') {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'strict-decomposition-wip-capture',
+            title: 'Suspend parent WIP before strict child execution.',
+            reason:
+                'A current strict decomposition decision says split-required after parent implementation began, but the parent WIP could not be captured and suspended safely. ' +
+                `Capture violations: ${formatNextStepInlineList(wipSuspension.violations)}. ` +
+                'Do not enter a child task while parent implementation remains in the worktree; repair the reported scope or repository condition and rerun next-step.',
+            commands: [],
+            missingArtifacts: wipArtifactState
+                ? params.baseMissingArtifacts
+                : [
+                    ...params.baseMissingArtifacts,
+                    { key: 'strict-decomposition-wip', path: '<not-created>', exists: false }
+                ],
+            presentArtifacts: wipArtifactState
+                ? [...params.basePresentArtifacts, artifactState, wipArtifactState]
+                : [...params.basePresentArtifacts, artifactState],
+            finalReport: null
+        };
     }
 
     const splitRoutingState = resolveStrictDecompositionSplitRoutingState(
@@ -453,7 +506,11 @@ export function resolveStrictDecompositionContinuationRoute(params: {
                 'Create and link parent-derived strict child task rows that match the decision artifact before continuing; later scope-budget or review-cycle split latches remain authoritative.',
             commands: [],
             missingArtifacts: [],
-            presentArtifacts: [...params.basePresentArtifacts, artifactState],
+            presentArtifacts: [
+                ...params.basePresentArtifacts,
+                artifactState,
+                ...(wipArtifactState ? [wipArtifactState] : [])
+            ],
             finalReport: null
         };
     }
@@ -485,7 +542,11 @@ export function resolveStrictDecompositionContinuationRoute(params: {
         reason: strictSplitRoute.reason,
         commands: strictSplitRoute.commands,
         missingArtifacts: [],
-        presentArtifacts: [...params.basePresentArtifacts, artifactState],
+        presentArtifacts: [
+            ...params.basePresentArtifacts,
+            artifactState,
+            ...(wipArtifactState ? [wipArtifactState] : [])
+        ],
         finalReport: null
     };
 }

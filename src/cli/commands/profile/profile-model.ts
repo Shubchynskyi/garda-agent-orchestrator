@@ -3,9 +3,19 @@ import { ProfileEntry, ProfilesData } from './profile-types';
 import {
     resolveReviewFindingPolicy,
     resolveReviewFollowUpPolicy,
+    resolveProfileTaskDecompositionPolicy,
     DEFAULT_REVIEW_FOLLOW_UP_POLICY,
     REVIEW_FINDING_POLICY_PRESETS
 } from '../../../policy/profile-resolver';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    getReviewRemediationModePolicyViolations
+} from '../../../policy/review-remediation-mode-policy';
+import {
+    analyzeProfileReviewCatalogPolicy
+} from '../../../policy/profile-review-catalog-policy';
+import type { ReviewCapabilitiesConfigMap } from '../../../core/review-capabilities';
+import type { NormalizedReviewCatalog } from '../../../core/review-catalog';
 
 export const KNOWN_REVIEW_TYPES = Object.freeze([
     'code',
@@ -30,7 +40,15 @@ export const TOKEN_ECONOMY_FIELDS = Object.freeze([
 const PROFILE_NAME_PATTERN = /^\p{L}(?:[\p{L}\p{Nd}-]*[\p{L}\p{Nd}])?$/u;
 const PROFILE_NAME_UPPERCASE_PATTERN = /[\p{Lu}\p{Lt}]/u;
 
-export function validateProfilesIntegrity(data: ProfilesData): string[] {
+export interface ProfileIntegrityValidationOptions {
+    reviewCatalog: NormalizedReviewCatalog;
+    reviewCapabilities: ReviewCapabilitiesConfigMap;
+}
+
+export function validateProfilesIntegrity(
+    data: ProfilesData,
+    options?: ProfileIntegrityValidationOptions
+): string[] {
     const issues: string[] = [];
     const allNames = getAllProfileNames(data);
     if (allNames.length === 0) {
@@ -52,6 +70,10 @@ export function validateProfilesIntegrity(data: ProfilesData): string[] {
         if (entry.depth < 1 || entry.depth > 3) {
             issues.push(`Profile '${name}' has invalid depth ${entry.depth}; must be 1–3.`);
         }
+        const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(entry.task_decomposition, name);
+        if (!taskDecompositionPolicy.valid) {
+            issues.push(...taskDecompositionPolicy.diagnostics);
+        }
         const findingPolicyResolution = resolveReviewFindingPolicy(entry.review_finding_policy, name);
         const hasBlockingDiagnostic = findingPolicyResolution.diagnostics.some((diagnostic) => (
             diagnostic.includes('invalid review_finding_policy')
@@ -65,6 +87,30 @@ export function validateProfilesIntegrity(data: ProfilesData): string[] {
         const followUpResolution = resolveReviewFollowUpPolicy(entry.review_follow_up_policy, name);
         if (followUpResolution.diagnostics.some((diagnostic) => /invalid|malformed/u.test(diagnostic))) {
             issues.push(...followUpResolution.diagnostics);
+        }
+        const fixedFollowUpProfile = followUpResolution.policy.task_profile.mode === 'fixed_profile'
+            ? followUpResolution.policy.task_profile.fixed_profile
+            : null;
+        if (fixedFollowUpProfile && !allNames.includes(fixedFollowUpProfile)) {
+            issues.push(
+                `Profile '${name}' review_follow_up_policy.task_profile.fixed_profile ` +
+                `references unknown profile '${fixedFollowUpProfile}'.`
+            );
+        }
+        if (entry.review_remediation_mode_policy !== undefined) {
+            issues.push(...getReviewRemediationModePolicyViolations(entry.review_remediation_mode_policy, {
+                allowedReviewTypeIds: options?.reviewCatalog.review_types.map(({ id }) => id)
+            })
+                .map((issue) => `Profile '${name}' ${issue}`));
+        }
+        if (options) {
+            const catalogPolicy = analyzeProfileReviewCatalogPolicy(
+                name,
+                entry.review_policy,
+                options.reviewCapabilities,
+                options.reviewCatalog
+            );
+            issues.push(...catalogPolicy.issues);
         }
     }
     return issues;
@@ -95,10 +141,15 @@ export function cloneProfileEntry(entry: ProfileEntry): ProfileEntry {
     return JSON.parse(JSON.stringify(entry)) as ProfileEntry;
 }
 
-export function buildDefaultProfileEntry(description: string, depth: number): ProfileEntry {
+export function buildDefaultProfileEntry(
+    description: string,
+    depth: number,
+    allowedReviewTypeIds?: readonly string[]
+): ProfileEntry {
     return {
         description,
         depth,
+        task_decomposition: { enabled: false },
         review_policy: {
             code: true,
             db: 'auto',
@@ -116,8 +167,10 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
         },
         review_follow_up_policy: {
             ...DEFAULT_REVIEW_FOLLOW_UP_POLICY,
-            materialization_mode: 'grouped_by_parent'
+            materialization_mode: 'grouped_by_parent',
+            task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
         },
+        review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy({ allowedReviewTypeIds }),
         token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
         skills: { auto_suggest: true }
     };
@@ -141,6 +194,9 @@ export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry 
             ...entry.skills
         }
     };
+    if (entry.task_decomposition) {
+        prepared.task_decomposition = { ...entry.task_decomposition };
+    }
     if (entry.review_finding_policy) {
         prepared.review_finding_policy = {
             ...entry.review_finding_policy,
@@ -148,7 +204,17 @@ export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry 
         };
     }
     if (entry.review_follow_up_policy) {
-        prepared.review_follow_up_policy = { ...entry.review_follow_up_policy };
+        prepared.review_follow_up_policy = {
+            ...entry.review_follow_up_policy,
+            task_profile: { ...entry.review_follow_up_policy.task_profile }
+        };
+    }
+    if (entry.review_remediation_mode_policy) {
+        prepared.review_remediation_mode_policy = {
+            ...entry.review_remediation_mode_policy,
+            delta_eligible_review_types: [...entry.review_remediation_mode_policy.delta_eligible_review_types],
+            force_full_categories: [...entry.review_remediation_mode_policy.force_full_categories]
+        };
     }
     return prepared;
 }

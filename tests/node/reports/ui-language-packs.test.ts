@@ -13,6 +13,7 @@ import {
     LOCAL_UI_INIT_SETTING_TEXT,
     LOCAL_UI_PROJECT_MEMORY_TEXT,
     LOCAL_UI_SETTING_TEXT,
+    LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
     LOCAL_UI_TEXT,
     getLocalUiText,
     normalizeLocalUiLanguage
@@ -87,6 +88,8 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(getLocalUiText('ru').profileFindingPresetCustom, 'Пользовательский');
     assert.equal(getLocalUiText('ru').qualityGateEffectSkippedCadence, 'Пропущено — пока не требуется');
     assert.equal(getLocalUiText('ru').fullSuiteTimeoutBlocker, 'Таймаут блокирует задачу');
+    assert.equal(LOCAL_UI_TASK_CLOSURE_POLICY_TEXT.ru.title, 'Политика закрытия F-задачи');
+    assert.match(LOCAL_UI_TASK_CLOSURE_POLICY_TEXT.ru.help, /TASK\.md/u);
     assert.equal(getLocalUiText('ru').fullSuiteForecastExclusionReasons, 'Причины исключения из прогноза');
     assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');
     assert.equal(getLocalUiText('uk').initSettingsTab, 'Параметри ініціалізації');

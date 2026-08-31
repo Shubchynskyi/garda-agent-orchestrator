@@ -1,11 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveTaskHistoryLedgerPath } from '../../gate-runtime/task-history-ledger';
-import { KNOWN_SUFFIXES } from '../../gate-runtime/reviews-index';
+import { rebuildIndex } from '../../gate-runtime/reviews-index';
 import {
     isCanonicalTaskId,
     parseActiveReviewArtifactTaskId,
-    parseKnownReviewArtifactTaskId,
     parseStructuredTaskArtifactTaskId
 } from '../../core/task-ids';
 import {
@@ -13,7 +12,6 @@ import {
     contributesToRetentionAge,
     type RuntimeRetentionTaskPreview
 } from '../runtime-policy/runtime-retention-policy';
-import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import {
     isRuntimeCleanupTaskPurgeDeletionCategory,
     listRuntimeCleanupCollectorContracts,
@@ -82,14 +80,6 @@ function isRuntimeRetentionCompactionCandidate(
         && item.category !== 'task-ledger'
         && isRuntimeCleanupTaskPurgeDeletionCategory(item.category)
     );
-}
-
-function parseReviewArtifactTaskId(filePath: string, fileName: string): string | null {
-    const knownTaskId = parseKnownReviewArtifactTaskId(fileName, KNOWN_SUFFIXES);
-    if (knownTaskId) {
-        return knownTaskId;
-    }
-    return resolveStructuredOrJsonReviewArtifactTaskId(filePath, fileName);
 }
 
 function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
@@ -176,6 +166,9 @@ function collectTaskReviewArtifactsInventory(
     } catch {
         return [];
     }
+    const indexedTaskIdsByFileName = new Map(
+        rebuildIndex(reviewsDir).entries.map((entry) => [entry.fileName, entry.taskId])
+    );
 
     for (const entry of entries) {
         const activeTaskId = parseActiveReviewArtifactTaskId(entry, activeTaskIds);
@@ -183,7 +176,7 @@ function collectTaskReviewArtifactsInventory(
             continue;
         }
         const entryPath = path.join(reviewsDir, entry);
-        const taskId = parseReviewArtifactTaskId(entryPath, entry);
+        const taskId = indexedTaskIdsByFileName.get(entry) || null;
         if (!taskId) {
             continue;
         }

@@ -121,6 +121,7 @@ const JSON_DOUBLE_QUOTED_FIELD_PATTERN = /("((?:[^"\\]|\\.)*)"\s*:\s*")([^"\\]*(
 const JSON_SINGLE_QUOTED_FIELD_PATTERN = /('((?:[^'\\]|\\.)*)'\s*:\s*')([^'\\]*(?:\\.[^'\\]*)*)(')/g;
 const ASSIGNMENT_QUOTED_FIELD_PATTERN = /\b([A-Z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION|AUTH)[A-Z0-9_.-]*)(\s*[:=]\s*)(["'])([\s\S]*?)(\3)/gi;
 const ASSIGNMENT_UNQUOTED_FIELD_PATTERN = /\b([A-Z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION|AUTH)[A-Z0-9_.-]*)(\s*[:=]\s*)([^\s"',;]+)/gi;
+const CANONICAL_REDACTED_UNQUOTED_VALUE_PATTERN = /^<redacted>(?:\\r\\n|\\r|\\n)?$/u;
 const TOKEN_TELEMETRY_KEY_PARTS = new Set([
     'token',
     'tokens',
@@ -242,6 +243,9 @@ export function redactSecretText(text: string): string {
             return isSensitiveKey(key) ? `${key}${separator}${quote}<redacted>${suffix}` : match;
         })
         .replace(ASSIGNMENT_UNQUOTED_FIELD_PATTERN, (match, key: string, separator: string, value: string) => {
+            if (CANONICAL_REDACTED_UNQUOTED_VALUE_PATTERN.test(value)) {
+                return match;
+            }
             if (splitKeyParts(key).includes('authorization') && /^(Bearer|Basic)$/i.test(value)) {
                 return match;
             }
@@ -269,6 +273,15 @@ export function redactSensitiveData(value: unknown, keyHint?: string): unknown {
     }
     if (Array.isArray(value)) {
         if (value.every((entry) => typeof entry === 'string')) {
+            if (keyHint === 'redacted_lines') {
+                const lines = value as string[];
+                const joined = lines.join('');
+                const alreadyRedacted = redactSecretText(joined) === joined
+                    && lines.every((line) => redactSecretText(line) === line);
+                return alreadyRedacted
+                    ? [...lines]
+                    : lines.map(() => '<redacted>');
+            }
             return splitRedactedTextLines(redactSecretText(value.join('\n')));
         }
         return value.map((entry) => redactSensitiveData(entry));
@@ -285,7 +298,7 @@ export function redactSensitiveData(value: unknown, keyHint?: string): unknown {
 }
 
 export function serializeRedactedJson(value: unknown): string {
-    return redactSecretText(`${JSON.stringify(redactSensitiveData(value), null, 2)}\n`);
+    return `${JSON.stringify(redactSensitiveData(value), null, 2)}\n`;
 }
 
 export function sha256RedactedJsonPayload(value: unknown): string {

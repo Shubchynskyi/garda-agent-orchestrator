@@ -1,6 +1,5 @@
 import * as path from 'node:path';
 import {
-    CANONICAL_REVIEW_CONTEXT_TYPES,
     getGateOutputCompactionLabel,
     getReviewContextOutputLabel,
     summarizeOutputCompactionBreakdown
@@ -16,6 +15,7 @@ import {
     resolveTaskCycleBindingSnapshot,
     shouldIncludeTelemetryForCurrentCycle
 } from './task-events-summary-cycle-binding';
+import { resolveEffectiveReviewLaneSetOrLegacy } from '../../policy/effective-review-lane-set';
 
 interface TokenContributionEntry {
     label: string;
@@ -292,7 +292,15 @@ export function buildTokenEconomySummary(
         ? getCurrentCycleReviewContextPaths(events, currentCycle, repoRoot)
         : new Map<string, string>();
     if (!currentCycle?.compile_gate_timestamp && resolvedReviewsRoot) {
-        for (const reviewType of CANONICAL_REVIEW_CONTEXT_TYPES) {
+        let reviewTypeIds: readonly string[] = [];
+        try {
+            reviewTypeIds = resolveEffectiveReviewLaneSetOrLegacy(
+                safeReadJson(path.join(resolvedReviewsRoot, `${taskId}-preflight.json`))
+            ).selected_review_ids;
+        } catch {
+            reviewTypeIds = [];
+        }
+        for (const reviewType of reviewTypeIds) {
             currentCycleReviewContextPaths.set(
                 reviewType,
                 path.join(resolvedReviewsRoot, `${taskId}-${reviewType}-review-context.json`)

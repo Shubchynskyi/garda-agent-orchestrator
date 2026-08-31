@@ -13,6 +13,7 @@ import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import {
     readCompileReadiness,
@@ -88,6 +89,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -1215,6 +1217,49 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(text.includes('docker info'), text);
     });
 
+    it('routes protected manifest compile failure to a fresh orchestrator-work task-mode entry', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'FAILED',
+            outcome: 'FAIL',
+            error:
+                'Trusted protected control-plane manifest was already drifted before task start: src/app.ts. ' +
+                `Restart task mode with: node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" ` +
+                '--orchestrator-work --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: fileSha256(preflightPath)
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_FAILED', 'FAIL');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected task-mode restart/iu);
+        assert.ok(result.commands[0].command.includes('gate enter-task-mode'));
+        assert.ok(result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(result.commands[0].command.includes('--upgrade-existing-task-mode'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'PASS');
+        appendEvent(repoRoot, TASK_ID, 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PASS');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        const recoveredResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(recoveredResult.next_gate, 'compile-gate', recoveredResult.reason);
+        assert.match(recoveredResult.reason, /predates the latest task-mode restart/iu);
+        assert.ok(recoveredResult.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!recoveredResult.commands[0].command.includes('gate enter-task-mode'));
+    });
+
     it('refreshes explicit preflight when later rework adds a source file after review evidence exists', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
@@ -1396,6 +1441,33 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(!readiness.reason.includes('no longer current'), readiness.reason);
     });
 
+    it('keeps explicitly planned dirty-baseline files current before failed-review remediation', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        const changedFile = 'src/app.ts';
+        fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 2;\n', 'utf8');
+        const changedFiles = [changedFile];
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: 'code',
+            failedReviewVerdict: 'REVIEW FAILED',
+            plannedChangedFiles: changedFiles,
+            dirtyWorkspaceBaselineChangedFiles: baselineSnapshot.changed_files,
+            dirtyWorkspaceBaselineFileHashes: {
+                [changedFile]: fileSha256(path.join(repoRoot, changedFile))
+            },
+            allowDocsOnlyDelta: false
+        });
+
+        assert.equal(readiness.ready, true, readiness.reason);
+        assert.deepEqual(readiness.currentChangedFiles, changedFiles);
+    });
+
     it('keeps dirty-baseline files in stale preflight refresh commands when they changed after task start', () => {
         const repoRoot = makeTempRepo();
         const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');
@@ -1469,5 +1541,42 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.match(result.reason, /no longer current: \[src\/line-ending\.ts\]/);
         assert.ok(command.includes('--changed-file "src/app.ts"'));
         assert.ok(!command.includes('--changed-file "src/line-ending.ts"'));
+    });
+
+    it('preserves explicit preflight scope when an unchanged dirty baseline predates normal task mode', () => {
+        const repoRoot = makeTempRepo();
+        const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');
+        fs.writeFileSync(legacyPath, 'export const legacy = 1;\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(legacyPath, 'export const userBaseline = 2;\n', 'utf8');
+        const legacyBaselineHash = fileSha256(legacyPath);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const taskChange = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts']
+        });
+        const appSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflight.metrics as Record<string, unknown>;
+        metrics.actual_changed_files = appSnapshot.changed_files;
+        metrics.actual_changed_files_sha256 = appSnapshot.changed_files_sha256;
+        preflight.authorized_files = ['src/app.ts'];
+        preflight.include_untracked = true;
+        preflight.triggers = {
+            dirty_workspace_baseline_changed_files: ['src/legacy.ts'],
+            dirty_workspace_protected_files: ['src/legacy.ts'],
+            dirty_workspace_protected_file_hashes: {
+                'src/legacy.ts': legacyBaselineHash
+            }
+        };
+        writeJson(preflightPath, preflight);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const refreshedTaskChange = 3;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes('--changed-file "src/legacy.ts"'), command);
     });
 });

@@ -36,7 +36,7 @@ import {
     validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
-import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
+import { resolveAuthoritativeReviewCoverageScope } from '../review-context/review-context-coverage';
 import {
     type JsonReviewFindingsArtifactValidation
 } from '../review/review-findings-artifact-verdict';
@@ -58,6 +58,16 @@ import {
     reviewFindingsValidationArtifactHasBlockingFindings
 } from '../review/review-finding-disposition';
 import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
+import {
+    buildReviewLaneArtifactEvidence,
+    isCustomReviewLaneInSnapshot,
+    resolveReviewContextLaneBinding
+} from '../review-context/review-context-lane';
+import {
+    getReviewExecutionEvidenceBindingViolations,
+    resolveReviewContextExecutionEvidenceBindings,
+    type ReviewExecutionEvidenceBindings
+} from '../review/review-evidence-contract';
 
 export interface MaterializeReusedReviewEvidenceOptions {
     repoRoot: string;
@@ -84,6 +94,7 @@ export interface MaterializeReusedReviewEvidenceOptions {
     historicalReviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
     expectedContextSha256: string | null;
     expectedContextReuseSha256: string | null;
+    historicalSchema3ContextReuseHashMatches: boolean;
     expectedReviewTreeStateSha256: string | null;
     expectedReviewScopeSha256: string | null;
     expectedCodeScopeSha256: string | null;
@@ -102,6 +113,25 @@ interface ReusedReviewFindingsValidationEvidence {
     rawOutputSha256: string | null;
     policyResolution: LockedReviewFindingPolicyResolution;
     dispositionEvidence: ReusedReviewFindingsDispositionEvidence;
+    historicalExecutionBindings: ReviewExecutionEvidenceBindings | null;
+}
+
+export function getReusedReviewCoverageContractViolations(options: {
+    reviewType: string;
+    preflight: Record<string, unknown>;
+    repoRoot: string;
+    coverageContract: unknown;
+}): string[] {
+    const authoritativeCoverage = resolveAuthoritativeReviewCoverageScope({
+        reviewType: options.reviewType,
+        preflight: options.preflight,
+        repoRoot: options.repoRoot
+    });
+    return getReviewCoverageContractViolations(options.coverageContract, {
+        reviewType: options.reviewType,
+        changedFiles: authoritativeCoverage.changedFiles,
+        categoryIds: authoritativeCoverage.categoryIds
+    });
 }
 
 interface ReusedReviewFindingsDispositionEvidence {
@@ -208,6 +238,12 @@ export function validateReviewContextMaterializationSnapshot(
             !== expectations.currentReviewContextContractBindings.coverageContractSha256
         || currentBindings.ruleContextSha256
             !== expectations.currentReviewContextContractBindings.ruleContextSha256
+        || currentBindings.reviewExecutionContractSha256
+            !== expectations.currentReviewContextContractBindings.reviewExecutionContractSha256
+        || currentBindings.reviewExecutionMode
+            !== expectations.currentReviewContextContractBindings.reviewExecutionMode
+        || currentBindings.reviewExecutionFullScopeSha256
+            !== expectations.currentReviewContextContractBindings.reviewExecutionFullScopeSha256
     ) {
         return 'current review context contract bindings changed before reused evidence materialization';
     }
@@ -324,18 +360,12 @@ async function materializeReusedReviewEvidenceUnderContextLock(
         };
     }
     if (currentReviewContextSchemaVersion >= 3) {
-        const authoritativeCoverageChangedFiles = resolveReviewCoverageChangedFiles({
+        const coverageContractViolations = getReusedReviewCoverageContractViolations({
             reviewType: options.reviewType,
             preflight: options.preflightPayload,
-            repoRoot: options.repoRoot
+            repoRoot: options.repoRoot,
+            coverageContract: currentReviewContext.coverage_contract
         });
-        const coverageContractViolations = getReviewCoverageContractViolations(
-            currentReviewContext.coverage_contract,
-            {
-                reviewType: options.reviewType,
-                changedFiles: authoritativeCoverageChangedFiles
-            }
-        );
         if (coverageContractViolations.length > 0) {
             return {
                 materialized: false,
@@ -372,7 +402,11 @@ async function materializeReusedReviewEvidenceUnderContextLock(
         }
         const refreshedReceipt = buildReusedReviewReceipt(options, currentReviewContext);
         (refreshedReceipt as unknown as Record<string, unknown>).review_coverage = reviewCoverage;
-        attachReusedReviewFindingsReceiptEvidence(refreshedReceipt, findingsValidationEvidence.evidence);
+        attachReusedReviewFindingsReceiptEvidence(
+            refreshedReceipt,
+            findingsValidationEvidence.evidence,
+            currentReviewContext
+        );
         return persistReusedReviewEvidence(options, refreshedReceipt, findingsValidationEvidence.evidence);
     }
     return persistReusedReviewEvidence(options, buildReusedReviewReceipt(options, currentReviewContext));
@@ -527,13 +561,33 @@ function buildReusedReviewFindingsValidationEvidence(
         expectedReviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         expectedCoverageContractSha256: getReceiptOutputContractString(options.receipt, 'coverage_contract_sha256'),
         requireAccepted: true,
-        preferSnapshot: true
+        preferSnapshot: true,
+        allowLegacyMissingExecutionBinding: options.historicalSchema3ContextReuseHashMatches
     });
     if (!sourceValidation.valid || !sourceValidation.artifact) {
         return { reason: `reused review findings validation failed: ${sourceValidation.violations.join(' ')}` };
     }
     if (!sourceValidation.reference || !sourceValidation.artifact_sha256) {
         return { reason: 'reused review findings validation failed: source receipt evidence is incomplete.' };
+    }
+    const historicalValidationBindings = sourceValidation.artifact.validation_result.bindings;
+    const historicalExecutionBindingDeclared = Object.prototype.hasOwnProperty.call(
+        historicalValidationBindings,
+        'execution'
+    );
+    const historicalExecutionBindings = historicalValidationBindings.execution ?? null;
+    if (historicalExecutionBindingDeclared) {
+        const historicalExecutionViolations = getReviewExecutionEvidenceBindingViolations({
+            expectedEvidence: historicalExecutionBindings,
+            evidence: historicalExecutionBindings,
+            evidenceLabel: 'historical review findings validation artifact execution binding',
+            expectedEvidenceLabel: 'historical review findings validation artifact execution binding'
+        });
+        if (!historicalExecutionBindings || historicalExecutionViolations.length > 0) {
+            return {
+                reason: `reused review findings validation failed: ${historicalExecutionViolations.join(' ')}`
+            };
+        }
     }
     const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
     if (gateHelpers.normalizePath(sourceValidation.reference.artifact_path) !== gateHelpers.normalizePath(validationArtifactPath)) {
@@ -606,20 +660,35 @@ function buildReusedReviewFindingsValidationEvidence(
             validation,
             rawOutputSha256,
             policyResolution,
-            dispositionEvidence
+            dispositionEvidence,
+            historicalExecutionBindings
         }
     };
 }
 
 function attachReusedReviewFindingsReceiptEvidence(
     refreshedReceipt: ReviewReceipt,
-    evidence: ReusedReviewFindingsValidationEvidence
+    evidence: ReusedReviewFindingsValidationEvidence,
+    currentReviewContext: Record<string, unknown>
 ): void {
     const report = evidence.validation.report;
     if (!report) {
         return;
     }
     const receiptRecord = refreshedReceipt as unknown as Record<string, unknown>;
+    const executionBindings = resolveReviewContextExecutionEvidenceBindings(currentReviewContext).bindings;
+    const historicalExecutionBindings = evidence.historicalExecutionBindings;
+    if (historicalExecutionBindings) {
+        receiptRecord.reused_from_review_execution_mode = historicalExecutionBindings.review_execution_mode;
+        receiptRecord.reused_from_review_execution_contract_sha256 =
+            historicalExecutionBindings.review_execution_contract_sha256;
+        receiptRecord.reused_from_review_execution_full_scope_sha256 =
+            historicalExecutionBindings.review_execution_full_scope_sha256;
+        receiptRecord.reused_from_review_execution_complete_scope_lineage_sha256 =
+            historicalExecutionBindings.review_execution_complete_scope_lineage_sha256;
+        receiptRecord.reused_from_review_execution_finding_reconciliation_sha256 =
+            historicalExecutionBindings.review_execution_finding_reconciliation_sha256;
+    }
     const reportSha256 = sha256RedactedJsonPayload(report);
     receiptRecord.review_output_sha256 = evidence.rawOutputSha256;
     receiptRecord.review_output_format = 'findings_json';
@@ -644,6 +713,7 @@ function attachReusedReviewFindingsReceiptEvidence(
         review_context_sha256: refreshedReceipt.reused_from_review_context_sha256 ?? refreshedReceipt.review_context_sha256,
         review_tree_state_sha256: refreshedReceipt.reused_from_review_tree_state_sha256 ?? refreshedReceipt.review_tree_state_sha256 ?? null,
         coverage_contract_sha256: report.coverage_ledger.coverage_contract_sha256,
+        ...(executionBindings || {}),
         reviewer_identity: refreshedReceipt.reviewer_identity,
         reviewer_provenance_event_sha256: refreshedReceipt.reviewer_provenance?.event_sha256 ?? null
     };
@@ -662,7 +732,7 @@ function buildReusedReviewReceipt(
             : []
     });
     const contractBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
-    return buildReviewReceipt({
+    const refreshedReceipt = buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
         preflightSha256: options.currentPreflightHash,
@@ -697,6 +767,27 @@ function buildReusedReviewReceipt(
         reusedFromCodeScopeSha256: options.expectedCodeScopeSha256,
         reusedFromDomainScopeFingerprints: normalizeDomainScopeFingerprints(options.receipt.domain_scope_fingerprints)
     });
+    const refreshedReceiptRecord = refreshedReceipt as unknown as Record<string, unknown>;
+    if (options.historicalSchema3ContextReuseHashMatches) {
+        refreshedReceiptRecord.reused_from_review_context_schema_version = 3;
+    }
+    const executionBindings = resolveReviewContextExecutionEvidenceBindings(currentReviewContext).bindings;
+    if (executionBindings) {
+        Object.assign(refreshedReceiptRecord, executionBindings);
+    } else {
+        refreshedReceiptRecord.review_execution_contract_sha256 = contractBindings.reviewExecutionContractSha256;
+        refreshedReceiptRecord.review_execution_mode = contractBindings.reviewExecutionMode;
+        refreshedReceiptRecord.review_execution_full_scope_sha256 = contractBindings.reviewExecutionFullScopeSha256;
+    }
+    if (isCustomReviewLaneInSnapshot(options.preflightPayload, options.reviewType)) {
+        Object.assign(
+            refreshedReceipt,
+            buildReviewLaneArtifactEvidence(
+                resolveReviewContextLaneBinding(options.preflightPayload, options.reviewType)
+            )
+        );
+    }
+    return refreshedReceipt;
 }
 
 function buildReuseRecordedEventDetails(input: {

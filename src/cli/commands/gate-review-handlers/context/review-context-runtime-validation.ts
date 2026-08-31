@@ -1,3 +1,7 @@
+import * as path from 'node:path';
+
+import { sha256RedactedJsonPayload } from '../../../../core/redaction';
+import { isPlainRecord } from '../../../../core/records';
 import {
     normalizeCompatibilityReviewerExecutionMode
 } from '../../../../gate-runtime/review-context';
@@ -13,6 +17,12 @@ import {
     getReviewContextContractViolations
 } from '../../../../gates/review-context/review-context-contract';
 import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../../../../gates/review-remediation/review-remediation-execution-authority';
+import type {
+    ReviewRemediationReviewContract
+} from '../../../../gates/review-remediation/review-remediation-review-contract';
+import {
     getReviewContextFullSuiteValidationViolations
 } from '../../../../gates/review-context/review-context-validation-evidence';
 import { resolveReviewContextRoutingIdentity } from '../../../../gates/review-context/review-context-routing';
@@ -22,6 +32,101 @@ import {
 } from '../../../../gates/review/reviewer-routing';
 
 type ReviewerExecutionMode = typeof REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE;
+
+export interface ReviewExecutionRuntimeBindings {
+    review_execution_mode: 'FULL' | 'DELTA';
+    review_execution_contract_sha256: string;
+    review_execution_full_scope_sha256: string;
+    review_execution_complete_scope_lineage_sha256: string;
+    review_execution_finding_reconciliation_sha256: string;
+}
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+
+export function readReviewExecutionRuntimeBindings(
+    artifact: Record<string, unknown> | null,
+    subject: string
+): ReviewExecutionRuntimeBindings {
+    const mode = String(artifact?.review_execution_mode || '').trim().toUpperCase();
+    const contractSha256 = String(artifact?.review_execution_contract_sha256 || '').trim().toLowerCase();
+    const fullScopeSha256 = String(artifact?.review_execution_full_scope_sha256 || '').trim().toLowerCase();
+    const completeScopeLineageSha256 = String(
+        artifact?.review_execution_complete_scope_lineage_sha256 || ''
+    ).trim().toLowerCase();
+    const findingReconciliationSha256 = String(
+        artifact?.review_execution_finding_reconciliation_sha256 || ''
+    ).trim().toLowerCase();
+    if (
+        (mode !== 'FULL' && mode !== 'DELTA')
+        || !SHA256_PATTERN.test(contractSha256)
+        || !SHA256_PATTERN.test(fullScopeSha256)
+        || !SHA256_PATTERN.test(completeScopeLineageSha256)
+        || !SHA256_PATTERN.test(findingReconciliationSha256)
+    ) {
+        throw new Error(`${subject} is missing valid authenticated review_execution bindings.`);
+    }
+    return {
+        review_execution_mode: mode,
+        review_execution_contract_sha256: contractSha256,
+        review_execution_full_scope_sha256: fullScopeSha256,
+        review_execution_complete_scope_lineage_sha256: completeScopeLineageSha256,
+        review_execution_finding_reconciliation_sha256: findingReconciliationSha256
+    };
+}
+
+export function resolveReviewExecutionRuntimeBindings(
+    reviewContext: Record<string, unknown> | null
+): ReviewExecutionRuntimeBindings {
+    const reviewExecution = isPlainRecord(reviewContext?.review_execution)
+        ? reviewContext.review_execution
+        : null;
+    const mode = String(reviewExecution?.mode || '').trim().toUpperCase();
+    const contractSha256 = String(reviewExecution?.contract_sha256 || '').trim().toLowerCase();
+    const fullScopeSha256 = String(reviewExecution?.full_review_scope_sha256 || '').trim().toLowerCase();
+    const completeScopeLineageSha256 = String(
+        reviewExecution?.complete_scope_lineage_sha256 || ''
+    ).trim().toLowerCase();
+    const findingReconciliation = isPlainRecord(reviewExecution?.finding_reconciliation)
+        ? reviewExecution.finding_reconciliation
+        : null;
+    if (
+        (mode !== 'FULL' && mode !== 'DELTA')
+        || !SHA256_PATTERN.test(contractSha256)
+        || !SHA256_PATTERN.test(fullScopeSha256)
+        || !SHA256_PATTERN.test(completeScopeLineageSha256)
+        || !findingReconciliation
+    ) {
+        throw new Error(
+            'Review context is missing an authenticated review_execution binding for mode, contract, scope, or finding reconciliation.'
+        );
+    }
+    return {
+        review_execution_mode: mode,
+        review_execution_contract_sha256: contractSha256,
+        review_execution_full_scope_sha256: fullScopeSha256,
+        review_execution_complete_scope_lineage_sha256: completeScopeLineageSha256,
+        review_execution_finding_reconciliation_sha256: sha256RedactedJsonPayload(findingReconciliation)
+    };
+}
+
+export function assertReviewExecutionRuntimeBindings(
+    artifact: Record<string, unknown> | null,
+    expected: ReviewExecutionRuntimeBindings,
+    subject: string
+): void {
+    if (!artifact) {
+        throw new Error(`${subject} is missing authenticated review_execution bindings.`);
+    }
+    for (const [field, expectedValue] of Object.entries(expected)) {
+        const actualValue = String(artifact[field] || '').trim();
+        const normalizedActual = field === 'review_execution_mode'
+            ? actualValue.toUpperCase()
+            : actualValue.toLowerCase();
+        if (normalizedActual !== expectedValue) {
+            throw new Error(`${subject} ${field} does not match the current authenticated review context.`);
+        }
+    }
+}
 
 export function assertRoutingCompatibility(
     options: {
@@ -105,6 +210,19 @@ export function assertReviewContextContractOrThrow(options: {
     const diffExpectations = buildReviewContextPreflightDiffExpectations(options.preflightPayload, options.reviewType);
     const requireStrictBindingMetadata = options.requireStrictBindingMetadata === true
         || diffExpectations.expectedRequiredReview;
+    const reviewExecution = isPlainRecord(options.reviewContext?.review_execution)
+        ? options.reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+        : null;
+    const reviewExecutionValidationAuthority = reviewExecution && options.preflightSha256
+        ? resolvePersistedRemediationReviewExecutionAuthority({
+            reviewsRoot: path.dirname(options.contextPath),
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            preflightSha256: options.preflightSha256,
+            fullReviewScope: diffExpectations.expectedChangedFiles,
+            reviewExecution
+        })
+        : null;
     const violations = getReviewContextContractViolations({
         contextPath: options.contextPath,
         reviewContext: options.reviewContext,
@@ -118,6 +236,7 @@ export function assertReviewContextContractOrThrow(options: {
         requirePreflightSha256: requireStrictBindingMetadata,
         expectedPreflightPayload: options.preflightPayload,
         repoRoot: options.repoRoot || null,
+        expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
         ...diffExpectations
     });
     if (options.repoRoot) {

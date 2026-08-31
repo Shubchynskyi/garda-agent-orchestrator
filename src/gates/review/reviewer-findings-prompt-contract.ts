@@ -10,6 +10,8 @@ import {
 import {
     buildReviewerFocusedSelfValidationContractLines
 } from './reviewer-execution-contract';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
+import { buildReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
 
 export interface ReviewerFindingsPromptContractOptions {
     taskId: string;
@@ -17,6 +19,20 @@ export interface ReviewerFindingsPromptContractOptions {
     reviewContextSha256: string;
     treeStateSha256: string;
     coverageContract: ReviewCoverageContract;
+    reviewExecutionContract?: ReviewRemediationReviewContract;
+}
+
+function resolveReviewExecutionContract(
+    options: ReviewerFindingsPromptContractOptions
+): ReviewRemediationReviewContract {
+    return options.reviewExecutionContract ?? buildReviewRemediationReviewContract({
+        taskId: options.taskId || '<task-id>',
+        reviewType: options.reviewType || '<review-type>',
+        preflightSha256: '0'.repeat(64),
+        fullReviewScope: options.coverageContract.obligations
+            .filter((entry) => entry.kind === 'file')
+            .map((entry) => entry.target)
+    });
 }
 
 function normalizePlaceholder(value: string, fallback: string): string {
@@ -39,6 +55,7 @@ function buildCoverageLedgerEntries(contract: ReviewCoverageContract): Array<Rec
 }
 
 export function buildReviewerFindingsOutputTemplateJson(options: ReviewerFindingsPromptContractOptions): string {
+    const reviewExecutionContract = resolveReviewExecutionContract(options);
     const template = {
         schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
         task_id: normalizePlaceholder(options.taskId, '<task-id>'),
@@ -62,6 +79,13 @@ export function buildReviewerFindingsOutputTemplateJson(options: ReviewerFinding
             coverage_contract_sha256: options.coverageContract.contract_sha256,
             entries: buildCoverageLedgerEntries(options.coverageContract)
         },
+        review_execution: {
+            mode: reviewExecutionContract.mode,
+            contract_sha256: reviewExecutionContract.contract_sha256,
+            covered_delta_targets: reviewExecutionContract.delta?.required_delta_targets ?? [],
+            inspected_prior_finding_ids:
+                reviewExecutionContract.finding_reconciliation.resolvable_finding_ids
+        },
         findings: {
             critical: [],
             high: [],
@@ -79,6 +103,7 @@ export function buildReviewerFindingsOutputTemplateJson(options: ReviewerFinding
 }
 
 export function buildReviewerFindingsPromptContractMarkdown(options: ReviewerFindingsPromptContractOptions): string {
+    const reviewExecutionContract = resolveReviewExecutionContract(options);
     const reviewLabel = `${normalizePlaceholder(options.reviewType, '<review-type>')} review`;
     const evidenceDomainPaths = options.coverageContract.obligations
         .filter((entry) => entry.kind === 'file')
@@ -88,6 +113,10 @@ export function buildReviewerFindingsPromptContractMarkdown(options: ReviewerFin
         '',
         'Return exactly one JSON object. Do not wrap it in Markdown fences or append prose outside the JSON object.',
         `Use schema_version ${REVIEW_FINDINGS_SCHEMA_VERSION} and the generated object shape exactly; unknown fields are invalid.`,
+        `Bind review_execution.mode=${reviewExecutionContract.mode} and contract_sha256=${reviewExecutionContract.contract_sha256}.`,
+        reviewExecutionContract.mode === 'DELTA'
+            ? 'List every assigned delta target in covered_delta_targets and every delta-resolvable prior finding id in inspected_prior_finding_ids; do not include protected prior findings outside the delta.'
+            : 'FULL mode uses empty covered_delta_targets and inspected_prior_finding_ids unless the authenticated contract explicitly provides prior findings.',
         'Complete the entire assigned review scope before returning. Finding an issue does not end the review.',
         'Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then return every distinct evidence-supported issue in the same JSON object.',
         'Deduplicate issues that share one root cause. Do not invent, pad, or split findings to reach a count.',

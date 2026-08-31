@@ -1,6 +1,19 @@
 import * as path from 'node:path';
 import { padRight } from '../cli-helpers';
+import { readReviewCapabilitiesConfigFile } from '../../../core/review-capabilities';
+import { readReviewCatalogConfigFile } from '../../../core/review-catalog';
+import {
+    analyzeProfileReviewCatalogPolicy,
+    resolveConfigPaths,
+    resolveProfileReviewCatalogPolicy,
+    resolveProfileTaskDecompositionPolicy,
+    type ResolvedProfileReviewCatalogPolicy
+} from '../../../policy/profile-resolver';
 import { loadReviewTriggerPolicy } from '../../../policy/review-trigger-policy';
+import {
+    resolveReviewRemediationModePolicyFromProfile,
+    summarizeReviewRemediationModePolicy
+} from '../../../policy/review-remediation-mode-policy';
 import {
     getAllProfileNames,
     getProfileEntry,
@@ -9,12 +22,104 @@ import {
 } from './profile-data';
 import { ProfileEntry, ProfilesData } from './profile-types';
 
+type ProfileReviewCatalogPolicyOutput = ResolvedProfileReviewCatalogPolicy & {
+    validation_issues?: readonly string[];
+};
+
+function buildProfileReviewCatalogPolicies(
+    data: ProfilesData,
+    bundleRoot: string
+): Record<string, ProfileReviewCatalogPolicyOutput> {
+    const configPaths = resolveConfigPaths(bundleRoot);
+    const catalog = readReviewCatalogConfigFile(configPaths.reviewCatalog);
+    const capabilities = readReviewCapabilitiesConfigFile(configPaths.reviewCapabilities);
+    return Object.fromEntries(
+        [...Object.entries(data.built_in_profiles), ...Object.entries(data.user_profiles)]
+            .map(([name, entry]) => {
+                const analysis = analyzeProfileReviewCatalogPolicy(
+                    name,
+                    entry.review_policy,
+                    capabilities,
+                    catalog
+                );
+                return [
+                    name,
+                    analysis.issues.length === 0
+                        ? analysis.policy
+                        : { ...analysis.policy, validation_issues: analysis.issues }
+                ];
+            })
+    );
+}
+
+function buildProfileTaskDecompositionPolicies(data: ProfilesData) {
+    return Object.fromEntries(
+        [...Object.entries(data.built_in_profiles), ...Object.entries(data.user_profiles)]
+            .map(([name, entry]) => [
+                name,
+                resolveProfileTaskDecompositionPolicy(entry.task_decomposition, name)
+            ])
+    );
+}
+
+function buildProfileReviewRemediationModePolicies(data: ProfilesData) {
+    return Object.fromEntries(
+        [...Object.entries(data.built_in_profiles), ...Object.entries(data.user_profiles)]
+            .map(([name, entry]) => [
+                name,
+                summarizeReviewRemediationModePolicy(
+                    resolveReviewRemediationModePolicyFromProfile(entry.review_remediation_mode_policy, name)
+                )
+            ])
+    );
+}
+
+function buildProfileReviewCatalogPolicy(
+    profileName: string,
+    entry: ProfileEntry,
+    bundleRoot: string
+): ResolvedProfileReviewCatalogPolicy {
+    const configPaths = resolveConfigPaths(bundleRoot);
+    const catalog = readReviewCatalogConfigFile(configPaths.reviewCatalog);
+    const capabilities = readReviewCapabilitiesConfigFile(configPaths.reviewCapabilities);
+    return resolveProfileReviewCatalogPolicy(
+        profileName,
+        entry.review_policy,
+        capabilities,
+        catalog
+    );
+}
+
+function formatCatalogLaneSummary(policy: ProfileReviewCatalogPolicyOutput): string {
+    const active = policy.lanes
+        .filter((lane) => lane.active)
+        .map((lane) => `${lane.id}(${lane.state})`);
+    const inactive = policy.lanes
+        .filter((lane) => !lane.active)
+        .map((lane) => `${lane.id}(${lane.state}:${lane.inactive_reason})`);
+    const laneSummary = [
+        `activity_basis=${policy.activity_basis}`,
+        `task_effective_selection=${policy.task_effective_selection}`,
+        `profile_active=[${active.join(', ') || 'none'}]`,
+        `profile_inactive=[${inactive.join(', ') || 'none'}]`
+    ].join('; ');
+    return policy.validation_issues?.length
+        ? `validation=[${policy.validation_issues.join(' | ')}]; ${laneSummary}`
+        : laneSummary;
+}
+
 export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
+    const catalogPolicies = buildProfileReviewCatalogPolicies(data, bundleRoot);
+    const taskDecompositionPolicies = buildProfileTaskDecompositionPolicies(data);
+    const remediationModePolicies = buildProfileReviewRemediationModePolicies(data);
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             built_in_profiles: Object.keys(data.built_in_profiles),
             user_profiles: Object.keys(data.user_profiles),
+            profile_task_decomposition_policies: taskDecompositionPolicies,
+            profile_review_remediation_mode_policies: remediationModePolicies,
+            profile_review_catalog_policies: catalogPolicies,
             config_path: resolveProfilesPath(bundleRoot)
         }, null, 2);
     }
@@ -28,7 +133,13 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
     lines.push('Built-in Profiles');
     for (const [name, entry] of Object.entries(data.built_in_profiles)) {
         const marker = name === data.active_profile ? '(*) ' : '    ';
-        lines.push(`  ${marker}${padRight(name, 16)} depth=${entry.depth} ${entry.description}`);
+        const decomposition = taskDecompositionPolicies[name];
+        const remediationMode = remediationModePolicies[name];
+        lines.push(
+            `  ${marker}${padRight(name, 16)} depth=${entry.depth} ` +
+            `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ` +
+            `remediation=${remediationMode.legacy_full_only ? 'FULL-only' : 'FULL/DELTA'} ${entry.description}`
+        );
     }
     const userNames = Object.keys(data.user_profiles);
     if (userNames.length > 0) {
@@ -36,20 +147,48 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
         lines.push('User Profiles');
         for (const [name, entry] of Object.entries(data.user_profiles)) {
             const marker = name === data.active_profile ? '(*) ' : '    ';
-            lines.push(`  ${marker}${padRight(name, 16)} depth=${entry.depth} ${entry.description}`);
+            const decomposition = taskDecompositionPolicies[name];
+            const remediationMode = remediationModePolicies[name];
+            lines.push(
+                `  ${marker}${padRight(name, 16)} depth=${entry.depth} ` +
+                `decomposition=${String(decomposition.enabled)} provenance=${decomposition.provenance} ` +
+                `remediation=${remediationMode.legacy_full_only ? 'FULL-only' : 'FULL/DELTA'} ${entry.description}`
+            );
         }
+    }
+    lines.push('');
+    lines.push('Review Catalog Lanes');
+    for (const name of getAllProfileNames(data)) {
+        lines.push(`  ${name}: ${formatCatalogLaneSummary(catalogPolicies[name])}`);
     }
     return lines.join('\n');
 }
 
 export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
     const entry = getProfileEntry(data, data.active_profile);
+    if (!entry) {
+        throw new Error(`Active profile '${data.active_profile}' was not found.`);
+    }
+    const catalogPolicy = buildProfileReviewCatalogPolicy(data.active_profile, entry, bundleRoot);
+    const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(
+        entry.task_decomposition,
+        data.active_profile
+    );
     const reviewTriggerPolicy = loadReviewTriggerPolicy(path.join(bundleRoot, 'live', 'config', 'paths.json'));
+    const remediationModePolicy = summarizeReviewRemediationModePolicy(
+        resolveReviewRemediationModePolicyFromProfile(
+            entry.review_remediation_mode_policy,
+            data.active_profile
+        )
+    );
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             is_built_in: isBuiltInProfile(data, data.active_profile),
             entry: entry,
+            task_decomposition: taskDecompositionPolicy,
+            review_remediation_mode_policy: remediationModePolicy,
+            review_catalog_policy: catalogPolicy,
             review_trigger_policy: reviewTriggerPolicy,
             config_path: resolveProfilesPath(bundleRoot)
         }, null, 2);
@@ -62,9 +201,21 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
     if (entry) {
         lines.push(`Description: ${entry.description}`);
         lines.push(`Depth: ${entry.depth}`);
+        lines.push(
+            `TaskDecomposition: enabled=${String(taskDecompositionPolicy.enabled)}, ` +
+            `configured=${String(taskDecompositionPolicy.configured)}, provenance=${taskDecompositionPolicy.provenance}`
+        );
         lines.push(`ReviewPolicy: ${formatReviewPolicy(entry.review_policy)}`);
+        lines.push(`ReviewCatalogPolicy: ${formatCatalogLaneSummary(catalogPolicy)}`);
+        lines.push(`ReviewCatalogPolicySha256: ${catalogPolicy.policy_sha256}`);
         lines.push(`ReviewFindingPolicy: ${formatReviewFindingPolicy(entry.review_finding_policy)}`);
         lines.push(`ReviewFollowUpPolicy: ${formatReviewFollowUpPolicy(entry.review_follow_up_policy)}`);
+        lines.push(
+            `ReviewRemediationModePolicy: configured=${String(remediationModePolicy.configured)}, ` +
+            `legacy_full_only=${String(remediationModePolicy.legacy_full_only)}, ` +
+            `policy_id=${remediationModePolicy.policy_id}, ` +
+            `delta_eligible=[${remediationModePolicy.delta_eligible_review_types.join(',') || 'none'}]`
+        );
         lines.push(`TokenEconomy: ${formatTokenEconomy(entry.token_economy)}`);
         lines.push(`Skills: ${formatSkills(entry.skills)}`);
         lines.push(`ReviewTriggerPolicy: ${formatReviewTriggerPolicy(reviewTriggerPolicy)}`);

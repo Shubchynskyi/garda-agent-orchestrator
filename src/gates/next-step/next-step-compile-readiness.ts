@@ -44,7 +44,35 @@ import {
 export interface CompileReadiness {
     ready: boolean;
     reason: string;
-    recoveryGate?: 'classify-change';
+    recoveryGate?: 'classify-change' | 'enter-task-mode';
+}
+
+function requiresProtectedTaskModeRestart(errorText: string): boolean {
+    return /^Trusted protected control-plane manifest was already drifted before task start:/iu.test(errorText)
+        && errorText.includes('Restart task mode with:')
+        && errorText.includes('--orchestrator-work');
+}
+
+function protectedCompileFailureWasRecoveredByTaskModeRestart(
+    eventsRoot: string,
+    taskId: string
+): boolean {
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(path.join(eventsRoot, `${taskId}.jsonl`), timelineErrors);
+    if (timelineErrors.length > 0) {
+        return false;
+    }
+    const latestCompileFailure = findLatestTimelineEvent(
+        timeline,
+        (entry) => entry.event_type === 'COMPILE_GATE_FAILED'
+    );
+    const latestTaskMode = findLatestTimelineEvent(
+        timeline,
+        (entry) => entry.event_type === 'TASK_MODE_ENTERED'
+    );
+    return !!latestCompileFailure
+        && !!latestTaskMode
+        && latestTaskMode.sequence > latestCompileFailure.sequence;
 }
 
 function sameSortedStringList(left: readonly string[], right: readonly string[]): boolean {
@@ -98,6 +126,23 @@ export function readCompileReadiness(
     }
     if (evidenceStatus !== 'PASSED' || evidenceOutcome !== 'PASS') {
         const evidenceError = String(evidence.error || '').trim();
+        if (requiresProtectedTaskModeRestart(evidenceError)) {
+            if (protectedCompileFailureWasRecoveredByTaskModeRestart(eventsRoot, taskId)) {
+                return {
+                    ready: false,
+                    reason:
+                        'Protected compile failure predates the latest task-mode restart and is no longer current. ' +
+                        'Rerun compile-gate against the refreshed task-mode and preflight cycle.'
+                };
+            }
+            return {
+                ready: false,
+                reason:
+                    'Compile gate requires a protected task-mode restart because the trusted control-plane manifest ' +
+                    'was already drifted before task start. Restart task mode with fresh operator confirmation before retrying compile-gate.',
+                recoveryGate: 'enter-task-mode'
+            };
+        }
         if (/\bPreflight scope drift detected\b/i.test(evidenceError)) {
             const staleFailureReason = getStaleCompileScopeDriftFailureReason({
                 repoRoot,

@@ -196,6 +196,41 @@ test('redactSensitiveData masks multiline secrets split across output line array
     });
 });
 
+test('redactSensitiveData preserves authenticated redacted line-array boundaries', () => {
+    const redactedLines = [
+        'export const first = true;\r\n',
+        'export const second = true;\n'
+    ];
+    const result = redactSensitiveData({ redacted_lines: redactedLines });
+
+    assert.deepEqual(result, { redacted_lines: redactedLines });
+    assert.deepEqual(
+        JSON.parse(serializeRedactedJson({ redacted_lines: redactedLines })),
+        { redacted_lines: redactedLines }
+    );
+});
+
+test('redacted JSON serialization preserves canonical assignment placeholders and line endings', () => {
+    const redactedLines = [
+        'export const TOKEN_ECONOMY_FIELDS = <redacted>\n',
+        'const max_review_tokens: <redacted>\r\n',
+        'const auth = <redacted>\r'
+    ];
+    const serialized = serializeRedactedJson({ redacted_lines: redactedLines });
+
+    assert.deepEqual(JSON.parse(serialized), { redacted_lines: redactedLines });
+    assert.equal(serializeRedactedJson(JSON.parse(serialized)), serialized);
+});
+
+test('redacted JSON serialization preserves JSON escaping around source assignment patterns', () => {
+    const sourceLine = 'const match = html.match(/const actionToken = "([^"]+)";/u);\n';
+    const redactedLine = redactSecretText(sourceLine);
+    const serialized = serializeRedactedJson({ redacted_lines: [redactedLine] });
+
+    assert.deepEqual(JSON.parse(serialized), { redacted_lines: [redactedLine] });
+    assert.equal(serializeRedactedJson(JSON.parse(serialized)), serialized);
+});
+
 test('redactSensitiveData preserves token telemetry keys while masking real token secrets', () => {
     const result = redactSensitiveData({
         token: 'bare-token-secret',

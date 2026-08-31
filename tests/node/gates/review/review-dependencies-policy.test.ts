@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     getRequiredUpstreamReviewsFromRecord} from '../../../../src/gates/review/review-dependencies';
 import { getReviewExecutionPreparationBatches } from '../../../../src/core/review-execution-policy';
+import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
 
 
 
@@ -21,6 +22,39 @@ test('getRequiredUpstreamReviewsFromRecord keeps all reviews independent in para
 
     assert.deepEqual(getRequiredUpstreamReviewsFromRecord('api', requiredReviews, 'parallel_all'), []);
     assert.deepEqual(getRequiredUpstreamReviewsFromRecord('test', requiredReviews, 'parallel_all'), []);
+});
+
+test('dependency and preparation consumers prefer the compiled profile graph over the compatibility mode', () => {
+    const requiredReviews = {
+        code: true,
+        security: true,
+        api: true,
+        test: true
+    };
+    const dependencyGraph = compileReviewDependencyGraph({
+        catalogLaneIds: Object.keys(requiredReviews),
+        activeLaneIds: Object.keys(requiredReviews),
+        requiredReviewIds: Object.keys(requiredReviews),
+        mode: 'parallel_all',
+        declaration: {
+            preparation_order: ['security', 'code', 'api', 'test'],
+            dependencies: {
+                security: [],
+                code: ['security'],
+                api: ['code'],
+                test: ['api']
+            }
+        }
+    });
+
+    assert.deepEqual(
+        getRequiredUpstreamReviewsFromRecord('code', requiredReviews, 'parallel_all', dependencyGraph),
+        ['security']
+    );
+    assert.deepEqual(
+        getReviewExecutionPreparationBatches(requiredReviews, 'parallel_all', dependencyGraph),
+        [['security'], ['code'], ['api'], ['test']]
+    );
 });
 
 test('getRequiredUpstreamReviewsFromRecord applies code_first_optional dependencies', () => {
@@ -145,4 +179,3 @@ test('getReviewExecutionPreparationBatches keeps strict_sequential fully seriali
         [['code'], ['db'], ['security'], ['api'], ['test']]
     );
 });
-

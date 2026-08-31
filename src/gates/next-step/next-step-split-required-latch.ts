@@ -11,6 +11,7 @@ import type {
 import type {
     ReviewCycleGuardEvaluation
 } from '../../core/review-cycle-guard';
+import { readTaskQueueStatusToken } from '../../core/task-queue/task-queue-status';
 import {
     syncTaskQueueStatusDetailed,
     type TaskQueueStatusSyncResult
@@ -443,7 +444,7 @@ export function hasReviewCycleContinuationClearedEvidence(params: {
     ) {
         return false;
     }
-    const currentStatus = String(params.currentStatus || '').trim().toUpperCase();
+    const currentStatus = readTaskQueueStatusToken(params.currentStatus);
     if (currentStatus !== 'IN_PROGRESS' && currentStatus !== 'IN_REVIEW') {
         return false;
     }

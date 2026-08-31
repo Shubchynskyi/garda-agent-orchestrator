@@ -121,7 +121,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.equal(result.scope_budget_guard.warn_changed_lines, 2000);
         assert.equal(result.scope_budget_guard.block_changed_lines, 5000);
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
-        assert.ok(output.includes('max_failed_non_test_reviews=15 max_total_non_test_reviews=30'));
+        assert.ok(output.includes('max_failed_non_test_reviews=10 max_total_non_test_reviews=30'));
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
         assert.ok(output.includes('Task reset: disabled'));
         assert.ok(output.includes('Auto backup: disabled interval_days=1 keep_latest=10'));
@@ -1396,7 +1396,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.full_suite_validation.timeout_blocker, true);
         assert.equal(parsed.full_suite_validation.timeout_retry_count, 1);
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
-        assert.equal(parsed.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(parsed.review_cycle_guard.max_failed_non_test_reviews, 10);
         assert.equal(parsed.review_cycle_guard.max_total_non_test_reviews, 30);
         assert.equal(parsed.project_memory_maintenance.enabled, true);
         assert.equal(parsed.project_memory_maintenance.mode, 'update');
@@ -1416,7 +1416,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.optional_skill_selection_policy.status, 'missing');
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
-        assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=true');
+        assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=10 max_total_non_test_reviews=30 excluded=test auto_split_enabled=true');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
         assert.equal(parsed.optional_quality_checks_summary_line, `Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} cadence_interval=${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}`);

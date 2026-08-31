@@ -99,7 +99,7 @@ function resolveCurrentPostPreflightRulePackBinding(
     compatibleBindingSha256s: string[];
     violations: string[];
 } {
-    const validatedPreflight = validatePreflightForReview(preflightPath, taskId);
+    const validatedPreflight = validatePreflightForReview(preflightPath, taskId, taskModePath);
     const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, String(taskModePath || ''));
     const violations = [
         ...validatedPreflight.errors,
@@ -396,7 +396,11 @@ export function getPostPreflightRulePackRebindDecision(
         return emptyDecision('Prior POST_PREFLIGHT rule-pack evidence has no loaded rule files to reuse.');
     }
 
-    const validatedPreflight = validatePreflightForReview(preflightPath, resolvedTaskId);
+    const validatedPreflight = validatePreflightForReview(
+        preflightPath,
+        resolvedTaskId,
+        String(options.taskModePath || '')
+    );
     const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
     const validationErrors = [
         ...validatedPreflight.errors,

@@ -6,6 +6,7 @@ import {
 import {
     type ProjectMemoryImpactEvidenceStatus,
     type ProjectMemoryImpactStatus,
+    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     assessProjectMemoryImpact,
     getProjectMemoryImpactLifecycleEvidence,
     routeProjectMemoryImpact
@@ -27,8 +28,13 @@ import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
 import {
-    collectOrderedTimelineEvents
+    collectOrderedTimelineEvents,
+    type TimelineEventEntry
 } from '../completion/completion-evidence';
+import {
+    PROJECT_MEMORY_AFTER_DOC_IMPACT_VIOLATION,
+    docImpactClaimsProjectMemoryEvidence
+} from '../completion/completion-project-memory';
 import {
     normalizePath
 } from '../shared/helpers';
@@ -72,6 +78,13 @@ export interface PreflightCycleReadiness {
 export interface PreflightCycleReadinessOptions {
     allowStaleCompletionFailureForDocCloseout?: boolean;
     staleCompletionFailureDocCloseoutReason?: string;
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot;
+}
+
+export interface NextStepCloseoutTimelineSnapshot {
+    timelinePath: string;
+    events: TimelineEventEntry[];
+    errors: string[];
 }
 
 function hasPassedDocImpactArtifact(docImpactPath: string | null | undefined): boolean {
@@ -84,6 +97,161 @@ function hasPassedDocImpactArtifact(docImpactPath: string | null | undefined): b
     }
     return String(docImpact.status || '').trim().toUpperCase() === 'PASSED'
         && String(docImpact.outcome || '').trim().toUpperCase() === 'PASS';
+}
+
+function readPassedDocImpactArtifact(
+    docImpactPath: string | null | undefined
+): Record<string, unknown> | null {
+    if (!docImpactPath) {
+        return null;
+    }
+    const docImpact = safeReadJson(docImpactPath);
+    return docImpact
+        && String(docImpact.status || '').trim().toUpperCase() === 'PASSED'
+        && String(docImpact.outcome || '').trim().toUpperCase() === 'PASS'
+        ? docImpact
+        : null;
+}
+
+export function readNextStepCloseoutTimelineSnapshot(
+    eventsRoot: string,
+    taskId: string
+): NextStepCloseoutTimelineSnapshot {
+    const timelinePath = path.resolve(eventsRoot, `${taskId}.jsonl`);
+    const errors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, errors);
+    return {
+        timelinePath,
+        events,
+        errors
+    };
+}
+
+function collectCloseoutTimelineEvents(
+    eventsRoot: string,
+    taskId: string,
+    snapshot?: NextStepCloseoutTimelineSnapshot
+): TimelineEventEntry[] {
+    const expectedTimelinePath = path.resolve(eventsRoot, `${taskId}.jsonl`);
+    const resolvedSnapshotPath = snapshot
+        ? path.resolve(snapshot.timelinePath)
+        : null;
+    if (snapshot && resolvedSnapshotPath === expectedTimelinePath) {
+        return snapshot.errors.length === 0 ? snapshot.events : [];
+    }
+    const currentSnapshot = readNextStepCloseoutTimelineSnapshot(eventsRoot, taskId);
+    return currentSnapshot.errors.length === 0 ? currentSnapshot.events : [];
+}
+
+export function isProjectMemoryEvidenceCurrentForCloseout(input: {
+    eventsRoot: string;
+    taskId: string;
+    docImpactPath: string;
+    evidenceCurrent: boolean;
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot;
+}): boolean {
+    if (!input.evidenceCurrent) {
+        return false;
+    }
+    const docImpact = readPassedDocImpactArtifact(input.docImpactPath);
+    if (!docImpact || docImpactClaimsProjectMemoryEvidence(docImpact)) {
+        return true;
+    }
+    const events = collectCloseoutTimelineEvents(
+        input.eventsRoot,
+        input.taskId,
+        input.timelineSnapshot
+    );
+    const latestProjectMemoryImpact = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === PROJECT_MEMORY_IMPACT_ASSESSED_EVENT
+    );
+    const latestDocImpact = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'DOC_IMPACT_ASSESSED'
+    );
+    return !latestProjectMemoryImpact
+        || !latestDocImpact
+        || latestProjectMemoryImpact.sequence > latestDocImpact.sequence;
+}
+
+function getProjectMemoryOrderOnlyRecoveryReason(
+    eventsRoot: string,
+    taskId: string,
+    preflightPath: string,
+    preflightSha256: string | null,
+    docImpactPath: string,
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot
+): string | null {
+    const docImpact = readPassedDocImpactArtifact(docImpactPath);
+    if (
+        !preflightSha256
+        || !docImpact
+        || docImpactClaimsProjectMemoryEvidence(docImpact)
+    ) {
+        return null;
+    }
+    const events = collectCloseoutTimelineEvents(eventsRoot, taskId, timelineSnapshot);
+    const latestPreflight = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
+    );
+    const latestCompletionFailure = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'COMPLETION_GATE_FAILED'
+    );
+    const latestProjectMemoryImpact = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === PROJECT_MEMORY_IMPACT_ASSESSED_EVENT
+    );
+    const latestDocImpact = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'DOC_IMPACT_ASSESSED'
+    );
+    if (
+        !latestPreflight
+        || !latestDocImpact
+        || !latestCompletionFailure
+        || !docImpactTimelineDetailsMatchArtifact(
+            latestDocImpact.details,
+            docImpact,
+            taskId,
+            preflightPath,
+            preflightSha256
+        )
+        || latestDocImpact.sequence < latestPreflight.sequence
+        || latestDocImpact.sequence >= latestCompletionFailure.sequence
+    ) {
+        return null;
+    }
+    const violations = Array.isArray(latestCompletionFailure?.details?.violations)
+        ? latestCompletionFailure.details.violations.map((entry) => String(entry))
+        : [];
+    const orderMismatchStillPresent = Boolean(
+        latestCompletionFailure
+        && latestProjectMemoryImpact
+        && latestDocImpact
+        && latestProjectMemoryImpact.sequence <= latestDocImpact.sequence
+        && latestCompletionFailure.sequence > latestDocImpact.sequence
+    );
+    const orderMismatchRecovered = Boolean(
+        latestCompletionFailure
+        && latestProjectMemoryImpact
+        && latestProjectMemoryImpact.sequence > latestCompletionFailure.sequence
+    );
+    if (
+        violations.length !== 1
+        || violations[0] !== PROJECT_MEMORY_AFTER_DOC_IMPACT_VIOLATION
+        || !latestProjectMemoryImpact
+        || !latestDocImpact
+        || !latestCompletionFailure
+        || (!orderMismatchStillPresent && !orderMismatchRecovered)
+    ) {
+        return null;
+    }
+    return orderMismatchRecovered
+        ? 'a newer project-memory assessment repaired the sole project-memory-after-doc-impact completion violation'
+        : 'the latest completion failure contains only the recoverable project-memory-after-doc-impact ordering violation';
 }
 
 function docImpactTimelineDetailsMatchArtifact(
@@ -122,7 +290,8 @@ function getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
     taskId: string,
     preflightPath: string,
     preflightSha256: string | null,
-    docImpactPath: string | null | undefined
+    docImpactPath: string | null | undefined,
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot
 ): string[] {
     if (!docImpactPath) {
         return [];
@@ -164,10 +333,8 @@ function getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
     if (docsUpdated.some((entry) => !isOrdinaryDocumentationDeltaPath(entry, classificationConfig))) {
         return [];
     }
-    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    const timelineErrors: string[] = [];
-    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
-    if (timelineErrors.length > 0 || events.length === 0) {
+    const events = collectCloseoutTimelineEvents(eventsRoot, taskId, timelineSnapshot);
+    if (events.length === 0) {
         return [];
     }
     const latestPreflight = findLatestTimelineEvent(
@@ -208,10 +375,25 @@ export function buildStaleCompletionFailureDocCloseoutAllowance(
     preflightPath: string,
     preflightSha256: string | null,
     preflightWorkspaceReadiness: PreflightWorkspaceReadiness,
-    docImpactPath: string
+    docImpactPath: string,
+    timelineSnapshot?: NextStepCloseoutTimelineSnapshot
 ): PreflightCycleReadinessOptions {
     if (!preflightWorkspaceReadiness.ready) {
         return {};
+    }
+    const projectMemoryOrderRecoveryReason = getProjectMemoryOrderOnlyRecoveryReason(
+        eventsRoot,
+        taskId,
+        preflightPath,
+        preflightSha256,
+        docImpactPath,
+        timelineSnapshot
+    );
+    if (projectMemoryOrderRecoveryReason) {
+        return {
+            allowStaleCompletionFailureForDocCloseout: true,
+            staleCompletionFailureDocCloseoutReason: projectMemoryOrderRecoveryReason
+        };
     }
     if (hasPassedDocImpactArtifact(docImpactPath)) {
         const docImpactUpdatedFiles = getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
@@ -220,7 +402,8 @@ export function buildStaleCompletionFailureDocCloseoutAllowance(
             taskId,
             preflightPath,
             preflightSha256,
-            docImpactPath
+            docImpactPath,
+            timelineSnapshot
         );
         if (docImpactUpdatedFiles.length > 0) {
             return {
@@ -257,10 +440,8 @@ export function readPreflightCycleReadiness(
     taskId: string,
     options: PreflightCycleReadinessOptions = {}
 ): PreflightCycleReadiness {
-    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    const timelineErrors: string[] = [];
-    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
-    if (timelineErrors.length > 0 || events.length === 0) {
+    const events = collectCloseoutTimelineEvents(eventsRoot, taskId, options.timelineSnapshot);
+    if (events.length === 0) {
         return {
             ready: true,
             reason: 'Timeline ordering could not be checked by next-step; downstream gates will report timeline integrity.'
@@ -388,14 +569,19 @@ function shouldDefaultInternalOnlyBehaviorChanged(
         && hasNonDocumentationPreflightScope(preflight, repoRoot);
 }
 
-export function buildDocImpactCommand(
+export interface DocImpactCommandPlan {
+    command: string;
+    requiresProjectMemoryBeforeAssessment: boolean;
+}
+
+export function buildDocImpactCommandPlan(
     cliPrefix: string,
     taskId: string,
     preflightCommandPath: string,
     preflight: Record<string, unknown> | null,
     repoRoot: string,
     additionalDocsUpdated: string[] = []
-): string {
+): DocImpactCommandPlan {
     const docsUpdated = [...new Set([
         ...getDocImpactChangedFiles(preflight, repoRoot),
         ...additionalDocsUpdated.map((entry) => normalizePath(entry)).filter(Boolean)
@@ -437,7 +623,28 @@ export function buildDocImpactCommand(
             ? '--rationale "Implementation files changed with no user-facing documentation paths; recording internal-only behavior evidence. Update task-scoped project memory before running if this command reports missing internal evidence."'
             : '--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
     parts.push('--repo-root "."');
-    return parts.join(' ');
+    return {
+        command: parts.join(' '),
+        requiresProjectMemoryBeforeAssessment: internalOnlyBehaviorChanged
+    };
+}
+
+export function buildDocImpactCommand(
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    preflight: Record<string, unknown> | null,
+    repoRoot: string,
+    additionalDocsUpdated: string[] = []
+): string {
+    return buildDocImpactCommandPlan(
+        cliPrefix,
+        taskId,
+        preflightCommandPath,
+        preflight,
+        repoRoot,
+        additionalDocsUpdated
+    ).command;
 }
 
 export function buildDocImpactCompatibilityHint(): string {

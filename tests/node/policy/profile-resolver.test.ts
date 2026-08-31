@@ -21,6 +21,9 @@ import {
     formatEffectivePolicyJson,
     applyProfileGuardrails,
     formatProfileGuardrailDiagnostics,
+    resolveReviewFollowUpPolicy,
+    resolveReviewFollowUpTaskProfileAssignment,
+    resolveProfileTaskDecompositionPolicy,
     type ReviewCapabilities,
     type TokenEconomyConfig,
     type SkillPacksConfig,
@@ -28,10 +31,102 @@ import {
     type ProfileTokenEconomy,
     type ProfileSkills
 } from '../../../src/policy/profile-resolver';
+import {
+    buildTaskProfilePolicySnapshot,
+    computeTaskProfilePolicySnapshotHash,
+    resolveTaskProfileReviewRemediationModePolicy,
+    resolveTaskProfileTaskDecompositionPolicy,
+    validateTaskProfilePolicySnapshot
+} from '../../../src/policy/task-profile-policy-snapshot';
+import { buildDefaultReviewRemediationModePolicy } from '../../../src/policy/review-remediation-mode-policy';
+
+test('profile task decomposition enables strict and balanced defaults and disables other legacy profiles', () => {
+    const strict = resolveProfileTaskDecompositionPolicy(undefined, 'strict');
+    const balanced = resolveProfileTaskDecompositionPolicy(undefined, 'balanced');
+    const custom = resolveProfileTaskDecompositionPolicy(undefined, 'custom-profile');
+
+    assert.deepEqual(
+        [strict.enabled, balanced.enabled, custom.enabled],
+        [true, true, false]
+    );
+    assert.equal(strict.provenance, 'legacy_strict_compatibility');
+    assert.equal(balanced.provenance, 'legacy_balanced_default');
+    assert.equal(resolveProfileTaskDecompositionPolicy({ enabled: true }, 'balanced').enabled, true);
+});
+
+test('profile task decomposition rejects forged malformed explicit configuration fail closed', () => {
+    for (const value of [true, { enabled: 'yes' }, { enabled: true, extra: false }]) {
+        const resolution = resolveProfileTaskDecompositionPolicy(value, 'balanced');
+        assert.equal(resolution.enabled, false);
+        assert.equal(resolution.valid, false);
+        assert.match(resolution.diagnostics.join('\n'), /fail-closed/iu);
+    }
+});
+
+test('follow-up task profile assignment follows the built-in lowering ladder', () => {
+    const available = ['strict', 'balanced', 'fast', 'docs-only'];
+    const policy = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'grouped_by_parent',
+        task_profile: { mode: 'one_level_lighter', fixed_profile: null }
+    }, 'strict').policy;
+
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(policy, 'strict', available).profile, 'balanced');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(policy, 'balanced', available).profile, 'fast');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(policy, 'fast', available).profile, 'fast');
+});
+
+test('follow-up task profile assignment supports inherit and fixed modes', () => {
+    const available = ['strict', 'balanced', 'fast', 'custom-profile'];
+    const inherited = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'inherit_parent', fixed_profile: null }
+    }, 'strict').policy;
+    const fixed = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'fixed_profile', fixed_profile: 'fast' }
+    }, 'strict').policy;
+
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(inherited, 'strict', available).profile, 'strict');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(fixed, 'strict', available).profile, 'fast');
+    assert.equal(resolveReviewFollowUpTaskProfileAssignment(fixed, 'strict', available).source, 'fixed_profile');
+});
+
+test('one-level lowering fails closed for custom and docs-only profiles', () => {
+    const available = ['strict', 'balanced', 'fast', 'docs-only', 'custom-profile'];
+    const policy = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'one_level_lighter', fixed_profile: null }
+    }, 'custom-profile').policy;
+
+    for (const parent of ['custom-profile', 'docs-only']) {
+        const assignment = resolveReviewFollowUpTaskProfileAssignment(policy, parent, available);
+        assert.equal(assignment.profile, parent);
+        assert.equal(assignment.source, 'safe_inherit_parent');
+        assert.match(assignment.diagnostics.join('\n'), /instead of guessing/iu);
+    }
+});
+
+test('invalid fixed follow-up profile fails closed visibly', () => {
+    const policy = resolveReviewFollowUpPolicy({
+        schema_version: 1,
+        materialization_mode: 'per_finding',
+        task_profile: { mode: 'fixed_profile', fixed_profile: 'missing-profile' }
+    }, 'strict').policy;
+    const assignment = resolveReviewFollowUpTaskProfileAssignment(policy, 'strict', ['strict', 'balanced', 'fast']);
+
+    assert.equal(assignment.profile, 'strict');
+    assert.equal(assignment.source, 'safe_inherit_parent');
+    assert.match(assignment.diagnostics.join('\n'), /unavailable/iu);
+});
 
 
 function makeTempBundle(configs: {
     profiles?: Record<string, unknown>;
+    reviewCatalog?: Record<string, unknown>;
     reviewCapabilities?: Record<string, unknown>;
     tokenEconomy?: Record<string, unknown>;
     skillPacks?: Record<string, unknown>;
@@ -191,6 +286,10 @@ function makeTempBundle(configs: {
     };
 
     fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify(configs.profiles || defaultProfiles, null, 2), 'utf8');
+    fs.writeFileSync(path.join(configDir, 'review-catalog.json'), JSON.stringify(configs.reviewCatalog || {
+        version: 1,
+        custom_review_types: []
+    }, null, 2), 'utf8');
     fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), JSON.stringify(configs.reviewCapabilities || defaultCapabilities, null, 2), 'utf8');
     fs.writeFileSync(path.join(configDir, 'token-economy.json'), JSON.stringify(configs.tokenEconomy || defaultTokenEconomy, null, 2), 'utf8');
     fs.writeFileSync(path.join(configDir, 'skill-packs.json'), JSON.stringify(configs.skillPacks || defaultSkillPacks, null, 2), 'utf8');
@@ -203,10 +302,26 @@ function cleanUp(bundleRoot: string): void {
     fs.rmSync(bundleRoot, { recursive: true, force: true });
 }
 
+function customReviewCatalog(): Record<string, unknown> {
+    return {
+        version: 1,
+        custom_review_types: [{
+            id: 'architecture-boundary',
+            display_label: 'Architecture boundary review',
+            enabled_by_default: false,
+            skill_id: 'code-review',
+            trigger: { mode: 'signals', signal_ids: ['paths.config'] },
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['boundaries'] }
+        }]
+    };
+}
+
 
 test('resolveConfigPaths returns correct paths', () => {
     const paths = resolveConfigPaths('/fake/bundle');
     assert.ok(paths.profiles.endsWith(path.join('live', 'config', 'profiles.json')));
+    assert.ok(paths.reviewCatalog.endsWith(path.join('live', 'config', 'review-catalog.json')));
     assert.ok(paths.reviewCapabilities.endsWith(path.join('live', 'config', 'review-capabilities.json')));
     assert.ok(paths.tokenEconomy.endsWith(path.join('live', 'config', 'token-economy.json')));
     assert.ok(paths.skillPacks.endsWith(path.join('live', 'config', 'skill-packs.json')));
@@ -230,11 +345,96 @@ test('loadProfilesData loads valid profiles', () => {
     }
 });
 
+test('task profile snapshot hash-binds explicit decomposition and migrates legacy snapshots without mutation', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, Record<string, unknown>>;
+        };
+        profiles.built_in_profiles.balanced.task_decomposition = { enabled: true };
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        const snapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reviewExecutionPolicyConfigured: true
+        });
+        assert.deepEqual(snapshot.task_decomposition, {
+            enabled: true,
+            configured: true,
+            provenance: 'explicit_profile_config',
+            diagnostics: []
+        });
+        assert.equal(validateTaskProfilePolicySnapshot(snapshot).status, 'PASS');
+
+        const tampered = structuredClone(snapshot);
+        tampered.task_decomposition!.enabled = false;
+        assert.equal(validateTaskProfilePolicySnapshot(tampered).status, 'HASH_MISMATCH');
+
+        const legacy = structuredClone(snapshot) as typeof snapshot;
+        delete legacy.task_decomposition;
+        legacy.snapshot_hash = computeTaskProfilePolicySnapshotHash(legacy);
+        assert.equal(validateTaskProfilePolicySnapshot(legacy).status, 'PASS');
+        const migrated = resolveTaskProfileTaskDecompositionPolicy(legacy);
+        assert.equal(migrated.enabled, true);
+        assert.equal(migrated.provenance, 'legacy_snapshot_balanced_default');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('task profile snapshots preserve legacy FULL-only mode until the profile explicitly enables DELTA', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, Record<string, unknown>>;
+        };
+        const legacySnapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reviewExecutionPolicyConfigured: true
+        });
+        assert.equal(Object.hasOwn(legacySnapshot, 'review_remediation_mode_policy'), false);
+        assert.equal(resolveTaskProfileReviewRemediationModePolicy(legacySnapshot).legacy_fallback, true);
+
+        profiles.built_in_profiles.balanced.review_remediation_mode_policy =
+            buildDefaultReviewRemediationModePolicy();
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+        const explicitSnapshot = buildTaskProfilePolicySnapshot(bundleRoot, 'balanced', {
+            reviewExecutionPolicyMode: 'strict_sequential',
+            reviewExecutionPolicyConfigured: true
+        });
+        assert.equal(explicitSnapshot.review_remediation_mode_policy?.initial_review_mode, 'FULL');
+        assert.equal(resolveTaskProfileReviewRemediationModePolicy(explicitSnapshot).legacy_fallback, false);
+        assert.equal(validateTaskProfilePolicySnapshot(explicitSnapshot).status, 'PASS');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('effective policy rejects malformed decomposition configuration', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, Record<string, unknown>>;
+        };
+        profiles.built_in_profiles.balanced.task_decomposition = { enabled: 'yes' };
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { profileOverride: 'balanced' }),
+            /invalid task_decomposition/iu
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
 test('shipped template profiles and review capabilities use profile-driven review defaults', () => {
     const repoRoot = process.cwd();
     const profiles = JSON.parse(
         fs.readFileSync(path.join(repoRoot, 'template', 'config', 'profiles.json'), 'utf8')
-    ) as { built_in_profiles: Record<string, { review_policy: Record<string, unknown>; review_finding_policy: Record<string, unknown> }> };
+    ) as { built_in_profiles: Record<string, { task_decomposition: { enabled: boolean }; review_policy: Record<string, unknown>; review_finding_policy: Record<string, unknown> }> };
     const capabilities = JSON.parse(
         fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-capabilities.json'), 'utf8')
     ) as Record<string, boolean>;
@@ -249,6 +449,14 @@ test('shipped template profiles and review capabilities use profile-driven revie
         performance: true,
         infra: true,
         dependency: true
+    });
+    assert.deepEqual(Object.fromEntries(
+        Object.entries(profiles.built_in_profiles).map(([name, entry]) => [name, entry.task_decomposition.enabled])
+    ), {
+        balanced: true,
+        fast: false,
+        strict: true,
+        'docs-only': false
     });
     assert.deepEqual(profiles.built_in_profiles.balanced.review_policy, {
         code: true,
@@ -285,10 +493,10 @@ test('shipped template profiles and review capabilities use profile-driven revie
     });
     assert.deepEqual(profiles.built_in_profiles.fast.review_finding_policy, {
         schema_version: 1,
-        policy_id: 'soft',
+        policy_id: 'custom',
         findings: {
             critical: 'fix_now',
-            high: 'create_follow_up',
+            high: 'fix_now',
             medium: 'ignore',
             low: 'ignore'
         },
@@ -506,6 +714,131 @@ test('mergeReviewPolicy: safety floor does not fire when all floor keys already 
     const caps: ReviewCapabilities = { code: true, db: true, security: true, refactor: true, api: false, test: false, performance: false, infra: false, dependency: false };
     const { floorsApplied } = mergeReviewPolicy(profile, caps, true);
     assert.equal(floorsApplied.length, 0);
+});
+
+test('resolveEffectivePolicy keeps an omitted custom catalog lane inactive', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': true }
+    });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false });
+        const catalogPolicy = policy.review_catalog_policy;
+        assert.ok(catalogPolicy);
+        const lane = catalogPolicy.lanes.find(({ id }) => id === 'architecture-boundary');
+        assert.ok(lane);
+        assert.equal(lane.state, 'disabled');
+        assert.equal(lane.state_source, 'custom_disabled_default');
+        assert.equal(lane.capability_enabled, true);
+        assert.equal(lane.active, false);
+        assert.equal(lane.inactive_reason, 'profile_disabled');
+        assert.equal(policy.review_policy['architecture-boundary'], false);
+        assert.match(catalogPolicy.catalog_sha256, /^[a-f0-9]{64}$/u);
+        assert.match(catalogPolicy.policy_sha256, /^[a-f0-9]{64}$/u);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy activates auto custom profile intent without selecting the lane early', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': true }
+    });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        profiles.built_in_profiles.balanced.review_policy['architecture-boundary'] = 'auto';
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        const policy = resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false });
+        const catalogPolicy = policy.review_catalog_policy;
+        assert.ok(catalogPolicy);
+        const lane = catalogPolicy.lanes.find(({ id }) => id === 'architecture-boundary');
+        assert.ok(lane);
+        assert.equal(lane.state, 'auto');
+        assert.equal(lane.state_source, 'profile');
+        assert.equal(lane.active, true);
+        assert.equal(lane.inactive_reason, null);
+        assert.equal(policy.review_policy['architecture-boundary'], false);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy rejects unknown catalog review ids', () => {
+    const bundleRoot = makeTempBundle({ reviewCatalog: customReviewCatalog() });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        profiles.built_in_profiles.balanced.review_policy.ghost = true;
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false }),
+            /unknown catalog review id 'ghost'/u
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy accepts registered remediation lanes and rejects unregistered remediation lanes', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': true }
+    });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+        profiles.built_in_profiles.balanced.review_remediation_mode_policy =
+            buildDefaultReviewRemediationModePolicy();
+        const remediationPolicy = profiles.built_in_profiles.balanced.review_remediation_mode_policy;
+        remediationPolicy.delta_eligible_review_types.push('architecture-boundary');
+        remediationPolicy.delta_eligible_review_types.sort();
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        const policy = resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false });
+        assert.ok(policy.review_remediation_mode_policy.policy.delta_eligible_review_types.includes(
+            'architecture-boundary'
+        ));
+
+        remediationPolicy.delta_eligible_review_types.push('ghost');
+        remediationPolicy.delta_eligible_review_types.sort();
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false }),
+            /absent from the review catalog: ghost/iu
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy rejects a required lane with a disabled capability', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': false }
+    });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        profiles.built_in_profiles.balanced.review_policy['architecture-boundary'] = true;
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false }),
+            /architecture-boundary.*required.*capability.*disabled/iu
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
 });
 
 
@@ -1629,6 +1962,11 @@ test('resolveEffectivePolicy: scopeCategory code enforces safety floors even wit
         assert.equal(policy.review_policy.db, true, 'db must be enforced for code scope');
         assert.equal(policy.review_policy.refactor, true, 'refactor must be enforced for code scope');
         assert.equal(policy.safety_floors_applied.length, 4);
+        assert.equal(policy.review_catalog_policy?.activity_basis, 'profile_policy_and_capability');
+        assert.equal(policy.review_catalog_policy?.task_effective_selection, 'resolved_during_preflight');
+        const codeLane = policy.review_catalog_policy?.lanes.find(({ id }) => id === 'code');
+        assert.equal(codeLane?.state, 'disabled');
+        assert.equal(codeLane?.active, false, 'catalog activity describes profile eligibility, not task selection');
         assert.ok(policy.guardrail_diagnostics !== null);
         assert.equal(policy.guardrail_diagnostics!.guardrails_active, true);
     } finally {

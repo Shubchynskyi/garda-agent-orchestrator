@@ -100,6 +100,8 @@ export interface RunUninstallResult {
     canonicalEntrypoint: string;
     keepPrimaryEntrypoint: boolean;
     keepTaskFile: boolean;
+    taskFileDecision: 'PRESERVE_DEFAULT' | 'PRESERVE_EXPLICIT' | 'REMOVE_EXPLICIT';
+    taskFileRecoveryPath: string;
     keepRuntimeArtifacts: boolean;
     dryRun: boolean;
     skipBackups: boolean;
@@ -116,6 +118,25 @@ export interface RunUninstallResult {
     warnings: string[];
     result: 'DRY_RUN' | 'SUCCESS';
     previewAffectedFiles: string[];
+}
+
+function assertSafeTaskFileForExplicitRemoval(targetRoot: string): void {
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
+    let stats: fs.Stats;
+    try {
+        stats = fs.lstatSync(taskPath);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return;
+        }
+        throw error;
+    }
+
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+        throw new Error(
+            `GARDA_UNINSTALL_BLOCKED: TASK.md must be a regular file inside target root before explicit removal: ${taskPath}`
+        );
+    }
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -245,7 +266,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             }
 
             const updatedContent = content.replace(pattern, '');
-            const normalized = normalizeTextAfterManagedBlockRemoval(updatedContent);
+            const normalized = normalizeTextAfterManagedBlockRemoval(updatedContent, true);
             updateOrRemoveFile(filePath, relativePath, normalized);
         }
 
@@ -569,12 +590,17 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             }
         }
 
-        let keepTaskFileValue = false;
-        const taskPath = path.join(normalizedTarget, TASK_QUEUE_FILENAME);
-        if (pathExists(taskPath)) {
-            if (keepTaskFile !== undefined && keepTaskFile !== null && String(keepTaskFile).trim()) {
-                keepTaskFileValue = parseBooleanAnswer(keepTaskFile, 'KeepTaskFile');
-            }
+        const hasExplicitTaskFileDecision = keepTaskFile !== undefined
+            && keepTaskFile !== null
+            && Boolean(String(keepTaskFile).trim());
+        const keepTaskFileValue = hasExplicitTaskFileDecision
+            ? parseBooleanAnswer(keepTaskFile, 'KeepTaskFile')
+            : true;
+        const taskFileDecision = hasExplicitTaskFileDecision
+            ? (keepTaskFileValue ? 'PRESERVE_EXPLICIT' : 'REMOVE_EXPLICIT')
+            : 'PRESERVE_DEFAULT';
+        if (!keepTaskFileValue) {
+            assertSafeTaskFileForExplicitRemoval(normalizedTarget);
         }
 
         let keepRuntimeArtifactsValue = false;
@@ -587,6 +613,11 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
 
         if (skipBackups) {
             warnings.push('--skip-backups active: no user-facing backup will be created. Recovery after successful completion is not possible.');
+            if (!keepTaskFileValue) {
+                warnings.push(
+                    '--keep-task-file no with --skip-backups explicitly removes the managed TASK.md queue without a recovery copy.'
+                );
+            }
             if (!keepRuntimeArtifactsValue) {
                 warnings.push('--skip-backups with keepRuntimeArtifacts=no: runtime artifacts (reports, logs, rollback snapshots) will be permanently deleted.');
                 const projectMemoryPath = path.join(orchestratorRoot, 'live', 'docs', 'project-memory');
@@ -619,9 +650,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             currentPhase = 'CLEANUP_FILES';
 
             if (!keepTaskFileValue) {
-                if (!restoreItemFromInitializationBackup(TASK_QUEUE_FILENAME)) {
-                    removeManagedFile(TASK_QUEUE_FILENAME);
-                }
+                removeManagedFile(TASK_QUEUE_FILENAME);
             }
 
             for (const rel of ENTRYPOINT_FILES) {
@@ -697,6 +726,18 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             rollbackStatus = 'NOT_TRIGGERED';
         }
 
+        const taskBackupKey = TASK_QUEUE_FILENAME.replace(/\//g, path.sep).toLowerCase();
+        const taskFileRecoveryPath = !keepTaskFileValue && backupRoot && backedUpSet.has(taskBackupKey)
+            ? path.join(backupRoot, TASK_QUEUE_FILENAME)
+            : '<none>';
+        if (!keepTaskFileValue && taskFileRecoveryPath !== '<none>') {
+            warnings.push(
+                dryRun
+                    ? `Explicit TASK.md removal preview: recovery copy would be written to '${taskFileRecoveryPath}'.`
+                    : `Explicit TASK.md removal completed. Recovery copy: '${taskFileRecoveryPath}'.`
+            );
+        }
+
         return {
             targetRoot: normalizedTarget,
             orchestratorRoot,
@@ -705,6 +746,8 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             canonicalEntrypoint: canonicalEntrypoint || '<unknown>',
             keepPrimaryEntrypoint: keepPrimaryEntrypointValue,
             keepTaskFile: keepTaskFileValue,
+            taskFileDecision,
+            taskFileRecoveryPath,
             keepRuntimeArtifacts: keepRuntimeArtifactsValue,
             dryRun,
             skipBackups,

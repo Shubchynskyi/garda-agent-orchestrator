@@ -283,6 +283,15 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     if (snapshot.activeProfile) {
         lines.push(`ActiveProfile: ${snapshot.activeProfile}`);
     }
+    if (snapshot.reviewRemediationModePolicy) {
+        const remediation = snapshot.reviewRemediationModePolicy;
+        lines.push(
+            `ReviewRemediationModePolicy: configured=${String(remediation.configured)}, ` +
+            `mode=${remediation.legacyFullOnly ? 'FULL-only' : 'FULL/DELTA'}, ` +
+            `policy_id=${remediation.policyId || 'invalid'}, ` +
+            `delta_eligible=[${remediation.deltaEligibleReviewTypes.join(',') || 'none'}]`
+        );
+    }
     if (snapshot.mandatoryFullSuiteEnabled !== null) {
         lines.push(`MandatoryFullSuite: ${snapshot.mandatoryFullSuiteEnabled ? 'enabled' : 'disabled'}`);
     }
@@ -338,10 +347,13 @@ export function formatStatusSnapshotCompact(snapshot: StatusSnapshot): string {
         return formatStatusSnapshot(snapshot);
     }
     const profileSuffix = snapshot.activeProfile ? ` | profile=${snapshot.activeProfile}` : '';
+    const remediationSuffix = snapshot.reviewRemediationModePolicy
+        ? ` | remediation=${snapshot.reviewRemediationModePolicy.legacyFullOnly ? 'FULL-only' : 'FULL/DELTA'}`
+        : '';
     const toxinSuffix = snapshot.toxinMetricsSummary && snapshot.toxinMetricsSummary.warnings.length > 0
         ? ` | toxin_warnings=${snapshot.toxinMetricsSummary.warnings.length}`
         : '';
-    return `GARDA_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}${profileSuffix}${toxinSuffix}`;
+    return `GARDA_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}${profileSuffix}${remediationSuffix}${toxinSuffix}`;
 }
 
 export function formatStatusSnapshotJson(snapshot: StatusSnapshot): string {

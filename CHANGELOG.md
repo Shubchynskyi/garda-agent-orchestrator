@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.4.0
+
+### Extensible Review Catalog
+
+- Added a guarded review catalog for built-in and repository-specific review lanes. Operators can inspect, validate, explain, create, update, enable, disable, bind, and order custom lanes through `garda review-catalog` and the local UI.
+- Added profile-owned review states and dependency graphs. The effective catalog, lane policy, and launch order are frozen when a task starts, so later configuration changes cannot alter an active review cycle.
+- Added a compatibility-preserving migration flow for existing workspaces. Missing catalog files continue to use the built-in review lanes, custom lanes remain disabled by default, and migration uses preview, confirmation, one-time receipt, transactional apply, audit, backup, and rollback controls.
+
+### Faster And Safer Review Remediation
+
+- Added authenticated `REUSE`, `DELTA`, and `FULL` remediation modes. Bounded fixes can receive a focused delta review when the original exhaustive review, scope lineage, policy snapshot, and evidence remain valid; ambiguous, stale, protected, oversized, or dependency-invalidated changes fall back to a full review.
+- Hardened review reuse, dependency ordering, launch receipts, failed-launch recovery, post-review source-mutation detection, evidence-only remediation, and cross-cycle scope binding so stale or unrelated evidence cannot satisfy a current task.
+- Added a controlled correction path for malformed reviewer output, including immutable input/output provenance, isolated retry artifacts, response reconstruction, and fail-closed handling for unsupported or tampered corrections.
+- Added profile-driven follow-up task policies, safer grouped follow-up handling, review-limit enforcement, and more coherent recovery for interrupted, reopened, decomposed, remediated, or already-completed tasks.
+
+### Workflow And Operator Experience
+
+- Added declarative lifecycle-phase and workflow-settings manifests to keep CLI help, runtime routing, configuration, documentation, and UI behavior aligned.
+- Added an authenticated test-first implementation lane for explicitly marked test-only expected failures, followed by the normal refreshed compile, validation, and review cycle after implementation.
+- Improved optional quality-check routing: agents must complete the generated answers before execution, and remediated checks are rerun when their evidence is no longer current.
+- Improved `next-step` diagnostics and routing for dynamic review lanes, remediation, scope recovery, closeout, full-suite retry, and review-skill selection while reducing repeated review-index and workspace reads.
+- Added review-catalog and delta-review controls to the local dashboard, clearer task status markers, and better visibility into profile policies, decomposition, follow-up behavior, review execution modes, and closeout state.
+- `garda uninstall` now preserves `TASK.md` by default. Removing the task queue requires the explicit `--keep-task-file no` override and reports recovery information unless backups are also explicitly skipped.
+
+### Reliability And Compatibility
+
+- Strengthened semantic-cycle rebind and resume transactions, mutation-journal recovery, lifecycle-event reconstruction, full-review reuse, correction rollback, materialized follow-up reconciliation, and frozen-policy handling across configuration drift.
+- Fixed review-catalog transaction cleanup so lock-release failures are reported without throwing from `finally`, while simultaneous operation and cleanup failures retain both causes.
+- Fixed downstream review and rule-pack validation for repositories that keep the task-mode artifact at an explicit non-default path; the supplied path remains constrained to the repository boundary.
+- Added end-to-end coverage for review catalog schema, materialization, CLI and UI management, guarded compatibility migration, dynamic launch order, remediation modes, reports, and legacy workspace behavior.
+- Existing workspaces remain compatible without a mandatory catalog migration. Profiles without an explicit remediation-mode policy remain on conservative full-review behavior until the operator deliberately migrates or configures them.
+
+### Upgrade Notes
+
+- After updating, run `garda review-catalog validate --target-root "."` to inspect the effective built-in and custom review configuration.
+- Use `garda review-catalog migrate --target-root "."` only when you want to preview an explicit normalized catalog for a legacy workspace; the first call is read-only and does not enable custom lanes.
+- Existing active task snapshots are not rewritten by catalog or profile changes. Start a new task cycle to adopt newly configured lanes, dependencies, or remediation policies.
+
 ## 1.3.0
 
 ### Workflow And Reviews

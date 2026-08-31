@@ -337,7 +337,7 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerCleanupCommand);
     });
 
-    it('routes non-timeout failures back to implementation via navigator', () => {
+    it('keeps non-timeout failures in implementation while printing the post-fix full-suite retry', () => {
         const route = resolveNextStepFullSuiteValidationRoute({
             ...BASE_OPTIONS,
             gateStatus: 'FAIL'
@@ -345,7 +345,22 @@ describe('next-step full-suite route helper', () => {
 
         assert.equal(route?.nextGate, 'implementation');
         assert.match(route?.title || '', /Fix full-suite failures/);
-        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+        assert.match(route?.commands[0]?.label || '', /after fixing implementation/);
+    });
+
+    it('prints the post-fix full-suite retry for before-test non-timeout failures', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'before_test_review',
+            gateStatus: 'FAIL',
+            nextReviewType: 'test'
+        });
+
+        assert.equal(route?.nextGate, 'implementation');
+        assert.match(route?.title || '', /before launching test review/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+        assert.match(route?.commands[0]?.label || '', /after fixing implementation/);
     });
 
     it('routes non-timeout failures to full-suite retry when focused transient evidence is present', () => {

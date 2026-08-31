@@ -1180,7 +1180,7 @@ describe('full-suite repair task materialization', () => {
             if (!injected
                 && typeof filePath !== 'number'
                 && path.resolve(String(filePath)) === taskPath
-                && content.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`)) {
+                && content.includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`)) {
                 injected = true;
                 return originalWriteFileSync(
                     filePath,

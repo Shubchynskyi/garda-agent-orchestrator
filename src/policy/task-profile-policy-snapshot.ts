@@ -10,6 +10,14 @@ import {
 } from '../core/review-execution-policy';
 import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 import {
+    normalizeReviewDependencyGraphDeclaration,
+    type ReviewDependencyGraphDeclaration
+} from '../core/review-dependency-graph';
+import {
+    FULL_SUITE_VALIDATION_PLACEMENTS,
+    type FullSuiteValidationPlacement
+} from '../core/workflow-config';
+import {
     applyProfileGuardrails,
     getProfileEntry,
     loadProfilesData,
@@ -17,6 +25,7 @@ import {
     mergeReviewPolicy,
     DEFAULT_REVIEW_FOLLOW_UP_POLICY,
     REVIEW_FINDING_POLICY_PRESETS,
+    resolveReviewFollowUpTaskProfileAssignment,
     resolveConfigPaths,
     type EffectivePolicy,
     type EffectiveReviewPolicy,
@@ -24,8 +33,11 @@ import {
     type ProfileGuardrailOptions,
     type ProfileReviewPolicy,
     type ProfileSkills,
+    type ProfileTaskDecompositionProvenance,
+    type ResolvedProfileTaskDecompositionPolicy,
     type ReviewFindingPolicy,
     type ReviewFollowUpPolicy,
+    type ReviewFollowUpTaskProfileAssignment,
     type ReviewCapabilities,
     type TokenEconomyConfig
 } from './profile-resolver';
@@ -40,11 +52,21 @@ import {
     type ReviewTriggerPolicy
 } from './review-trigger-policy';
 import {
+    buildLegacyReviewFollowUpTaskClosurePolicySnapshot,
+    getReviewFollowUpTaskClosurePolicySnapshotViolations,
+    type ReviewFollowUpTaskClosurePolicySnapshot
+} from '../core/review-follow-up-task-closure-policy';
+import {
     buildDefaultReviewRemediationRerunPolicy,
     getReviewRemediationRerunPolicyViolations,
     resolveReviewRemediationRerunPolicyFromSnapshot,
     type ReviewRemediationRerunPolicy
 } from './review-remediation-rerun-policy';
+import {
+    getReviewRemediationModePolicyViolations,
+    resolveReviewRemediationModePolicyFromSnapshot,
+    type ReviewRemediationModePolicy
+} from './review-remediation-mode-policy';
 
 export const TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
@@ -84,6 +106,18 @@ export interface TaskProfilePolicySnapshotReviewExecutionPolicy {
     mode: EffectiveReviewExecutionPolicyMode;
     configured: boolean;
     visible_summary_line: string;
+    review_dependency_graph?: ReviewDependencyGraphDeclaration | null;
+    full_suite_validation?: {
+        enabled: boolean;
+        placement: FullSuiteValidationPlacement;
+    };
+}
+
+export interface TaskProfileTaskDecompositionSnapshot {
+    enabled: boolean;
+    configured: boolean;
+    provenance: ProfileTaskDecompositionProvenance;
+    diagnostics: string[];
 }
 
 export interface TaskProfilePolicySnapshot {
@@ -91,14 +125,19 @@ export interface TaskProfilePolicySnapshot {
     lock_timestamp_utc: string;
     source: TaskProfileSelectionSummary;
     depth: number;
+    task_decomposition?: TaskProfileTaskDecompositionSnapshot;
     review_lane_selection: TaskProfilePolicySnapshotReviewLaneSelection;
     review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_diagnostics: string[];
     review_follow_up_policy?: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics?: string[];
+    review_follow_up_task_profile_assignment?: ReviewFollowUpTaskProfileAssignment;
+    review_follow_up_task_closure_policy?: ReviewFollowUpTaskClosurePolicySnapshot;
     review_remediation_rerun_policy?: ReviewRemediationRerunPolicy;
     review_remediation_rerun_policy_diagnostics?: string[];
+    review_remediation_mode_policy?: ReviewRemediationModePolicy;
+    review_remediation_mode_policy_diagnostics?: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     token_economy: TokenEconomyConfig;
@@ -117,7 +156,10 @@ export interface TaskProfilePolicySnapshot {
 export interface BuildTaskProfilePolicySnapshotOptions {
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
     reviewExecutionPolicyConfigured: boolean;
+    fullSuiteValidationEnabled?: boolean;
+    fullSuiteValidationPlacement?: FullSuiteValidationPlacement;
     lockTimestampUtc?: string;
+    reviewFollowUpTaskClosurePolicy?: ReviewFollowUpTaskClosurePolicySnapshot;
 }
 
 export interface TaskProfilePolicySnapshotValidationResult {
@@ -130,6 +172,7 @@ export interface TaskProfilePolicySnapshotSummary {
     schema_version: typeof TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION;
     lock_timestamp_utc: string;
     source: TaskProfileSelectionSummary;
+    task_decomposition: TaskProfileTaskDecompositionSnapshot;
     review_lane_selection: {
         effective_review_policy: EffectiveReviewPolicy;
         safety_floors_applied: string[];
@@ -139,8 +182,13 @@ export interface TaskProfilePolicySnapshotSummary {
     review_finding_policy_diagnostics: string[];
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
+    review_follow_up_task_profile_assignment: ReviewFollowUpTaskProfileAssignment;
+    review_follow_up_task_closure_policy: ReviewFollowUpTaskClosurePolicySnapshot;
     review_remediation_rerun_policy: ReviewRemediationRerunPolicy;
     review_remediation_rerun_policy_diagnostics: string[];
+    review_remediation_mode_policy: ReviewRemediationModePolicy;
+    review_remediation_mode_policy_diagnostics: string[];
+    review_remediation_mode_policy_legacy_fallback: boolean;
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     review_trigger_policy: ReviewTriggerPolicy;
@@ -166,7 +214,6 @@ const LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC =
     'Legacy task profile policy snapshot missing review_finding_policy; resolved fail-closed to strict.';
 const REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC =
     'Snapshotted baseline-bound remediation rerun policy with deterministic affected-review lane selection.';
-
 const DEFAULT_REMEDIATION_POLICY = {
     schema_version: 1,
     policy_id: 'current_cycle_review_remediation_v1',
@@ -205,6 +252,16 @@ const REVIEW_FINDING_POLICY_KEYS = [
 const REVIEW_FINDING_POLICY_IDS = ['soft', 'balanced', 'strict', 'custom'] as const;
 const REVIEW_FINDING_POLICY_ACTIONS = ['fix_now', 'create_follow_up', 'ignore'] as const;
 const REVIEW_FOLLOW_UP_MATERIALIZATION_MODES = ['per_finding', 'grouped_by_parent'] as const;
+const TASK_DECOMPOSITION_PROVENANCE_VALUES = [
+    'explicit_profile_config',
+    'legacy_strict_compatibility',
+    'legacy_balanced_default',
+    'legacy_disabled_default',
+    'legacy_snapshot_strict_compatibility',
+    'legacy_snapshot_balanced_default',
+    'legacy_snapshot_disabled_default'
+] as const satisfies readonly ProfileTaskDecompositionProvenance[];
+const TASK_DECOMPOSITION_KEYS = ['enabled', 'configured', 'provenance', 'diagnostics'] as const;
 const ACTIVE_FINDING_DISPOSITIONS = ['block_until_resolved', 'create_follow_up', 'ignore'] as const;
 const RESIDUAL_RISK_DISPOSITIONS = ['block_unless_deferred_with_justification', 'create_follow_up', 'ignore'] as const;
 
@@ -219,6 +276,12 @@ const REVIEW_EXECUTION_POLICY_KEYS = [
     'mode',
     'configured',
     'visible_summary_line'
+] as const;
+
+const CURRENT_REVIEW_EXECUTION_POLICY_KEYS = [
+    ...REVIEW_EXECUTION_POLICY_KEYS,
+    'review_dependency_graph',
+    'full_suite_validation'
 ] as const;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -415,6 +478,13 @@ function validateReviewLaneSelectionConsistency(
         reviewCapabilities as unknown as ReviewCapabilities,
         true
     );
+    for (const reviewType of Object.keys(recomputed.merged)) {
+        if (!(REVIEW_CAPABILITY_KEYS as readonly string[]).includes(reviewType)) {
+            // Custom catalog lanes remain compatibility-inactive in task mode;
+            // their task/scope selection is resolved and frozen by preflight.
+            recomputed.merged[reviewType] = false;
+        }
+    }
     const expectedEffectiveReviewPolicy = normalizeEffectiveReviewPolicyForSnapshot(recomputed.merged);
     const reviewKeys = new Set([
         ...Object.keys(expectedEffectiveReviewPolicy),
@@ -451,6 +521,29 @@ function validateStringArray(value: unknown, pathLabel: string, violations: stri
             violations.push(`Task profile policy snapshot ${pathLabel}[${index}] must be a string.`);
         }
     }
+}
+
+function validateTaskDecompositionSnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot task_decomposition must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, TASK_DECOMPOSITION_KEYS, 'task_decomposition', violations);
+    if (typeof value.enabled !== 'boolean') {
+        violations.push('Task profile policy snapshot task_decomposition.enabled must be boolean.');
+    }
+    if (typeof value.configured !== 'boolean') {
+        violations.push('Task profile policy snapshot task_decomposition.configured must be boolean.');
+    }
+    if (
+        typeof value.provenance !== 'string'
+        || !(TASK_DECOMPOSITION_PROVENANCE_VALUES as readonly string[]).includes(value.provenance)
+    ) {
+        violations.push(
+            `Task profile policy snapshot task_decomposition.provenance must be one of ${TASK_DECOMPOSITION_PROVENANCE_VALUES.join(', ')}.`
+        );
+    }
+    validateStringArray(value.diagnostics, 'task_decomposition.diagnostics', violations);
 }
 
 function validateReviewLaneSelectionSnapshot(value: unknown, violations: string[]): void {
@@ -493,7 +586,14 @@ function validateReviewExecutionPolicySnapshot(value: unknown, violations: strin
         violations.push('Task profile policy snapshot review_execution_policy must be a JSON object.');
         return;
     }
-    validateExactKeys(value, REVIEW_EXECUTION_POLICY_KEYS, 'review_execution_policy', violations);
+    const hasCurrentGraphContract = Object.prototype.hasOwnProperty.call(value, 'review_dependency_graph')
+        || Object.prototype.hasOwnProperty.call(value, 'full_suite_validation');
+    validateExactKeys(
+        value,
+        hasCurrentGraphContract ? CURRENT_REVIEW_EXECUTION_POLICY_KEYS : REVIEW_EXECUTION_POLICY_KEYS,
+        'review_execution_policy',
+        violations
+    );
     if (!isReviewExecutionPolicyMode(value.mode)) {
         violations.push(
             `Task profile policy snapshot review_execution_policy.mode must be one of ${[
@@ -514,6 +614,40 @@ function validateReviewExecutionPolicySnapshot(value: unknown, violations: strin
             'review_execution_policy.visible_summary_line',
             violations
         );
+    }
+    if (hasCurrentGraphContract) {
+        if (value.review_dependency_graph !== null) {
+            try {
+                normalizeReviewDependencyGraphDeclaration(
+                    value.review_dependency_graph,
+                    'review_execution_policy.review_dependency_graph'
+                );
+            } catch (error) {
+                violations.push(error instanceof Error ? error.message : String(error));
+            }
+        }
+        if (!isPlainRecord(value.full_suite_validation)) {
+            violations.push('Task profile policy snapshot review_execution_policy.full_suite_validation must be a JSON object.');
+        } else {
+            validateExactKeys(
+                value.full_suite_validation,
+                ['enabled', 'placement'],
+                'review_execution_policy.full_suite_validation',
+                violations
+            );
+            if (typeof value.full_suite_validation.enabled !== 'boolean') {
+                violations.push(
+                    'Task profile policy snapshot review_execution_policy.full_suite_validation.enabled must be boolean.'
+                );
+            }
+            if (!FULL_SUITE_VALIDATION_PLACEMENTS.includes(
+                value.full_suite_validation.placement as FullSuiteValidationPlacement
+            )) {
+                violations.push(
+                    'Task profile policy snapshot review_execution_policy.full_suite_validation.placement is invalid.'
+                );
+            }
+        }
     }
 }
 
@@ -818,6 +952,33 @@ function resolveSnapshotReviewFindingPolicy(snapshot: TaskProfilePolicySnapshot)
     };
 }
 
+export function resolveTaskProfileTaskDecompositionPolicy(
+    snapshot: TaskProfilePolicySnapshot
+): ResolvedProfileTaskDecompositionPolicy {
+    if (snapshot.task_decomposition) {
+        return {
+            ...snapshot.task_decomposition,
+            diagnostics: [...snapshot.task_decomposition.diagnostics],
+            valid: true
+        };
+    }
+    const normalizedProfile = snapshot.source.effective_profile.trim().toLowerCase();
+    const enabledByDefault = normalizedProfile === 'strict' || normalizedProfile === 'balanced';
+    return {
+        enabled: enabledByDefault,
+        configured: false,
+        provenance: normalizedProfile === 'strict'
+            ? 'legacy_snapshot_strict_compatibility'
+            : normalizedProfile === 'balanced'
+                ? 'legacy_snapshot_balanced_default'
+                : 'legacy_snapshot_disabled_default',
+        diagnostics: [enabledByDefault
+            ? 'Legacy task profile policy snapshot is missing task_decomposition; defaulted guarded decomposition to enabled for this profile.'
+            : 'Legacy task profile policy snapshot is missing task_decomposition; defaulted guarded task decomposition to disabled.'],
+        valid: true
+    };
+}
+
 function resolveSnapshotReviewFindingPolicyDiagnostics(snapshot: TaskProfilePolicySnapshot): string[] {
     if (isLegacyStrictReviewFindingPolicySnapshot(snapshot as unknown as Record<string, unknown>)) {
         return [LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC];
@@ -828,9 +989,17 @@ function resolveSnapshotReviewFindingPolicyDiagnostics(snapshot: TaskProfilePoli
 function resolveSnapshotReviewFollowUpPolicy(snapshot: TaskProfilePolicySnapshot): ReviewFollowUpPolicy {
     const policy = snapshot.review_follow_up_policy;
     if (!policy) {
-        return { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY };
+        return {
+            ...DEFAULT_REVIEW_FOLLOW_UP_POLICY,
+            task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
+        };
     }
-    return { ...policy };
+    return {
+        ...policy,
+        task_profile: policy.task_profile
+            ? { ...policy.task_profile }
+            : { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
+    };
 }
 
 function resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot: TaskProfilePolicySnapshot): string[] {
@@ -847,16 +1016,106 @@ function resolveSnapshotReviewRemediationRerunPolicyDiagnostics(snapshot: TaskPr
     return resolveReviewRemediationRerunPolicyFromSnapshot(snapshot).diagnostics;
 }
 
+export function resolveTaskProfileReviewRemediationModePolicy(
+    snapshot: TaskProfilePolicySnapshot
+): ReturnType<typeof resolveReviewRemediationModePolicyFromSnapshot> {
+    return resolveReviewRemediationModePolicyFromSnapshot(snapshot);
+}
+
 function validateReviewFollowUpPolicySnapshot(value: unknown, violations: string[]): void {
     if (!isPlainRecord(value)) {
         violations.push('Task profile policy snapshot review_follow_up_policy must be a JSON object.');
         return;
     }
-    validateExactKeys(value, ['schema_version', 'materialization_mode'], 'review_follow_up_policy', violations);
+    for (const requiredKey of ['schema_version', 'materialization_mode']) {
+        if (!Object.prototype.hasOwnProperty.call(value, requiredKey)) {
+            violations.push(`Task profile policy snapshot review_follow_up_policy.${requiredKey} is required.`);
+        }
+    }
+    for (const key of Object.keys(value)) {
+        if (!['schema_version', 'materialization_mode', 'task_profile'].includes(key)) {
+            violations.push(
+                `Task profile policy snapshot review_follow_up_policy.${key} is not allowed by schema version 1.`
+            );
+        }
+    }
     validateLiteral(value.schema_version, 1, 'review_follow_up_policy.schema_version', violations);
     if (!REVIEW_FOLLOW_UP_MATERIALIZATION_MODES.includes(value.materialization_mode as typeof REVIEW_FOLLOW_UP_MATERIALIZATION_MODES[number])) {
         violations.push('Task profile policy snapshot review_follow_up_policy.materialization_mode must be one of per_finding, grouped_by_parent.');
     }
+    if (value.task_profile !== undefined) {
+        if (!isPlainRecord(value.task_profile)) {
+            violations.push('Task profile policy snapshot review_follow_up_policy.task_profile must be a JSON object.');
+        } else {
+            validateExactKeys(
+                value.task_profile,
+                ['mode', 'fixed_profile'],
+                'review_follow_up_policy.task_profile',
+                violations
+            );
+            if (!['one_level_lighter', 'inherit_parent', 'fixed_profile'].includes(String(value.task_profile.mode || ''))) {
+                violations.push(
+                    'Task profile policy snapshot review_follow_up_policy.task_profile.mode must be one of ' +
+                    'one_level_lighter, inherit_parent, fixed_profile.'
+                );
+            }
+            const fixedProfile = value.task_profile.fixed_profile;
+            if (value.task_profile.mode === 'fixed_profile' && (typeof fixedProfile !== 'string' || !fixedProfile.trim())) {
+                violations.push(
+                    'Task profile policy snapshot review_follow_up_policy.task_profile.fixed_profile is required for fixed_profile mode.'
+                );
+            }
+            if (value.task_profile.mode !== 'fixed_profile' && fixedProfile !== null) {
+                violations.push(
+                    'Task profile policy snapshot review_follow_up_policy.task_profile.fixed_profile must be null unless mode is fixed_profile.'
+                );
+            }
+        }
+    }
+}
+
+function validateReviewFollowUpTaskProfileAssignment(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_follow_up_task_profile_assignment must be a JSON object.');
+        return;
+    }
+    validateExactKeys(
+        value,
+        ['parent_profile', 'profile', 'source', 'configured_mode', 'diagnostics'],
+        'review_follow_up_task_profile_assignment',
+        violations
+    );
+    for (const key of ['parent_profile', 'profile'] as const) {
+        if (typeof value[key] !== 'string' || !value[key].trim()) {
+            violations.push(`Task profile policy snapshot review_follow_up_task_profile_assignment.${key} must be non-empty.`);
+        }
+    }
+    if (!['one_level_lighter', 'inherit_parent', 'fixed_profile', 'safe_inherit_parent'].includes(String(value.source || ''))) {
+        violations.push('Task profile policy snapshot review_follow_up_task_profile_assignment.source is invalid.');
+    }
+    if (!['one_level_lighter', 'inherit_parent', 'fixed_profile'].includes(String(value.configured_mode || ''))) {
+        violations.push('Task profile policy snapshot review_follow_up_task_profile_assignment.configured_mode is invalid.');
+    }
+    validateStringArray(value.diagnostics, 'review_follow_up_task_profile_assignment.diagnostics', violations);
+}
+
+export function resolveSnapshotReviewFollowUpTaskProfileAssignment(
+    snapshot: TaskProfilePolicySnapshot
+): ReviewFollowUpTaskProfileAssignment {
+    if (snapshot.review_follow_up_task_profile_assignment) {
+        return {
+            ...snapshot.review_follow_up_task_profile_assignment,
+            diagnostics: [...snapshot.review_follow_up_task_profile_assignment.diagnostics]
+        };
+    }
+    const parentProfile = snapshot.source.effective_profile;
+    return {
+        parent_profile: parentProfile,
+        profile: parentProfile,
+        source: 'safe_inherit_parent',
+        configured_mode: 'inherit_parent',
+        diagnostics: ['Legacy task profile snapshot inherited the parent profile for follow-up tasks.']
+    };
 }
 
 function resolveSnapshotFindingPolicy(snapshot: TaskProfilePolicySnapshot): TaskProfileFindingPolicySnapshot {
@@ -909,11 +1168,26 @@ export function buildTaskProfilePolicySnapshot(
     );
     const configHashes = computeConfigHashes(bundleRoot, resolvedProfile.effective_policy.resolution_sources);
     const configHash = canonicalJsonSha256(configHashes);
+    const followUpTaskProfileAssignment = resolveReviewFollowUpTaskProfileAssignment(
+        resolvedProfile.effective_policy.review_follow_up_policy,
+        resolvedProfile.selection.effective_profile,
+        [
+            ...Object.keys(profilesData.built_in_profiles),
+            ...Object.keys(profilesData.user_profiles)
+        ]
+    );
+    const remediationModePolicy = resolvedProfile.effective_policy.review_remediation_mode_policy;
     const body: Omit<TaskProfilePolicySnapshot, 'snapshot_hash'> = {
         schema_version: TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION,
         lock_timestamp_utc: options.lockTimestampUtc || new Date().toISOString(),
         source: resolvedProfile.selection,
         depth: resolvedProfile.effective_policy.depth,
+        task_decomposition: {
+            enabled: resolvedProfile.effective_policy.task_decomposition.enabled,
+            configured: resolvedProfile.effective_policy.task_decomposition.configured,
+            provenance: resolvedProfile.effective_policy.task_decomposition.provenance,
+            diagnostics: [...resolvedProfile.effective_policy.task_decomposition.diagnostics]
+        },
         review_lane_selection: {
             profile_review_policy: normalizedProfileReviewPolicy,
             review_capabilities: reviewCapabilities,
@@ -923,17 +1197,41 @@ export function buildTaskProfilePolicySnapshot(
         review_execution_policy: {
             mode: options.reviewExecutionPolicyMode,
             configured: options.reviewExecutionPolicyConfigured,
-            visible_summary_line: buildReviewExecutionPolicySummaryLine(options.reviewExecutionPolicyMode)
+            visible_summary_line: buildReviewExecutionPolicySummaryLine(options.reviewExecutionPolicyMode),
+            review_dependency_graph: profileEntry.review_dependency_graph === undefined
+                ? null
+                : normalizeReviewDependencyGraphDeclaration(
+                    profileEntry.review_dependency_graph,
+                    `profiles.${resolvedProfile.selection.effective_profile}.review_dependency_graph`
+                ),
+            full_suite_validation: {
+                enabled: options.fullSuiteValidationEnabled === true,
+                placement: options.fullSuiteValidationPlacement || 'after_compile_before_reviews'
+            }
         },
         review_finding_policy: {
             ...resolvedProfile.effective_policy.review_finding_policy,
             findings: { ...resolvedProfile.effective_policy.review_finding_policy.findings }
         },
         review_finding_policy_diagnostics: [...resolvedProfile.effective_policy.review_finding_policy_diagnostics],
-        review_follow_up_policy: { ...resolvedProfile.effective_policy.review_follow_up_policy },
+        review_follow_up_policy: {
+            ...resolvedProfile.effective_policy.review_follow_up_policy,
+            task_profile: { ...resolvedProfile.effective_policy.review_follow_up_policy.task_profile }
+        },
         review_follow_up_policy_diagnostics: [...resolvedProfile.effective_policy.review_follow_up_policy_diagnostics],
+        review_follow_up_task_profile_assignment: followUpTaskProfileAssignment,
+        ...(options.reviewFollowUpTaskClosurePolicy ? {
+            review_follow_up_task_closure_policy: {
+                ...options.reviewFollowUpTaskClosurePolicy,
+                diagnostics: [...options.reviewFollowUpTaskClosurePolicy.diagnostics]
+            }
+        } : {}),
         review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
         review_remediation_rerun_policy_diagnostics: [REVIEW_REMEDIATION_RERUN_POLICY_DIAGNOSTIC],
+        ...(remediationModePolicy.legacy_fallback ? {} : {
+            review_remediation_mode_policy: remediationModePolicy.policy,
+            review_remediation_mode_policy_diagnostics: [...remediationModePolicy.diagnostics]
+        }),
         finding_policy: buildTaskProfileFindingPolicySnapshot(resolvedProfile.effective_policy.review_finding_policy),
         remediation_policy: { ...DEFAULT_REMEDIATION_POLICY },
         token_economy: resolvedProfile.effective_policy.token_economy,
@@ -987,6 +1285,9 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
     if (!isPlainRecord(value.source)) {
         violations.push('Task profile policy snapshot source must be a JSON object.');
     }
+    if (value.task_decomposition !== undefined) {
+        validateTaskDecompositionSnapshot(value.task_decomposition, violations);
+    }
     validateReviewLaneSelectionSnapshot(value.review_lane_selection, violations);
     validateReviewExecutionPolicySnapshot(value.review_execution_policy, violations);
     if (legacyStrictReviewFindingPolicySnapshot) {
@@ -1000,6 +1301,14 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
         validateReviewFollowUpPolicySnapshot(value.review_follow_up_policy, violations);
         validateStringArray(value.review_follow_up_policy_diagnostics, 'review_follow_up_policy_diagnostics', violations);
     }
+    if (value.review_follow_up_task_profile_assignment !== undefined) {
+        validateReviewFollowUpTaskProfileAssignment(value.review_follow_up_task_profile_assignment, violations);
+    }
+    if (value.review_follow_up_task_closure_policy !== undefined) {
+        violations.push(...getReviewFollowUpTaskClosurePolicySnapshotViolations(
+            value.review_follow_up_task_closure_policy
+        ).map((violation) => `Task profile policy snapshot ${violation}`));
+    }
     if (
         value.review_remediation_rerun_policy !== undefined
         || value.review_remediation_rerun_policy_diagnostics !== undefined
@@ -1010,6 +1319,19 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
         validateStringArray(
             value.review_remediation_rerun_policy_diagnostics,
             'review_remediation_rerun_policy_diagnostics',
+            violations
+        );
+    }
+    if (
+        value.review_remediation_mode_policy !== undefined
+        || value.review_remediation_mode_policy_diagnostics !== undefined
+    ) {
+        violations.push(...getReviewRemediationModePolicyViolations(
+            value.review_remediation_mode_policy
+        ).map((violation) => `Task profile policy snapshot ${violation}`));
+        validateStringArray(
+            value.review_remediation_mode_policy_diagnostics,
+            'review_remediation_mode_policy_diagnostics',
             violations
         );
     }
@@ -1098,11 +1420,13 @@ export function resolveTaskProfileSelectionFromSnapshot(
             profile_name: snapshot.source.effective_profile,
             profile_source: snapshot.source.effective_profile_source,
             depth: snapshot.depth,
+            task_decomposition: resolveTaskProfileTaskDecompositionPolicy(snapshot),
             review_policy: reviewPolicy,
             review_finding_policy: reviewFindingPolicy,
             review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
             review_follow_up_policy: resolveSnapshotReviewFollowUpPolicy(snapshot),
             review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
+            review_remediation_mode_policy: resolveTaskProfileReviewRemediationModePolicy(snapshot),
             token_economy: snapshot.token_economy,
             skills: snapshot.skills,
             installed_packs: snapshot.installed_packs,
@@ -1127,10 +1451,12 @@ export function resolveTaskProfileSelectionFromSnapshot(
 export function summarizeTaskProfilePolicySnapshot(
     snapshot: TaskProfilePolicySnapshot
 ): TaskProfilePolicySnapshotSummary {
+    const remediationModePolicy = resolveTaskProfileReviewRemediationModePolicy(snapshot);
     return {
         schema_version: snapshot.schema_version,
         lock_timestamp_utc: snapshot.lock_timestamp_utc,
         source: snapshot.source,
+        task_decomposition: resolveTaskProfileTaskDecompositionPolicy(snapshot),
         review_lane_selection: {
             effective_review_policy: snapshot.review_lane_selection.effective_review_policy,
             safety_floors_applied: snapshot.review_lane_selection.safety_floors_applied
@@ -1140,9 +1466,21 @@ export function summarizeTaskProfilePolicySnapshot(
         review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
         review_follow_up_policy: resolveSnapshotReviewFollowUpPolicy(snapshot),
         review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
+        review_follow_up_task_profile_assignment: resolveSnapshotReviewFollowUpTaskProfileAssignment(snapshot),
+        review_follow_up_task_closure_policy: snapshot.review_follow_up_task_closure_policy
+            ? {
+                ...snapshot.review_follow_up_task_closure_policy,
+                diagnostics: [...snapshot.review_follow_up_task_closure_policy.diagnostics]
+            }
+            : buildLegacyReviewFollowUpTaskClosurePolicySnapshot(),
         review_remediation_rerun_policy: resolveSnapshotReviewRemediationRerunPolicy(snapshot),
         review_remediation_rerun_policy_diagnostics:
             resolveSnapshotReviewRemediationRerunPolicyDiagnostics(snapshot),
+        review_remediation_mode_policy:
+            remediationModePolicy.policy,
+        review_remediation_mode_policy_diagnostics:
+            remediationModePolicy.diagnostics,
+        review_remediation_mode_policy_legacy_fallback: remediationModePolicy.legacy_fallback,
         finding_policy: resolveSnapshotFindingPolicy(snapshot),
         remediation_policy: snapshot.remediation_policy,
         review_trigger_policy: resolveTaskProfileReviewTriggerPolicy(snapshot),

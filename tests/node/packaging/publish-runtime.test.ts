@@ -7,6 +7,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
+import {
+    extractManagedBlockFromContent,
+    getTaskQueueRowsFromManagedBlock,
+    MANAGED_END,
+    MANAGED_START,
+    setTaskQueueRowsInManagedBlock
+} from '../../../src/materialization/content-builders';
 
 const requireFromTest = createRequire(__filename);
 
@@ -135,6 +142,7 @@ test('published runtime works when the package is executed from node_modules', (
             'review-remediation-baseline.js',
             'review-remediation-delta-contract.js',
             'review-remediation-delta.js',
+            'review-remediation-readable-diff.js',
             'review-remediation-validation-evidence.js',
             'review-remediation-recovery-routing.js'
         ];
@@ -245,7 +253,7 @@ test('published runtime works when the package is executed from node_modules', (
     }
 });
 
-test('published runtime setup stays in agent handoff state and uninstall restores legacy files', () => {
+test('published runtime prevents stale init backup from replacing the operator task queue across ordinary uninstall and reinstall', () => {
     const repoRoot = getRepoRoot();
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-publish-lifecycle-'));
     const fixtureRoot = path.join(tempRoot, 'package-fixture');
@@ -262,6 +270,24 @@ test('published runtime setup stays in agent handoff state and uninstall restore
         }, null, 2)]
     ]);
 
+    const setupArguments = [
+        'setup',
+        '--target-root', workspaceRoot,
+        '--no-prompt',
+        '--assistant-language', 'English',
+        '--assistant-brevity', 'concise',
+        '--source-of-truth', 'Codex',
+        '--enforce-no-auto-commit', 'false',
+        '--claude-orchestrator-full-access', 'false',
+        '--token-economy-enabled', 'true'
+    ];
+    const operatorRows = [
+        '| T-401 | 🟨 IN_PROGRESS | P0 | reliability/queue | Preserve operator order | codex | 2026-08-06 | strict | First note stays byte-stable. |',
+        '| T-402-F1 | 🟦 TODO | P2 | review/follow-up | Keep follow-up status | codex | 2026-08-06 | balanced | Notes include commas, hashes, and `inline code`. |',
+        '| T-403 | 🟩 DONE | P3 | docs | Preserve completed row | codex | 2026-08-05 | docs-only | Final row remains last. |'
+    ];
+    const operatorSuffix = '\n\n### Operator-owned suffix\n\nKeep this text outside the managed block.\n';
+
     try {
         copyBuildFixture(repoRoot, fixtureRoot);
         buildPublishRuntimeInRepo(fixtureRoot);
@@ -273,18 +299,7 @@ test('published runtime setup stays in agent handoff state and uninstall restore
 
         const setupResult = childProcess.spawnSync(
             process.execPath,
-            [
-                path.join(packageRoot, 'bin', 'garda.js'),
-                'setup',
-                '--target-root', workspaceRoot,
-                '--no-prompt',
-                '--assistant-language', 'English',
-                '--assistant-brevity', 'concise',
-                '--source-of-truth', 'Codex',
-                '--enforce-no-auto-commit', 'false',
-                '--claude-orchestrator-full-access', 'false',
-                '--token-economy-enabled', 'true'
-            ],
+            [path.join(packageRoot, 'bin', 'garda.js'), ...setupArguments],
             {
                 cwd: workspaceRoot,
                 encoding: 'utf8',
@@ -306,6 +321,20 @@ test('published runtime setup stays in agent handoff state and uninstall restore
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'AGENTS.md')));
         assert.ok(!fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
 
+        const taskPath = path.join(workspaceRoot, 'TASK.md');
+        const installedTaskContent = fs.readFileSync(taskPath, 'utf8');
+        const installedManagedBlock = extractManagedBlockFromContent(
+            installedTaskContent,
+            MANAGED_START,
+            MANAGED_END
+        );
+        assert.ok(installedManagedBlock, 'setup must materialize a managed TASK.md block');
+        const operatorManagedBlock = setTaskQueueRowsInManagedBlock(installedManagedBlock, operatorRows);
+        const originalOperatorRows = getTaskQueueRowsFromManagedBlock(operatorManagedBlock);
+        const operatorTaskContent = installedTaskContent.replace(installedManagedBlock, operatorManagedBlock)
+            .replace(/\s*$/, '') + operatorSuffix;
+        fs.writeFileSync(taskPath, operatorTaskContent, 'utf8');
+
         const uninstallResult = childProcess.spawnSync(
             process.execPath,
             [path.join(packageRoot, 'bin', 'garda.js'), 'uninstall', '--target-root', workspaceRoot],
@@ -318,6 +347,13 @@ test('published runtime setup stays in agent handoff state and uninstall restore
 
         assert.equal(uninstallResult.status, 0, uninstallResult.stderr || uninstallResult.stdout);
         assert.ok(!fs.existsSync(path.join(workspaceRoot, 'garda-agent-orchestrator')));
+        assert.match(uninstallResult.stdout, /TaskFileDecision: PRESERVE_DEFAULT/);
+        assert.match(uninstallResult.stdout, /TaskFileRecoveryPath: <none>/);
+        assert.equal(
+            fs.readFileSync(taskPath, 'utf8'),
+            operatorTaskContent,
+            'ordinary uninstall must preserve the current queue byte-for-byte'
+        );
 
         // .agents/ router directory must be removed when only orchestrator-managed content remained
         assert.ok(!fs.existsSync(path.join(workspaceRoot, '.agents')),
@@ -341,10 +377,54 @@ test('published runtime setup stays in agent handoff state and uninstall restore
                     'Redundant wildcard entry must not be present');
                 assert.ok(restoredContent.includes('# Backup artifacts created by Garda Agent Orchestrator uninstall'),
                     'Explanatory comment for uninstall backups must be present');
-            } else {
+            } else if (relativePath !== 'TASK.md') {
                 assert.equal(fs.readFileSync(restoredPath, 'utf8'), originalContent);
             }
         }
+
+        const reinstallResult = childProcess.spawnSync(
+            process.execPath,
+            [path.join(packageRoot, 'bin', 'garda.js'), ...setupArguments],
+            {
+                cwd: workspaceRoot,
+                encoding: 'utf8',
+                env: buildPackagingEnv()
+            }
+        );
+
+        assert.equal(reinstallResult.status, 0, reinstallResult.stderr || reinstallResult.stdout);
+        const reinstalledTaskContent = fs.readFileSync(taskPath, 'utf8');
+        const reinstalledManagedBlock = extractManagedBlockFromContent(
+            reinstalledTaskContent,
+            MANAGED_START,
+            MANAGED_END
+        );
+        assert.deepEqual(
+            getTaskQueueRowsFromManagedBlock(reinstalledManagedBlock),
+            originalOperatorRows,
+            'reinstall must retain queue rows byte-for-byte, including order, statuses, profiles, and notes'
+        );
+        assert.ok(reinstalledTaskContent.endsWith(operatorSuffix));
+
+        const installBackupsRoot = path.join(
+            workspaceRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'backups'
+        );
+        const installBackupDirectories = fs.readdirSync(installBackupsRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => path.join(installBackupsRoot, entry.name))
+            .sort();
+        const taskBackupPath = installBackupDirectories
+            .map((backupRoot) => path.join(backupRoot, 'TASK.md'))
+            .find((candidate) => fs.existsSync(candidate));
+        assert.ok(taskBackupPath, 'reinstall must create an install-time TASK.md backup');
+        assert.equal(
+            fs.readFileSync(taskBackupPath, 'utf8'),
+            operatorTaskContent,
+            'install backup must capture the preserved queue before reinstall materialization'
+        );
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

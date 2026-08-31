@@ -5,10 +5,32 @@ import {
     readReviewCapabilitiesConfigFile,
     type ReviewCapabilitiesConfigMap
 } from '../core/review-capabilities';
+import { readReviewCatalogConfigFile } from '../core/review-catalog';
+import type { ReviewDependencyGraphDeclaration } from '../core/review-dependency-graph';
+import {
+    resolveProfileReviewCatalogPolicy,
+    type ResolvedProfileReviewCatalogPolicy
+} from './profile-review-catalog-policy';
 import {
     loadReviewTriggerPolicy,
     type ReviewTriggerPolicy
 } from './review-trigger-policy';
+import {
+    resolveReviewRemediationModePolicyFromProfile,
+    type ReviewRemediationModePolicy,
+    type ReviewRemediationModePolicyResolution
+} from './review-remediation-mode-policy';
+
+export {
+    analyzeProfileReviewCatalogPolicy,
+    resolveProfileReviewCatalogPolicy
+} from './profile-review-catalog-policy';
+export type {
+    ProfileReviewCatalogLane,
+    ProfileReviewCatalogPolicyAnalysis,
+    ProfileReviewCatalogState,
+    ResolvedProfileReviewCatalogPolicy
+} from './profile-review-catalog-policy';
 
 export interface ProfileReviewPolicy {
     code: boolean | 'auto';
@@ -29,6 +51,27 @@ export interface ProfileTokenEconomy {
 export interface ProfileSkills {
     auto_suggest: boolean;
     [key: string]: boolean;
+}
+
+export interface ProfileTaskDecompositionConfig {
+    enabled: boolean;
+}
+
+export type ProfileTaskDecompositionProvenance =
+    | 'explicit_profile_config'
+    | 'legacy_strict_compatibility'
+    | 'legacy_balanced_default'
+    | 'legacy_disabled_default'
+    | 'legacy_snapshot_strict_compatibility'
+    | 'legacy_snapshot_balanced_default'
+    | 'legacy_snapshot_disabled_default';
+
+export interface ResolvedProfileTaskDecompositionPolicy {
+    enabled: boolean;
+    configured: boolean;
+    provenance: ProfileTaskDecompositionProvenance;
+    diagnostics: string[];
+    valid: boolean;
 }
 
 export type ReviewFindingDispositionAction = 'fix_now' | 'create_follow_up' | 'ignore';
@@ -54,10 +97,17 @@ export interface ReviewFindingPolicyResolution {
 }
 
 export type ReviewFollowUpMaterializationMode = 'per_finding' | 'grouped_by_parent';
+export type ReviewFollowUpTaskProfileMode = 'one_level_lighter' | 'inherit_parent' | 'fixed_profile';
+
+export interface ReviewFollowUpTaskProfilePolicy {
+    mode: ReviewFollowUpTaskProfileMode;
+    fixed_profile: string | null;
+}
 
 export interface ReviewFollowUpPolicy {
     schema_version: 1;
     materialization_mode: ReviewFollowUpMaterializationMode;
+    task_profile: ReviewFollowUpTaskProfilePolicy;
 }
 
 export interface ReviewFollowUpPolicyResolution {
@@ -65,12 +115,29 @@ export interface ReviewFollowUpPolicyResolution {
     diagnostics: string[];
 }
 
+export type ReviewFollowUpTaskProfileAssignmentSource =
+    | 'one_level_lighter'
+    | 'inherit_parent'
+    | 'fixed_profile'
+    | 'safe_inherit_parent';
+
+export interface ReviewFollowUpTaskProfileAssignment {
+    parent_profile: string;
+    profile: string;
+    source: ReviewFollowUpTaskProfileAssignmentSource;
+    configured_mode: ReviewFollowUpTaskProfileMode;
+    diagnostics: string[];
+}
+
 export interface ProfileEntry {
     description: string;
     depth: number;
+    task_decomposition?: ProfileTaskDecompositionConfig;
     review_policy: ProfileReviewPolicy;
     review_finding_policy?: ReviewFindingPolicy;
     review_follow_up_policy?: ReviewFollowUpPolicy;
+    review_remediation_mode_policy?: ReviewRemediationModePolicy;
+    review_dependency_graph?: ReviewDependencyGraphDeclaration;
     token_economy: ProfileTokenEconomy;
     skills: ProfileSkills;
 }
@@ -125,11 +192,14 @@ export interface EffectivePolicy {
     profile_name: string;
     profile_source: 'built_in' | 'user';
     depth: number;
+    task_decomposition: ResolvedProfileTaskDecompositionPolicy;
     review_policy: EffectiveReviewPolicy;
+    review_catalog_policy?: ResolvedProfileReviewCatalogPolicy;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_diagnostics: string[];
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
+    review_remediation_mode_policy: ReviewRemediationModePolicyResolution;
     token_economy: TokenEconomyConfig;
     skills: ProfileSkills;
     installed_packs: string[];
@@ -140,10 +210,57 @@ export interface EffectivePolicy {
     guardrail_diagnostics: ProfileGuardrailResult | null;
     resolution_sources: {
         profiles: string;
+        review_catalog?: string;
         review_capabilities: string;
         token_economy: string;
         skill_packs: string;
         paths: string;
+    };
+}
+
+export function resolveProfileTaskDecompositionPolicy(
+    configInput: unknown,
+    profileName: string
+): ResolvedProfileTaskDecompositionPolicy {
+    if (configInput === undefined) {
+        const normalizedProfile = profileName.trim().toLowerCase();
+        const enabledByDefault = normalizedProfile === 'strict' || normalizedProfile === 'balanced';
+        return {
+            enabled: enabledByDefault,
+            configured: false,
+            provenance: normalizedProfile === 'strict'
+                ? 'legacy_strict_compatibility'
+                : normalizedProfile === 'balanced'
+                    ? 'legacy_balanced_default'
+                    : 'legacy_disabled_default',
+            diagnostics: [enabledByDefault
+                ? `Profile '${profileName}' is missing task_decomposition; defaulted guarded task decomposition to enabled.`
+                : `Profile '${profileName}' is missing task_decomposition; defaulted guarded task decomposition to disabled.`],
+            valid: true
+        };
+    }
+    if (
+        !isPlainRecord(configInput)
+        || Object.keys(configInput).length !== 1
+        || !Object.hasOwn(configInput, 'enabled')
+        || typeof configInput.enabled !== 'boolean'
+    ) {
+        return {
+            enabled: false,
+            configured: true,
+            provenance: 'explicit_profile_config',
+            diagnostics: [
+                `Profile '${profileName}' has invalid task_decomposition; expected exactly { "enabled": boolean }. Resolved fail-closed to disabled.`
+            ],
+            valid: false
+        };
+    }
+    return {
+        enabled: configInput.enabled,
+        configured: true,
+        provenance: 'explicit_profile_config',
+        diagnostics: [],
+        valid: true
     };
 }
 
@@ -216,10 +333,24 @@ const REVIEW_FOLLOW_UP_MATERIALIZATION_MODES = new Set<ReviewFollowUpMaterializa
     'per_finding',
     'grouped_by_parent'
 ]);
+const REVIEW_FOLLOW_UP_TASK_PROFILE_MODES = new Set<ReviewFollowUpTaskProfileMode>([
+    'one_level_lighter',
+    'inherit_parent',
+    'fixed_profile'
+]);
+const BUILT_IN_FOLLOW_UP_PROFILE_LADDER: Readonly<Record<string, string>> = Object.freeze({
+    strict: 'balanced',
+    balanced: 'fast',
+    fast: 'fast'
+});
 
 export const DEFAULT_REVIEW_FOLLOW_UP_POLICY: Readonly<ReviewFollowUpPolicy> = Object.freeze({
     schema_version: 1,
-    materialization_mode: 'per_finding'
+    materialization_mode: 'per_finding',
+    task_profile: Object.freeze({
+        mode: 'one_level_lighter',
+        fixed_profile: null
+    })
 });
 
 export const REVIEW_FINDING_POLICY_PRESETS: Readonly<Record<'soft' | 'balanced' | 'strict', ReviewFindingPolicy>> = Object.freeze({
@@ -544,11 +675,17 @@ export function resolveReviewFollowUpPolicy(
     policyInput: unknown,
     profileName: string
 ): ReviewFollowUpPolicyResolution {
-    const legacyDefault = { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY };
+    const legacyDefault: ReviewFollowUpPolicy = {
+        ...DEFAULT_REVIEW_FOLLOW_UP_POLICY,
+        task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
+    };
     if (policyInput === undefined) {
         return {
             policy: legacyDefault,
-            diagnostics: [`Profile '${profileName}' is missing review_follow_up_policy; defaulted compatibly to per_finding.`]
+            diagnostics: [
+                `Profile '${profileName}' is missing review_follow_up_policy; defaulted compatibly to per_finding ` +
+                'with one_level_lighter follow-up task profiles.'
+            ]
         };
     }
     if (!isPlainRecord(policyInput)) {
@@ -557,7 +694,7 @@ export function resolveReviewFollowUpPolicy(
             diagnostics: [`Profile '${profileName}' has invalid review_follow_up_policy; defaulted to per_finding.`]
         };
     }
-    const allowedKeys = new Set(['schema_version', 'materialization_mode']);
+    const allowedKeys = new Set(['schema_version', 'materialization_mode', 'task_profile']);
     const mode = policyInput.materialization_mode;
     if (
         policyInput.schema_version !== 1
@@ -567,12 +704,130 @@ export function resolveReviewFollowUpPolicy(
     ) {
         return {
             policy: legacyDefault,
-            diagnostics: [`Profile '${profileName}' has malformed review_follow_up_policy; defaulted to per_finding.`]
+            diagnostics: [
+                `Profile '${profileName}' has malformed review_follow_up_policy; defaulted to per_finding ` +
+                'with one_level_lighter follow-up task profiles.'
+            ]
+        };
+    }
+    const taskProfileInput = policyInput.task_profile;
+    if (taskProfileInput === undefined) {
+        return {
+            policy: {
+                schema_version: 1,
+                materialization_mode: mode as ReviewFollowUpMaterializationMode,
+                task_profile: { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY.task_profile }
+            },
+            diagnostics: [
+                `Profile '${profileName}' resolved a legacy review_follow_up_policy; ` +
+                `materialization_mode=${mode}, task_profile.mode=one_level_lighter by default.`
+            ]
+        };
+    }
+    const safeTaskProfile: ReviewFollowUpTaskProfilePolicy = {
+        mode: 'inherit_parent',
+        fixed_profile: null
+    };
+    if (!isPlainRecord(taskProfileInput)) {
+        return {
+            policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode, task_profile: safeTaskProfile },
+            diagnostics: [
+                `Profile '${profileName}' has invalid review_follow_up_policy.task_profile; ` +
+                'resolved fail-closed to inherit_parent.'
+            ]
+        };
+    }
+    const taskProfileMode = taskProfileInput.mode;
+    const fixedProfile = taskProfileInput.fixed_profile === null || taskProfileInput.fixed_profile === undefined
+        ? null
+        : (typeof taskProfileInput.fixed_profile === 'string' ? taskProfileInput.fixed_profile.trim().toLowerCase() : '');
+    const taskProfileKeys = new Set(['mode', 'fixed_profile']);
+    const taskProfileMalformed = typeof taskProfileMode !== 'string'
+        || !REVIEW_FOLLOW_UP_TASK_PROFILE_MODES.has(taskProfileMode as ReviewFollowUpTaskProfileMode)
+        || Object.keys(taskProfileInput).some((key) => !taskProfileKeys.has(key))
+        || (taskProfileMode === 'fixed_profile' && !fixedProfile)
+        || (taskProfileMode !== 'fixed_profile' && fixedProfile !== null);
+    if (taskProfileMalformed) {
+        return {
+            policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode, task_profile: safeTaskProfile },
+            diagnostics: [
+                `Profile '${profileName}' has malformed review_follow_up_policy.task_profile; ` +
+                'resolved fail-closed to inherit_parent.'
+            ]
+        };
+    }
+    const taskProfile: ReviewFollowUpTaskProfilePolicy = {
+        mode: taskProfileMode as ReviewFollowUpTaskProfileMode,
+        fixed_profile: fixedProfile
+    };
+    return {
+        policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode, task_profile: taskProfile },
+        diagnostics: [
+            `Profile '${profileName}' review_follow_up_policy resolved: materialization_mode=${mode}, ` +
+            `task_profile.mode=${taskProfile.mode}` +
+            `${taskProfile.fixed_profile ? `, task_profile.fixed_profile=${taskProfile.fixed_profile}` : ''}.`
+        ]
+    };
+}
+
+export function resolveReviewFollowUpTaskProfileAssignment(
+    policy: ReviewFollowUpPolicy,
+    parentProfile: string,
+    availableProfiles: readonly string[]
+): ReviewFollowUpTaskProfileAssignment {
+    const normalizedParent = parentProfile.trim().toLowerCase();
+    const available = new Set(availableProfiles.map((profile) => profile.trim().toLowerCase()).filter(Boolean));
+    const configuredMode = policy.task_profile.mode;
+    if (configuredMode === 'inherit_parent') {
+        return {
+            parent_profile: normalizedParent,
+            profile: normalizedParent,
+            source: 'inherit_parent',
+            configured_mode: configuredMode,
+            diagnostics: [`Follow-up task profile inherited parent profile '${normalizedParent}'.`]
+        };
+    }
+    if (configuredMode === 'fixed_profile') {
+        const fixedProfile = policy.task_profile.fixed_profile;
+        if (fixedProfile && available.has(fixedProfile)) {
+            return {
+                parent_profile: normalizedParent,
+                profile: fixedProfile,
+                source: 'fixed_profile',
+                configured_mode: configuredMode,
+                diagnostics: [`Follow-up task profile fixed to '${fixedProfile}'.`]
+            };
+        }
+        return {
+            parent_profile: normalizedParent,
+            profile: normalizedParent,
+            source: 'safe_inherit_parent',
+            configured_mode: configuredMode,
+            diagnostics: [
+                `Configured fixed follow-up task profile '${fixedProfile || '<missing>'}' is unavailable; ` +
+                `resolved fail-closed to parent profile '${normalizedParent}'.`
+            ]
+        };
+    }
+    const lighterProfile = BUILT_IN_FOLLOW_UP_PROFILE_LADDER[normalizedParent];
+    if (lighterProfile && available.has(lighterProfile)) {
+        return {
+            parent_profile: normalizedParent,
+            profile: lighterProfile,
+            source: 'one_level_lighter',
+            configured_mode: configuredMode,
+            diagnostics: [`Follow-up task profile lowered from '${normalizedParent}' to '${lighterProfile}'.`]
         };
     }
     return {
-        policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode },
-        diagnostics: [`Profile '${profileName}' review_follow_up_policy resolved: materialization_mode=${mode}.`]
+        parent_profile: normalizedParent,
+        profile: normalizedParent,
+        source: 'safe_inherit_parent',
+        configured_mode: configuredMode,
+        diagnostics: [
+            `Profile '${normalizedParent}' has no canonical lighter built-in profile; ` +
+            'follow-up task profile inherited the parent instead of guessing an order.'
+        ]
     };
 }
 
@@ -932,6 +1187,7 @@ export function mergeSkills(
 
 export function resolveConfigPaths(bundleRoot: string): {
     profiles: string;
+    reviewCatalog: string;
     reviewCapabilities: string;
     tokenEconomy: string;
     skillPacks: string;
@@ -940,6 +1196,7 @@ export function resolveConfigPaths(bundleRoot: string): {
     const configDir = path.join(bundleRoot, 'live', 'config');
     return {
         profiles: path.join(configDir, 'profiles.json'),
+        reviewCatalog: path.join(configDir, 'review-catalog.json'),
         reviewCapabilities: path.join(configDir, 'review-capabilities.json'),
         tokenEconomy: path.join(configDir, 'token-economy.json'),
         skillPacks: path.join(configDir, 'skill-packs.json'),
@@ -993,6 +1250,13 @@ export function resolveEffectivePolicy(
     const isCodeChangingTask = zeroDiffNoReviewableScope ? false : scopeIsCodeChangingTask;
 
     const capabilities = loadReviewCapabilities(configPaths.reviewCapabilities);
+    const reviewCatalog = readReviewCatalogConfigFile(configPaths.reviewCatalog);
+    const reviewCatalogPolicy = resolveProfileReviewCatalogPolicy(
+        profileName,
+        entry.review_policy,
+        capabilities,
+        reviewCatalog
+    );
     const tokenEconomyConfig = loadTokenEconomyConfig(configPaths.tokenEconomy);
     const skillPacksConfig = loadSkillPacksConfig(configPaths.skillPacks);
 
@@ -1001,6 +1265,16 @@ export function resolveEffectivePolicy(
         capabilities,
         isCodeChangingTask
     );
+    for (const lane of reviewCatalogPolicy.lanes) {
+        if (lane.built_in) {
+            continue;
+        }
+        // T-729-2 records custom-lane profile intent in review_catalog_policy.
+        // Task/scope selection and immutable lifecycle snapshots are owned by
+        // T-729-3, so the compatibility effective policy must not expose a
+        // custom lane as selected before that boundary exists.
+        reviewPolicy[lane.id] = false;
+    }
     const reviewFindingPolicyResolution = resolveReviewFindingPolicy(
         entry.review_finding_policy,
         profileName
@@ -1009,6 +1283,18 @@ export function resolveEffectivePolicy(
         entry.review_follow_up_policy,
         profileName
     );
+    const reviewRemediationModePolicy = resolveReviewRemediationModePolicyFromProfile(
+        entry.review_remediation_mode_policy,
+        profileName,
+        { allowedReviewTypeIds: reviewCatalog.review_types.map(({ id }) => id) }
+    );
+    const taskDecompositionPolicy = resolveProfileTaskDecompositionPolicy(
+        entry.task_decomposition,
+        profileName
+    );
+    if (!taskDecompositionPolicy.valid) {
+        throw new Error(taskDecompositionPolicy.diagnostics.join(' '));
+    }
 
     const tokenEconomy = mergeTokenEconomy(entry.token_economy, tokenEconomyConfig);
 
@@ -1046,11 +1332,14 @@ export function resolveEffectivePolicy(
         profile_name: profileName,
         profile_source: profileSource,
         depth: entry.depth,
+        task_decomposition: taskDecompositionPolicy,
         review_policy: reviewPolicy,
+        review_catalog_policy: reviewCatalogPolicy,
         review_finding_policy: reviewFindingPolicyResolution.policy,
         review_finding_policy_diagnostics: reviewFindingPolicyResolution.diagnostics,
         review_follow_up_policy: reviewFollowUpPolicyResolution.policy,
         review_follow_up_policy_diagnostics: reviewFollowUpPolicyResolution.diagnostics,
+        review_remediation_mode_policy: reviewRemediationModePolicy,
         token_economy: tokenEconomy,
         skills,
         installed_packs,
@@ -1061,6 +1350,7 @@ export function resolveEffectivePolicy(
         guardrail_diagnostics: guardrailDiagnostics,
         resolution_sources: {
             profiles: configPaths.profiles,
+            review_catalog: configPaths.reviewCatalog,
             review_capabilities: configPaths.reviewCapabilities,
             token_economy: configPaths.tokenEconomy,
             skill_packs: configPaths.skillPacks,
@@ -1074,6 +1364,15 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     lines.push('EFFECTIVE_POLICY');
     lines.push(`Profile: ${policy.profile_name} (${policy.profile_source})`);
     lines.push(`Depth: ${policy.depth}`);
+    lines.push(
+        `TaskDecomposition: enabled=${String(policy.task_decomposition.enabled)}, ` +
+        `configured=${String(policy.task_decomposition.configured)}, provenance=${policy.task_decomposition.provenance}`
+    );
+    lines.push(
+        `ReviewRemediationModePolicy: configured=${String(!policy.review_remediation_mode_policy.legacy_fallback)}, ` +
+        `legacy_full_only=${String(policy.review_remediation_mode_policy.legacy_fallback)}, ` +
+        `policy_id=${policy.review_remediation_mode_policy.policy.policy_id}`
+    );
     if (policy.scope_category) {
         lines.push(`ScopeCategory: ${policy.scope_category}`);
     }
@@ -1084,6 +1383,17 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
         lines.push(`  ${key}: ${String(value)}`);
     }
     lines.push('');
+
+    if (policy.review_catalog_policy) {
+        lines.push('ReviewCatalogPolicy:');
+        lines.push(`  catalog_sha256: ${policy.review_catalog_policy.catalog_sha256}`);
+        lines.push(`  policy_sha256: ${policy.review_catalog_policy.policy_sha256}`);
+        for (const lane of policy.review_catalog_policy.lanes) {
+            const activity = lane.active ? 'active' : `inactive:${lane.inactive_reason}`;
+            lines.push(`  ${lane.id}: ${lane.state} (${activity})`);
+        }
+        lines.push('');
+    }
 
     lines.push('ReviewTriggerPolicy:');
     lines.push(`  refactor_path_regexes: ${policy.review_trigger_policy.refactor_path_regexes.length}`);
@@ -1108,6 +1418,10 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
 
     lines.push('ReviewFollowUpPolicy:');
     lines.push(`  materialization_mode: ${policy.review_follow_up_policy.materialization_mode}`);
+    lines.push(`  task_profile.mode: ${policy.review_follow_up_policy.task_profile.mode}`);
+    lines.push(
+        `  task_profile.fixed_profile: ${policy.review_follow_up_policy.task_profile.fixed_profile || '<none>'}`
+    );
     if (policy.review_follow_up_policy_diagnostics.length > 0) {
         lines.push('  diagnostics:');
         for (const diagnostic of policy.review_follow_up_policy_diagnostics) {

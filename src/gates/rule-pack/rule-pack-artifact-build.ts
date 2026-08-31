@@ -54,7 +54,11 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
         if (!resolvedPreflightPath) {
             throw new Error('PreflightPath is required for POST_PREFLIGHT rule-pack evidence.');
         }
-        const validatedPreflight = validatePreflightForReview(resolvedPreflightPath, taskId);
+        const validatedPreflight = validatePreflightForReview(
+            resolvedPreflightPath,
+            taskId,
+            String(options.taskModePath || '')
+        );
         preflightPath = normalizePath(validatedPreflight.preflight_path);
         preflightHash = validatedPreflight.preflight_hash;
         requiredReviews = validatedPreflight.required_reviews;

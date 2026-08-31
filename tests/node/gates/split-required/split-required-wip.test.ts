@@ -133,7 +133,7 @@ describe('split-required WIP capture and restore', () => {
         const wipCapture = splitArtifact.wip_capture as Record<string, unknown>;
         assert.equal(wipCapture.status, 'CAPTURED');
         assert.ok((splitArtifact.next_actions as string[]).includes('preview_or_restore_selected_wip_in_child_task'));
-        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
     });
 
     it('captures tracked and task-owned untracked files, suspends the worktree, and restores all files explicitly', () => {
@@ -209,6 +209,58 @@ describe('split-required WIP capture and restore', () => {
         assert.equal(readFile(repoRoot, 'src/b.ts'), 'export const b = 1;\n');
     });
 
+    it('restores disjoint tracked subsets sequentially and rejects drift in an earlier subset', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
+        runGit(repoRoot, ['add', 'src/a.ts']);
+        writeFile(repoRoot, 'src/b.ts', 'export const b = 2;\n');
+
+        const captured = capture(repoRoot, ['src/a.ts', 'src/b.ts']);
+        assert.ok(captured.manifest_path);
+
+        const first = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/a.ts']
+        });
+        assert.equal(first.status, 'RESTORED', first.violations.join('\n'));
+
+        const second = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/b.ts']
+        });
+        assert.equal(second.status, 'RESTORED', second.violations.join('\n'));
+        assert.equal(readFile(repoRoot, 'src/a.ts'), 'export const a = 2;\n');
+        assert.equal(readFile(repoRoot, 'src/b.ts'), 'export const b = 2;\n');
+        assert.equal(runGit(repoRoot, ['diff', '--cached', '--name-only']).trim(), 'src/a.ts');
+
+        const driftRepoRoot = makeRepo();
+        writeFile(driftRepoRoot, 'src/a.ts', 'export const a = 2;\n');
+        writeFile(driftRepoRoot, 'src/b.ts', 'export const b = 2;\n');
+        const driftCapture = capture(driftRepoRoot, ['src/a.ts', 'src/b.ts']);
+        assert.ok(driftCapture.manifest_path);
+        const driftFirst = restoreSplitRequiredWip({
+            repoRoot: driftRepoRoot,
+            taskId: TASK_ID,
+            manifestPath: driftCapture.manifest_path,
+            includePaths: ['src/a.ts']
+        });
+        assert.equal(driftFirst.status, 'RESTORED', driftFirst.violations.join('\n'));
+        runGit(driftRepoRoot, ['add', 'src/a.ts']);
+
+        const drifted = restoreSplitRequiredWip({
+            repoRoot: driftRepoRoot,
+            taskId: TASK_ID,
+            manifestPath: driftCapture.manifest_path,
+            includePaths: ['src/b.ts']
+        });
+        assert.equal(drifted.status, 'BLOCKED');
+        assert.ok(drifted.violations.some((violation) => violation.includes('index differs from captured WIP')));
+    });
+
     it('round-trips staged tracked changes and preserves index state on restore', () => {
         const repoRoot = makeRepo();
         writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
@@ -281,7 +333,7 @@ describe('split-required WIP capture and restore', () => {
             manifestPath: captured.manifest_path
         });
         assert.equal(overlap.status, 'BLOCKED');
-        assert.ok(overlap.violations.some((violation) => violation.includes('unstaged tracked changes exist')));
+        assert.ok(overlap.violations.some((violation) => violation.includes('differs from captured WIP')));
     });
 
     it('dry-runs and atomically restores selected WIP after descendant commits advance HEAD', () => {

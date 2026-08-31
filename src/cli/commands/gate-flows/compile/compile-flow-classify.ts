@@ -21,7 +21,18 @@ import {
 } from '../../../../schemas/task-plan';
 import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/shared/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
+import { loadFullSuiteValidationConfig } from '../../../../core/full-suite-validation-config';
+import { readReviewCatalogConfigFile } from '../../../../core/review-catalog';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
+import {
+    buildEffectiveReviewSnapshot,
+    collectKnownReviewSkillIds,
+    resolveEffectiveReviewTaskIntent
+} from '../../../../policy/effective-review-snapshot';
+import {
+    resolveLegacyCompatibilityReviewCatalogBinding,
+    resolveProfileReviewCatalogPolicy
+} from '../../../../policy/profile-review-catalog-policy';
 import {
     resolveTaskProfileReviewTriggerPolicy,
     resolveTaskProfileSelectionFromSnapshot,
@@ -67,6 +78,7 @@ import {
     getWorkflowConfigWorkViolations
 } from '../../../../gates/workflow-config/workflow-config-work';
 import { readTaskQueueMetadata } from '../../../../gates/task-audit/task-audit-summary-collectors';
+import { readSkillsHeadlinesIfPresent } from '../../../../runtime/skill-headlines-store';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from '../../../../gates/rule-pack/rule-pack';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { normalizeOptionalPath, removeArtifactIfExists, resolvePathForWrite, writeTextArtifact } from '../../../gate-cli/gates-artifacts';
@@ -306,12 +318,15 @@ export interface ClassifyChangeCommandOptions {
 
 interface PreflightFailureDiagnostics {
     reason_code: string;
-    pre_task_modified_files: string[];
-    dirty_workspace_baseline_changed_files: string[];
-    current_workspace_changed_files: string[];
-    explicit_changed_files_provided: boolean;
-    use_staged: boolean;
-    include_untracked: boolean;
+    pre_task_modified_files?: string[];
+    dirty_workspace_baseline_changed_files?: string[];
+    current_workspace_changed_files?: string[];
+    authorized_scope_changed_files?: string[];
+    changed_protected_files?: string[];
+    detection_source?: string;
+    explicit_changed_files_provided?: boolean;
+    use_staged?: boolean;
+    include_untracked?: boolean;
 }
 
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
@@ -429,6 +444,16 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     });
     (result as unknown as Record<string, unknown>).authorized_files = authorizedFiles;
     result.changed_files = workspaceSnapshot.changed_files;
+    const actualZeroDiffDetected = workspaceSnapshot.changed_files.length === 0;
+    result.zero_diff_guard = {
+        zero_diff_detected: actualZeroDiffDetected,
+        status: actualZeroDiffDetected ? 'BASELINE_ONLY' : 'DIFF_PRESENT',
+        completion_requires_audited_no_op: actualZeroDiffDetected,
+        no_op_artifact_suffix: actualZeroDiffDetected ? '-no-op.json' : null,
+        rationale: actualZeroDiffDetected
+            ? 'Preflight authorized planned scope has no current Git diff. Task completion requires a produced diff or an audited no-op artifact.'
+            : 'Workspace diff detected.'
+    };
     result.git_change_classification = workspaceSnapshot.git_change_classification;
     (result.metrics as unknown as Record<string, unknown>).authorized_files_count = authorizedFiles.length;
     (result.metrics as unknown as Record<string, unknown>).authorized_files_sha256 = workspaceSnapshot.authorized_files_sha256;
@@ -513,6 +538,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
     let currentTaskSummary: string | null = null;
     let effectiveTaskPolicy: ReturnType<typeof resolveTaskProfileSelection>['effective_policy'] | null = null;
+    let zeroDiffBaselineOnlyNoReviewableScope = false;
     if (resolvedTaskId) {
         prePreflightSequenceLockHandle = acquireFilesystemLock(
             resolvePrePreflightSequenceLockPath(repoRoot, resolvedTaskId),
@@ -555,6 +581,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 taskModeEvidence.dirty_workspace_baseline?.changed_files || []
             )
         };
+        zeroDiffBaselineOnlyNoReviewableScope = profileGuardrailOptions.zeroDiffBaselineOnly;
         if (
             taskModeEvidence.evidence_status === 'PASS'
             && taskModeEvidence.profile_policy_snapshot_status === 'PASS'
@@ -699,6 +726,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             && changedProtectedFiles.length > 0
             && taskModeEvidence.orchestrator_work !== true
         ) {
+            preflightFailureDiagnostics = {
+                reason_code: 'protected_scope_requires_orchestrator_work',
+                authorized_scope_changed_files: normalizePortablePathList(authorizedFiles),
+                changed_protected_files: normalizePortablePathList(changedProtectedFiles),
+                detection_source: workspaceSnapshot.detection_source,
+                explicit_changed_files_provided: explicitChangedFilesProvided,
+                use_staged: options.useStaged === true,
+                include_untracked: includeUntracked
+            };
             preflightErrors.push(
                 `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${changedProtectedFiles.join(', ')}. ` +
                 'Restart task mode as orchestrator work before preflight classification. ' +
@@ -707,7 +743,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     taskId: resolvedTaskId,
                     taskModeEvidence,
                     taskSummary: currentTaskSummary,
-                    changedFiles: workspaceSnapshot.changed_files
+                    changedFiles: authorizedFiles
                 })}`
             );
         }
@@ -1000,6 +1036,80 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 };
             }
         }
+        if (resolvedTaskId && taskModeEvidenceForOptionalSkills) {
+            const taskProfileSnapshot = taskModeEvidenceForOptionalSkills.profile_policy_snapshot;
+            const knownReviewSkillIds = collectKnownReviewSkillIds(
+                readSkillsHeadlinesIfPresent(orchestratorRoot)?.payload.skills
+            );
+            const catalog = readReviewCatalogConfigFile(
+                path.join(orchestratorRoot, 'live', 'config', 'review-catalog.json'),
+                { knownSkillIds: knownReviewSkillIds }
+            );
+            const legacyCompatibilityBinding = taskProfileSnapshot
+                ? null
+                : resolveLegacyCompatibilityReviewCatalogBinding(reviewCapabilities, catalog);
+            const profileCatalogPolicy = taskProfileSnapshot
+                ? resolveProfileReviewCatalogPolicy(
+                    taskProfileSnapshot.source.effective_profile,
+                    taskProfileSnapshot.review_lane_selection.profile_review_policy,
+                    taskProfileSnapshot.review_lane_selection.review_capabilities,
+                    catalog
+                )
+                : legacyCompatibilityBinding!.profile_policy;
+            const fullSuiteValidation = taskProfileSnapshot?.review_execution_policy.full_suite_validation
+                || loadFullSuiteValidationConfig(repoRoot);
+            const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+                catalog,
+                profilePolicy: profileCatalogPolicy,
+                profileSnapshotSha256: taskProfileSnapshot?.snapshot_hash
+                    || legacyCompatibilityBinding!.profile_snapshot_sha256,
+                legacyRequiredReviews: result.required_reviews,
+                scopeCategory: result.scope_category,
+                taskIntent: resolveEffectiveReviewTaskIntent(options.taskIntent, currentTaskSummary),
+                changedFiles: result.changed_files,
+                taskTriggers: Object.fromEntries(
+                    Object.entries(result.triggers)
+                        .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')
+                ),
+                optionalSkillIds: optionalSkillSelectionPreview?.payload.selected_installed_skills
+                    .map((skill) => skill.id) || [],
+                zeroDiffBaselineOnly: zeroDiffBaselineOnlyNoReviewableScope,
+                reviewExecutionPolicyMode: taskProfileSnapshot?.review_execution_policy.mode
+                    || reviewExecutionPolicy.mode,
+                reviewDependencyGraph:
+                    taskProfileSnapshot?.review_execution_policy.review_dependency_graph,
+                fullSuiteValidation
+            });
+            result.effective_review_snapshot = effectiveReviewSnapshot;
+            if (result.review_execution_policy && effectiveReviewSnapshot.review_dependency_graph) {
+                result.review_execution_policy.dependency_graph = effectiveReviewSnapshot.review_dependency_graph;
+            }
+            result.required_reviews = { ...effectiveReviewSnapshot.required_reviews };
+            result.profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
+                result.profile_guardrails,
+                result.required_reviews
+            );
+            if (result.budget_forecast && result.risk_aware_depth) {
+                const requiredReviewBudgetInput = {
+                    taskId: resolvedTaskId,
+                    requestedDepth: result.risk_aware_depth.requested_depth,
+                    effectiveDepth: result.risk_aware_depth.effective_depth,
+                    pathMode: result.mode,
+                    changedFilesCount: Math.min(
+                        workspaceSnapshot.changed_files_count,
+                        getReviewTriggerEffectiveMetric(result, 'changed_files_count')
+                    ),
+                    changedLinesTotal: getReviewTriggerEffectiveMetric(result, 'changed_lines_total'),
+                    requiredReviews: result.required_reviews
+                };
+                result.depth_escalation = resolveDepthEscalation(requiredReviewBudgetInput);
+                result.budget_forecast = buildBudgetForecast({
+                    ...requiredReviewBudgetInput,
+                    tokenEconomyEnabled: effectiveTaskPolicy?.token_economy.enabled ?? true,
+                    tokenEconomyEnabledDepths: effectiveTaskPolicy?.token_economy.enabled_depths ?? [1, 2]
+                });
+            }
+        }
         const preflightArtifactText = `${JSON.stringify(result, null, 2)}\n`;
         const preflightSha256 = createHash('sha256').update(preflightArtifactText, 'utf8').digest('hex');
         writeTextArtifact(outputPath, preflightArtifactText);
@@ -1086,6 +1196,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     profile_selection: result.profile_selection ?? null,
                     profile_guardrails: result.profile_guardrails ?? null,
                     profile_policy_snapshot: result.profile_policy_snapshot ?? null,
+                    effective_review_snapshot: result.effective_review_snapshot ?? null,
                     optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: result.budget_forecast || null,
@@ -1115,6 +1226,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                             pre_task_modified_files: preflightFailureDiagnostics.pre_task_modified_files,
                             dirty_workspace_baseline_changed_files: preflightFailureDiagnostics.dirty_workspace_baseline_changed_files,
                             current_workspace_changed_files: preflightFailureDiagnostics.current_workspace_changed_files,
+                            authorized_scope_changed_files: preflightFailureDiagnostics.authorized_scope_changed_files,
+                            changed_protected_files: preflightFailureDiagnostics.changed_protected_files,
+                            detection_source: preflightFailureDiagnostics.detection_source,
                             explicit_changed_files_provided: preflightFailureDiagnostics.explicit_changed_files_provided,
                             use_staged: preflightFailureDiagnostics.use_staged,
                             include_untracked: preflightFailureDiagnostics.include_untracked

@@ -3,14 +3,25 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { writeFileAtomically } from '../../../../core/filesystem';
+import { readTaskQueueStatusToken } from '../../../../core/active-task-state';
+import {
+    formatActiveTaskQueueTable,
+    parseCanonicalActiveTaskQueue,
+    replaceTaskMdTableCell,
+    type CanonicalActiveTaskQueueRow
+} from '../../../../core/task-md-table';
 import { resolveTaskResetAvailability } from '../../../../core/task-reset-availability';
 import { assertValidTaskId } from '../../../../gate-runtime/task-events';
 import { withFilesystemLock } from '../../../../gate-runtime/task-events-locking';
-import { KNOWN_SUFFIXES, removeEntries } from '../../../../gate-runtime/reviews-index';
+import { loadIndex, removeEntries } from '../../../../gate-runtime/reviews-index';
 import { reconcileTimelineSummaryForTask } from '../../../../gate-runtime/timeline-summary';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { resolveReviewScratchRoots } from '../../../../gates/review/review-scratch-paths';
-import { readTaskQueueStatus, syncTaskQueueStatusDetailed } from './task-queue-sync';
+import {
+    readTaskQueueStatus,
+    syncTaskQueueStatusDetailed,
+    withTaskQueueStatusSyncLock
+} from './task-queue-sync';
 
 export type TaskResetOutcome =
     | 'RESET_COMPLETE'
@@ -39,6 +50,8 @@ export interface TaskResetScope {
     reviewArtifactNames: string[];
     artifacts: TaskResetArtifact[];
     aggregateLineCount: number;
+    pendingFollowUpTaskIds: string[];
+    preservedFollowUpTaskIds: string[];
     previousStatus: string | null;
     hasAnyArtifacts: boolean;
 }
@@ -119,13 +132,103 @@ function parseAggregateTaskId(line: string): string | null {
     }
 }
 
-function buildReviewArtifactBaseNames(taskId: string): string[] {
-    const names: string[] = [];
-    for (const suffix of KNOWN_SUFFIXES) {
-        names.push(`${taskId}${suffix}`);
-        names.push(`${taskId}${suffix}.gz`);
+function isGeneratedReviewFollowUpRow(parentTaskId: string, row: CanonicalActiveTaskQueueRow): boolean {
+    const escapedParentTaskId = escapeRegExp(parentTaskId);
+    return new RegExp(`^${escapedParentTaskId}-F[1-9][0-9]*$`, 'u').test(row.taskId)
+        && row.notes.includes(`Child of \`${parentTaskId}\`.`)
+        && /review_follow_up_(?:group_)?fingerprint=[0-9a-f]{64}/iu.test(row.notes);
+}
+
+function resolveReviewFollowUpRows(repoRoot: string, parentTaskId: string): {
+    pendingTaskIds: string[];
+    preservedTaskIds: string[];
+} {
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
+    if (!fileExists(taskPath)) {
+        return { pendingTaskIds: [], preservedTaskIds: [] };
     }
-    return names;
+    const parsed = parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8'));
+    if (!parsed.found) {
+        return { pendingTaskIds: [], preservedTaskIds: [] };
+    }
+    const pendingTaskIds: string[] = [];
+    const preservedTaskIds: string[] = [];
+    for (const row of parsed.rows) {
+        if (!isGeneratedReviewFollowUpRow(parentTaskId, row)) {
+            continue;
+        }
+        if (readTaskQueueStatusToken(row.status) === 'TODO') {
+            pendingTaskIds.push(row.taskId);
+        } else {
+            preservedTaskIds.push(row.taskId);
+        }
+    }
+    return { pendingTaskIds, preservedTaskIds };
+}
+
+function removeParentFollowUpMarkers(notes: string, removedTaskIds: ReadonlySet<string>): string {
+    const markerPattern = /Review follow-up tasks materialized:\s*((?:`[^`\r\n]+`(?:,\s*)?)+);\s*artifact\s*`([^`\r\n]+)`\./giu;
+    return notes.replace(markerPattern, (_match, taskList: string, artifactPath: string) => {
+        const retainedTaskIds = [...String(taskList).matchAll(/`([^`\r\n]+)`/gu)]
+            .map((candidate) => candidate[1].trim())
+            .filter((taskId) => taskId && !removedTaskIds.has(taskId));
+        return retainedTaskIds.length > 0
+            ? `Review follow-up tasks materialized: ${retainedTaskIds.map((taskId) => `\`${taskId}\``).join(', ')}; artifact \`${artifactPath}\`.`
+            : '';
+    }).replace(/\s{2,}/gu, ' ').trim();
+}
+
+function rollbackPendingReviewFollowUpRows(
+    repoRoot: string,
+    parentTaskId: string,
+    expectedTaskIds: readonly string[]
+): string[] {
+    if (expectedTaskIds.length === 0) {
+        return [];
+    }
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
+    return withTaskQueueStatusSyncLock(
+        taskPath,
+        (message) => { throw new Error(message); },
+        () => {
+            const originalContent = fs.readFileSync(taskPath, 'utf8');
+            const parsed = parseCanonicalActiveTaskQueue(originalContent);
+            if (!parsed.found) {
+                throw new Error(parsed.unavailableReason || 'Canonical TASK.md queue is unavailable.');
+            }
+            const expected = new Set(expectedTaskIds);
+            const removableRows = parsed.rows.filter((row) => (
+                expected.has(row.taskId)
+                && isGeneratedReviewFollowUpRow(parentTaskId, row)
+                && readTaskQueueStatusToken(row.status) === 'TODO'
+            ));
+            if (removableRows.length !== expected.size) {
+                throw new Error(
+                    `Pending review follow-up rollback changed before reset: expected ${expected.size}, ` +
+                    `found ${removableRows.length}. Rerun task-reset dry-run.`
+                );
+            }
+
+            const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
+            const lines = originalContent.split(/\r?\n/);
+            const parentRow = parsed.rows.find((row) => row.taskId === parentTaskId);
+            if (!parentRow) {
+                throw new Error(`Parent task '${parentTaskId}' disappeared before review follow-up rollback.`);
+            }
+            const removedTaskIds = new Set(removableRows.map((row) => row.taskId));
+            const nextParentNotes = removeParentFollowUpMarkers(parentRow.notes, removedTaskIds);
+            const updatedParentLine = replaceTaskMdTableCell(parentRow.rawLine, 8, ` ${nextParentNotes || '-'} `);
+            if (!updatedParentLine) {
+                throw new Error(`Could not update parent task '${parentTaskId}' follow-up marker.`);
+            }
+            lines[parentRow.lineIndex] = updatedParentLine;
+            for (const row of [...removableRows].sort((left, right) => right.lineIndex - left.lineIndex)) {
+                lines.splice(row.lineIndex, 1);
+            }
+            writeFileAtomically(taskPath, formatActiveTaskQueueTable(lines.join(newline)), { encoding: 'utf8' });
+            return [...removedTaskIds].sort((left, right) => left.localeCompare(right));
+        }
+    );
 }
 
 function assertTaskExistsInTaskMd(repoRoot: string, taskId: string): void {
@@ -238,9 +341,17 @@ export function resolveTaskResetScope(options: {
         artifacts.push({ path: eventsPath, type: 'task-events' });
     }
 
-    const allReviewNames = buildReviewArtifactBaseNames(taskId);
+    const resetReportNames = new Set([
+        `${taskId}-reset-report.json`,
+        `${taskId}-reset-report.json.gz`
+    ]);
     const reviewArtifactNames: string[] = [];
-    for (const name of allReviewNames) {
+    const indexedReviewNames = fs.existsSync(reviewsRoot)
+        ? loadIndex(reviewsRoot, { forceRebuild: true, readOnly: true }).index.entries
+            .filter((entry) => entry.taskId === taskId && !resetReportNames.has(entry.fileName))
+            .map((entry) => entry.fileName)
+        : [];
+    for (const name of indexedReviewNames) {
         const fullPath = path.join(reviewsRoot, name);
         if (fileExists(fullPath)) {
             artifacts.push({ path: fullPath, type: 'review-artifact', fileName: name });
@@ -266,7 +377,10 @@ export function resolveTaskResetScope(options: {
     }
 
     const previousStatus = readTaskQueueStatus(repoRoot, taskId);
-    const hasAnyArtifacts = artifacts.length > 0 || aggregateLineCount > 0;
+    const followUpRows = resolveReviewFollowUpRows(repoRoot, taskId);
+    const hasAnyArtifacts = artifacts.length > 0
+        || aggregateLineCount > 0
+        || followUpRows.pendingTaskIds.length > 0;
 
     return {
         taskId,
@@ -279,6 +393,8 @@ export function resolveTaskResetScope(options: {
         reviewArtifactNames,
         artifacts,
         aggregateLineCount,
+        pendingFollowUpTaskIds: followUpRows.pendingTaskIds,
+        preservedFollowUpTaskIds: followUpRows.preservedTaskIds,
         previousStatus,
         hasAnyArtifacts
     };
@@ -293,7 +409,9 @@ function buildOutputLines(
     artifacts: TaskResetArtifact[],
     aggregateLinesRemoved: number,
     resetReportPath: string | null,
-    statusSyncOutcome: string | null
+    statusSyncOutcome: string | null,
+    pendingFollowUpTaskIds: readonly string[] = [],
+    preservedFollowUpTaskIds: readonly string[] = []
 ): string[] {
     const lines: string[] = [];
     lines.push(outcome);
@@ -325,6 +443,12 @@ function buildOutputLines(
     }
     if (aggregateLinesRemoved > 0) {
         lines.push(`AggregateLogLinesRemoved: ${aggregateLinesRemoved}`);
+    }
+    if (targetStatus === 'TODO' && pendingFollowUpTaskIds.length > 0) {
+        lines.push(`PendingFollowUpTasksPlannedForRemoval: ${pendingFollowUpTaskIds.join(', ')}`);
+    }
+    if (preservedFollowUpTaskIds.length > 0) {
+        lines.push(`StartedOrTerminalFollowUpTasksPreserved: ${preservedFollowUpTaskIds.join(', ')}`);
     }
     if (resetReportPath) {
         lines.push(`ResetReport: ${gateHelpers.normalizePath(resetReportPath)}`);
@@ -384,7 +508,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
         const outputLines = buildOutputLines(
             'TARGET_STATUS_REQUIRED', taskId, scope.previousStatus,
             null, dryRun, scope.artifacts, scope.aggregateLineCount,
-            null, null
+            null, null, scope.pendingFollowUpTaskIds, scope.preservedFollowUpTaskIds
         );
         return {
             outcome: 'TARGET_STATUS_REQUIRED',
@@ -404,7 +528,8 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
     if (scope.previousStatus === targetStatus && !scope.hasAnyArtifacts) {
         const outputLines = buildOutputLines(
             'ALREADY_RESET', taskId, scope.previousStatus,
-            targetStatus, false, [], 0, null, null
+            targetStatus, false, [], 0, null, null,
+            scope.pendingFollowUpTaskIds, scope.preservedFollowUpTaskIds
         );
         return {
             outcome: 'ALREADY_RESET',
@@ -431,6 +556,12 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
             `AggregateLogLines: ${scope.aggregateLineCount}`,
             'Action: Pass --confirm to execute the reset or --dry-run to preview.'
         ];
+        if (targetStatus === 'TODO' && scope.pendingFollowUpTaskIds.length > 0) {
+            outputLines.push(`PendingFollowUpTasksPlannedForRemoval: ${scope.pendingFollowUpTaskIds.join(', ')}`);
+        }
+        if (scope.preservedFollowUpTaskIds.length > 0) {
+            outputLines.push(`StartedOrTerminalFollowUpTasksPreserved: ${scope.preservedFollowUpTaskIds.join(', ')}`);
+        }
         return {
             outcome: 'CONFIRMATION_REQUIRED',
             taskId,
@@ -450,7 +581,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
         const outputLines = buildOutputLines(
             'DRY_RUN', taskId, scope.previousStatus,
             targetStatus, true, scope.artifacts, scope.aggregateLineCount,
-            null, null
+            null, null, scope.pendingFollowUpTaskIds, scope.preservedFollowUpTaskIds
         );
         return {
             outcome: 'DRY_RUN',
@@ -476,10 +607,21 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
         previous_status: scope.previousStatus,
         target_status: targetStatus,
         removed_artifacts: scope.artifacts.map((a) => gateHelpers.normalizePath(a.path)),
+        pending_follow_up_task_ids_planned_for_removal: targetStatus === 'TODO'
+            ? scope.pendingFollowUpTaskIds
+            : [],
+        removed_pending_follow_up_task_ids: [] as string[],
+        preserved_started_or_terminal_follow_up_task_ids: scope.preservedFollowUpTaskIds,
         aggregate_lines_removed: scope.aggregateLineCount,
         reset_by: 'operator'
     };
     fs.mkdirSync(reviewsRoot, { recursive: true });
+    writeFileAtomically(resetReportPath, JSON.stringify(resetReport, null, 2) + '\n', { encoding: 'utf8' });
+
+    const removedPendingFollowUpTaskIds = targetStatus === 'TODO'
+        ? rollbackPendingReviewFollowUpRows(repoRoot, taskId, scope.pendingFollowUpTaskIds)
+        : [];
+    resetReport.removed_pending_follow_up_task_ids = removedPendingFollowUpTaskIds;
     writeFileAtomically(resetReportPath, JSON.stringify(resetReport, null, 2) + '\n', { encoding: 'utf8' });
 
     // Delete per-task events file under task lock
@@ -522,8 +664,12 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
     const outputLines = buildOutputLines(
         'RESET_COMPLETE', taskId, scope.previousStatus,
         targetStatus, false, scope.artifacts, aggregateLinesRemoved,
-        resetReportPath, syncResult.outcome
+        resetReportPath, syncResult.outcome,
+        scope.pendingFollowUpTaskIds, scope.preservedFollowUpTaskIds
     );
+    if (removedPendingFollowUpTaskIds.length > 0) {
+        outputLines.push(`PendingFollowUpTasksRemoved: ${removedPendingFollowUpTaskIds.join(', ')}`);
+    }
     return {
         outcome: 'RESET_COMPLETE',
         taskId,

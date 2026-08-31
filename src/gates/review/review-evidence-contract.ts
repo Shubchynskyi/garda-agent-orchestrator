@@ -2,6 +2,8 @@ import {
     normalizeCompatibilityReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance
 } from '../../gate-runtime/review-context';
+import { sha256RedactedJsonPayload } from '../../core/redaction';
+import { isPlainRecord } from '../../core/records';
 import {
     buildPlannedReviewerIdentity,
     isResolvedReviewerIdentity
@@ -15,6 +17,22 @@ export const REVIEW_EVIDENCE_AGENT_IDENTITY_PREFIX = 'agent:';
 
 export type ReviewEvidenceReviewerProvenance = ReturnType<typeof normalizeReviewReceiptReviewerProvenance>;
 
+export interface ReviewExecutionEvidenceBindings {
+    review_execution_mode: 'FULL' | 'DELTA';
+    review_execution_contract_sha256: string;
+    review_execution_full_scope_sha256: string;
+    review_execution_complete_scope_lineage_sha256: string;
+    review_execution_finding_reconciliation_sha256: string;
+}
+
+type ReviewExecutionEvidenceInput = Partial<Record<keyof ReviewExecutionEvidenceBindings, unknown>>;
+
+export interface ReviewContextExecutionEvidenceContractResult {
+    required: boolean;
+    bindings: ReviewExecutionEvidenceBindings | null;
+    violations: string[];
+}
+
 export interface NormalizedReviewReceiptEvidenceFields {
     reviewArtifactSha256: string | null;
     reviewContextSha256: string | null;
@@ -22,6 +40,11 @@ export interface NormalizedReviewReceiptEvidenceFields {
     reviewTreeStateSha256: string | null;
     reviewScopeSha256: string | null;
     codeScopeSha256: string | null;
+    reviewExecutionMode: 'FULL' | 'DELTA' | null;
+    reviewExecutionContractSha256: string | null;
+    reviewExecutionFullScopeSha256: string | null;
+    reviewExecutionCompleteScopeLineageSha256: string | null;
+    reviewExecutionFindingReconciliationSha256: string | null;
     reviewerExecutionMode: string | null;
     reviewerIdentity: string | null;
     reviewerFallbackReason: string | null;
@@ -65,6 +88,11 @@ function normalizeText(value: unknown): string | null {
     return normalized || null;
 }
 
+function normalizeReviewExecutionMode(value: unknown): 'FULL' | 'DELTA' | null {
+    const normalized = String(value || '').trim().toUpperCase();
+    return normalized === 'FULL' || normalized === 'DELTA' ? normalized : null;
+}
+
 export function normalizeReviewEvidenceSha256(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized || null;
@@ -89,6 +117,15 @@ export function normalizeReviewReceiptEvidenceFields(
         reviewTreeStateSha256: normalizeReviewEvidenceSha256(receipt.review_tree_state_sha256),
         reviewScopeSha256: normalizeReviewEvidenceSha256(receipt.review_scope_sha256),
         codeScopeSha256: normalizeReviewEvidenceSha256(receipt.code_scope_sha256),
+        reviewExecutionMode: normalizeReviewExecutionMode(receipt.review_execution_mode),
+        reviewExecutionContractSha256: normalizeReviewEvidenceSha256(receipt.review_execution_contract_sha256),
+        reviewExecutionFullScopeSha256: normalizeReviewEvidenceSha256(receipt.review_execution_full_scope_sha256),
+        reviewExecutionCompleteScopeLineageSha256: normalizeReviewEvidenceSha256(
+            receipt.review_execution_complete_scope_lineage_sha256
+        ),
+        reviewExecutionFindingReconciliationSha256: normalizeReviewEvidenceSha256(
+            receipt.review_execution_finding_reconciliation_sha256
+        ),
         reviewerExecutionMode: normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode),
         reviewerIdentity: normalizeReviewEvidenceReviewerIdentity(receipt.reviewer_identity),
         reviewerFallbackReason: normalizeText(receipt.reviewer_fallback_reason),
@@ -110,6 +147,145 @@ export function normalizeReviewReceiptEvidenceFields(
     };
 }
 
+export function resolveReviewContextExecutionEvidenceBindings(
+    reviewContext: Record<string, unknown> | null
+): ReviewContextExecutionEvidenceContractResult {
+    const schemaVersion = Number(reviewContext?.schema_version);
+    const required = Number.isInteger(schemaVersion) && schemaVersion >= 4;
+    if (!required) {
+        return { required: false, bindings: null, violations: [] };
+    }
+    const reviewExecution = isPlainRecord(reviewContext?.review_execution)
+        ? reviewContext.review_execution
+        : null;
+    const mode = normalizeReviewExecutionMode(reviewExecution?.mode);
+    const contractSha256 = normalizeReviewEvidenceSha256(reviewExecution?.contract_sha256);
+    const fullScopeSha256 = normalizeReviewEvidenceSha256(reviewExecution?.full_review_scope_sha256);
+    const completeScopeLineageSha256 = normalizeReviewEvidenceSha256(
+        reviewExecution?.complete_scope_lineage_sha256
+    );
+    const findingReconciliation = isPlainRecord(reviewExecution?.finding_reconciliation)
+        ? reviewExecution.finding_reconciliation
+        : null;
+    if (
+        !mode
+        || !contractSha256
+        || !/^[0-9a-f]{64}$/u.test(contractSha256)
+        || !fullScopeSha256
+        || !/^[0-9a-f]{64}$/u.test(fullScopeSha256)
+        || !completeScopeLineageSha256
+        || !/^[0-9a-f]{64}$/u.test(completeScopeLineageSha256)
+        || !findingReconciliation
+    ) {
+        return {
+            required: true,
+            bindings: null,
+            violations: [
+                'schema-4 review context is missing valid authenticated review_execution lineage bindings'
+            ]
+        };
+    }
+    return {
+        required: true,
+        bindings: {
+            review_execution_mode: mode,
+            review_execution_contract_sha256: contractSha256,
+            review_execution_full_scope_sha256: fullScopeSha256,
+            review_execution_complete_scope_lineage_sha256: completeScopeLineageSha256,
+            review_execution_finding_reconciliation_sha256: sha256RedactedJsonPayload(findingReconciliation)
+        },
+        violations: []
+    };
+}
+
+export function getReviewExecutionEvidenceContractViolations(options: {
+    reviewContext: Record<string, unknown> | null;
+    evidence: Record<string, unknown> | null;
+    evidenceLabel?: string;
+}): string[] {
+    const expected = resolveReviewContextExecutionEvidenceBindings(options.reviewContext);
+    if (!expected.required) {
+        return [];
+    }
+    if (!expected.bindings) {
+        return expected.violations;
+    }
+    return getReviewExecutionEvidenceBindingViolations({
+        expectedEvidence: expected.bindings,
+        evidence: options.evidence,
+        evidenceLabel: options.evidenceLabel,
+        expectedEvidenceLabel: 'the authenticated schema-4 review context'
+    });
+}
+
+function normalizeReviewExecutionEvidenceBindings(
+    evidence: ReviewExecutionEvidenceInput | null
+): Record<keyof ReviewExecutionEvidenceBindings, string | null> {
+    return {
+        review_execution_mode: normalizeReviewExecutionMode(evidence?.review_execution_mode),
+        review_execution_contract_sha256: normalizeReviewEvidenceSha256(evidence?.review_execution_contract_sha256),
+        review_execution_full_scope_sha256: normalizeReviewEvidenceSha256(evidence?.review_execution_full_scope_sha256),
+        review_execution_complete_scope_lineage_sha256: normalizeReviewEvidenceSha256(
+            evidence?.review_execution_complete_scope_lineage_sha256
+        ),
+        review_execution_finding_reconciliation_sha256: normalizeReviewEvidenceSha256(
+            evidence?.review_execution_finding_reconciliation_sha256
+        )
+    };
+}
+
+export function getReviewExecutionEvidenceBindingViolations(options: {
+    expectedEvidence: ReviewExecutionEvidenceInput | null;
+    evidence: ReviewExecutionEvidenceInput | null;
+    evidenceLabel?: string;
+    expectedEvidenceLabel?: string;
+}): string[] {
+    const label = String(options.evidenceLabel || 'review evidence').trim();
+    const expectedLabel = String(options.expectedEvidenceLabel || 'the authenticated review execution evidence').trim();
+    const expected = normalizeReviewExecutionEvidenceBindings(options.expectedEvidence);
+    const actual = normalizeReviewExecutionEvidenceBindings(options.evidence);
+    const violations: string[] = [];
+    for (const [field, expectedValue] of Object.entries(expected) as Array<
+        [keyof ReviewExecutionEvidenceBindings, string | null]
+    >) {
+        if (!expectedValue || (field !== 'review_execution_mode' && !/^[0-9a-f]{64}$/u.test(expectedValue))) {
+            violations.push(`${expectedLabel} is missing valid ${field}`);
+            continue;
+        }
+        const actualValue = actual[field];
+        if (!actualValue || (field !== 'review_execution_mode' && !/^[0-9a-f]{64}$/u.test(actualValue))) {
+            violations.push(`${label} is missing valid ${field}`);
+        } else if (actualValue !== expectedValue) {
+            violations.push(`${label} ${field} does not match ${expectedLabel}`);
+        }
+    }
+    return violations;
+}
+
+export function getReviewReceiptExecutionEvidenceContractViolations(options: {
+    reviewContext: Record<string, unknown> | null;
+    receipt: Record<string, unknown> | null;
+}): string[] {
+    const expected = resolveReviewContextExecutionEvidenceBindings(options.reviewContext);
+    if (!expected.required) {
+        return [];
+    }
+    const violations = getReviewExecutionEvidenceContractViolations({
+        reviewContext: options.reviewContext,
+        evidence: options.receipt,
+        evidenceLabel: 'review receipt'
+    });
+    const reviewOutputContract = isPlainRecord(options.receipt?.review_output_contract)
+        ? options.receipt.review_output_contract
+        : null;
+    violations.push(...getReviewExecutionEvidenceContractViolations({
+        reviewContext: options.reviewContext,
+        evidence: reviewOutputContract,
+        evidenceLabel: 'review receipt review_output_contract'
+    }));
+    return violations;
+}
+
 export function validateReviewReceiptEvidenceContract(options: {
     taskId: string;
     reviewType: string;
@@ -119,9 +295,15 @@ export function validateReviewReceiptEvidenceContract(options: {
     contextReviewTreeStateSha256: string | null;
     contextExecutionMode: string | null;
     contextReviewerIdentity: string | null;
+    reviewContext?: Record<string, unknown> | null;
 }): ReviewReceiptEvidenceContractResult {
     const fields = normalizeReviewReceiptEvidenceFields(options.receipt);
     const violations: string[] = [];
+
+    violations.push(...getReviewReceiptExecutionEvidenceContractViolations({
+        reviewContext: options.reviewContext ?? null,
+        receipt: options.receipt
+    }));
 
     if (options.receipt.task_id !== options.taskId) {
         violations.push(`review receipt belongs to task '${String(options.receipt.task_id || '')}'`);

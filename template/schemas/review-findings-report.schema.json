@@ -11,12 +11,13 @@
     "tree_state_sha256",
     "validation_notes",
     "coverage_ledger",
+    "review_execution",
     "findings",
     "residual_risks",
     "reviewer_notes"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "task_id": { "type": "string", "minLength": 1 },
     "review_type": { "type": "string", "minLength": 1 },
     "review_context_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
@@ -27,6 +28,7 @@
       "items": { "$ref": "#/definitions/validation_note" }
     },
     "coverage_ledger": { "$ref": "#/definitions/coverage_ledger" },
+    "review_execution": { "$ref": "#/definitions/review_execution" },
     "findings": { "$ref": "#/definitions/findings_by_severity" },
     "residual_risks": {
       "type": "array",
@@ -93,6 +95,30 @@
         "finding_ids": {
           "type": "array",
           "items": { "type": "string", "pattern": "^F-\\d{3}$" }
+        }
+      }
+    },
+    "review_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "contract_sha256",
+        "covered_delta_targets",
+        "inspected_prior_finding_ids"
+      ],
+      "properties": {
+        "mode": { "enum": ["FULL", "DELTA"] },
+        "contract_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "covered_delta_targets": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "inspected_prior_finding_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^F-\\d{3}$" },
+          "uniqueItems": true
         }
       }
     },

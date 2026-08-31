@@ -3,6 +3,12 @@ import {
     type ReviewFindingDispositionAction,
     type ReviewFindingPolicy
 } from '../../policy/profile-resolver';
+import {
+    buildLegacyReviewFollowUpTaskClosurePolicySnapshot,
+    getReviewFollowUpTaskClosurePolicySnapshotViolations,
+    type ReviewFollowUpTaskClosurePolicySnapshot
+} from '../../core/review-follow-up-task-closure-policy';
+import { isReviewFindingsFollowUpTaskId } from '../../core/task-ids';
 import type {
     NormalizedReviewFindingsInventory,
     ReviewFindingsValidationArtifact
@@ -19,7 +25,13 @@ const EVIDENCE_ONLY_FINDING_ID = 'F-000';
 
 export interface LockedReviewFindingPolicyResolution {
     policy: ReviewFindingPolicy;
+    base_policy: ReviewFindingPolicy;
     source: 'preflight_profile_policy_snapshot' | 'receipt_review_findings_disposition' | 'fallback_strict';
+    follow_up_task_closure_policy: ReviewFollowUpTaskClosurePolicySnapshot;
+    follow_up_task_closure_policy_source:
+        | 'preflight_profile_policy_snapshot'
+        | 'receipt_review_findings_disposition'
+        | 'legacy_default';
     diagnostics: string[];
 }
 
@@ -34,6 +46,10 @@ export interface ReviewFindingsDispositionEvaluation {
     policy_id: ReviewFindingPolicy['policy_id'];
     policy_source: LockedReviewFindingPolicyResolution['source'];
     policy_diagnostics: string[];
+    base_review_finding_policy?: ReviewFindingPolicy;
+    review_follow_up_task_closure_policy?: ReviewFollowUpTaskClosurePolicySnapshot;
+    review_follow_up_task_closure_policy_source?:
+        LockedReviewFindingPolicyResolution['follow_up_task_closure_policy_source'];
     findings: Record<ReviewFindingsSeverity, ReviewFindingDispositionBucket>;
     residual_risks: ReviewFindingDispositionBucket;
     counts_by_action: Record<ReviewFindingDispositionAction, number>;
@@ -57,11 +73,94 @@ function clonePolicy(policy: ReviewFindingPolicy): ReviewFindingPolicy {
     };
 }
 
-function strictPolicyResolution(diagnostic: string): LockedReviewFindingPolicyResolution {
+function cloneClosurePolicy(
+    policy: ReviewFollowUpTaskClosurePolicySnapshot
+): ReviewFollowUpTaskClosurePolicySnapshot {
     return {
-        policy: clonePolicy(REVIEW_FINDING_POLICY_PRESETS.strict),
+        ...policy,
+        diagnostics: [...policy.diagnostics]
+    };
+}
+
+function legacyClosurePolicy(): ReviewFollowUpTaskClosurePolicySnapshot {
+    return buildLegacyReviewFollowUpTaskClosurePolicySnapshot();
+}
+
+function parseClosurePolicy(value: unknown): ReviewFollowUpTaskClosurePolicySnapshot | null {
+    if (getReviewFollowUpTaskClosurePolicySnapshotViolations(value).length > 0) {
+        return null;
+    }
+    return cloneClosurePolicy(value as ReviewFollowUpTaskClosurePolicySnapshot);
+}
+
+function strictPolicyResolution(diagnostic: string): LockedReviewFindingPolicyResolution {
+    const policy = clonePolicy(REVIEW_FINDING_POLICY_PRESETS.strict);
+    return {
+        policy,
+        base_policy: clonePolicy(policy),
         source: 'fallback_strict',
+        follow_up_task_closure_policy: legacyClosurePolicy(),
+        follow_up_task_closure_policy_source: 'legacy_default',
         diagnostics: [diagnostic]
+    };
+}
+
+function applyMandatoryReviewFindingSafetyFloors(
+    resolution: LockedReviewFindingPolicyResolution,
+    taskId: unknown
+): LockedReviewFindingPolicyResolution {
+    const basePolicy = clonePolicy(resolution.base_policy);
+    const diagnostics = [...resolution.diagnostics];
+    const isFollowUpTask = isReviewFindingsFollowUpTaskId(taskId);
+    if (basePolicy.findings.high !== 'fix_now') {
+        basePolicy.findings.high = 'fix_now';
+        diagnostics.push('High-severity review findings are immutable fix_now obligations.');
+    }
+
+    const closurePolicy = resolution.follow_up_task_closure_policy;
+    if (isFollowUpTask && (
+        !closurePolicy.eligible
+        || !closurePolicy.configured
+        || !closurePolicy.valid
+    )) {
+        basePolicy.findings = { ...REVIEW_FINDING_POLICY_PRESETS.strict.findings };
+        basePolicy.residual_risk = 'fix_now';
+        diagnostics.push(
+            `Review follow-up task '${String(taskId)}' resolves every finding and residual risk to fix_now; ` +
+            'nested follow-up tasks are forbidden.'
+        );
+    }
+
+    const policy = clonePolicy(basePolicy);
+    if (isFollowUpTask && closurePolicy.eligible && closurePolicy.valid) {
+        if (closurePolicy.skip_low_findings) {
+            policy.findings.low = 'ignore';
+            diagnostics.push(
+                'Frozen follow-up task closure policy explicitly ignores accepted low-severity findings.'
+            );
+        }
+        if (closurePolicy.forbid_child_tasks) {
+            for (const severity of REVIEW_FINDING_SEVERITIES) {
+                if (severity === 'low' && closurePolicy.skip_low_findings) {
+                    continue;
+                }
+                if (policy.findings[severity] === 'create_follow_up') {
+                    policy.findings[severity] = 'fix_now';
+                }
+            }
+            if (policy.residual_risk === 'create_follow_up') {
+                policy.residual_risk = 'fix_now';
+            }
+            diagnostics.push(
+                'Frozen follow-up task closure policy retains would-be descendant findings and residual risks as current-task fix_now obligations.'
+            );
+        }
+    }
+    return {
+        ...resolution,
+        base_policy: basePolicy,
+        policy,
+        diagnostics
     };
 }
 
@@ -146,6 +245,14 @@ function parseReviewFindingPolicyFromDisposition(value: unknown): ReviewFindingP
     });
 }
 
+function parseBaseReviewFindingPolicyFromDisposition(value: unknown): ReviewFindingPolicy | null {
+    if (!isRecord(value)) {
+        return null;
+    }
+    return parseReviewFindingPolicy(value.base_review_finding_policy)
+        || parseReviewFindingPolicyFromDisposition(value);
+}
+
 export function resolveLockedReviewFindingPolicyFromPreflight(
     preflight: Record<string, unknown> | null | undefined
 ): LockedReviewFindingPolicyResolution {
@@ -158,11 +265,21 @@ export function resolveLockedReviewFindingPolicyFromPreflight(
             'Preflight profile_policy_snapshot.review_finding_policy is missing or invalid; resolved fail-closed to strict.'
         );
     }
-    return {
+    const closurePolicyValue = snapshot?.review_follow_up_task_closure_policy;
+    const closurePolicy = parseClosurePolicy(closurePolicyValue);
+    const resolvedClosurePolicy = closurePolicy || legacyClosurePolicy();
+    return applyMandatoryReviewFindingSafetyFloors({
         policy: clonePolicy(policy),
+        base_policy: clonePolicy(policy),
         source: 'preflight_profile_policy_snapshot',
-        diagnostics: []
-    };
+        follow_up_task_closure_policy: resolvedClosurePolicy,
+        follow_up_task_closure_policy_source: closurePolicy
+            ? 'preflight_profile_policy_snapshot'
+            : 'legacy_default',
+        diagnostics: closurePolicy || closurePolicyValue === undefined
+            ? []
+            : ['Preflight closure-policy snapshot is invalid; closure controls fail closed to legacy defaults.']
+    }, preflight?.task_id);
 }
 
 export function resolveLockedReviewFindingPolicyFromReceiptDisposition(
@@ -173,17 +290,27 @@ export function resolveLockedReviewFindingPolicyFromReceiptDisposition(
         : isRecord(receiptOrEventDetails?.reviewFindingsDisposition)
             ? receiptOrEventDetails.reviewFindingsDisposition
             : null;
-    const policy = parseReviewFindingPolicyFromDisposition(disposition);
+    const policy = parseBaseReviewFindingPolicyFromDisposition(disposition);
     if (!policy) {
         return strictPolicyResolution(
             'Review receipt review_findings_disposition is missing or invalid; resolved fail-closed to strict.'
         );
     }
-    return {
+    const closurePolicyValue = disposition?.review_follow_up_task_closure_policy;
+    const closurePolicy = parseClosurePolicy(closurePolicyValue);
+    const resolvedClosurePolicy = closurePolicy || legacyClosurePolicy();
+    return applyMandatoryReviewFindingSafetyFloors({
         policy: clonePolicy(policy),
+        base_policy: clonePolicy(policy),
         source: 'receipt_review_findings_disposition',
-        diagnostics: []
-    };
+        follow_up_task_closure_policy: resolvedClosurePolicy,
+        follow_up_task_closure_policy_source: closurePolicy
+            ? 'receipt_review_findings_disposition'
+            : 'legacy_default',
+        diagnostics: closurePolicy || closurePolicyValue === undefined
+            ? []
+            : ['Receipt disposition has an invalid closure-policy snapshot; closure controls fail closed to legacy defaults.']
+    }, receiptOrEventDetails?.task_id);
 }
 
 export function resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(
@@ -207,8 +334,43 @@ export function resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(
     }
     return {
         ...resolution,
-        source: recordedSource
+        source: recordedSource,
+        follow_up_task_closure_policy_source: recordedSource === 'preflight_profile_policy_snapshot'
+            ? 'preflight_profile_policy_snapshot'
+            : resolution.follow_up_task_closure_policy_source
     };
+}
+
+export function resolveReviewFindingDispositionSourceRule(
+    resolution: LockedReviewFindingPolicyResolution,
+    kind: 'finding' | 'residual_risk',
+    severity: ReviewFindingsSeverity | 'residual_risk'
+): string {
+    const closurePolicy = resolution.follow_up_task_closure_policy;
+    if (
+        kind === 'finding'
+        && severity === 'low'
+        && closurePolicy.skip_low_findings
+        && resolution.base_policy.findings.low !== resolution.policy.findings.low
+    ) {
+        return 'review_follow_up_task_closure_policy.skip_low_findings';
+    }
+    const baseAction = kind === 'residual_risk'
+        ? resolution.base_policy.residual_risk
+        : resolution.base_policy.findings[severity as ReviewFindingsSeverity];
+    const effectiveAction = kind === 'residual_risk'
+        ? resolution.policy.residual_risk
+        : resolution.policy.findings[severity as ReviewFindingsSeverity];
+    if (
+        closurePolicy.forbid_child_tasks
+        && baseAction === 'create_follow_up'
+        && effectiveAction === 'fix_now'
+    ) {
+        return 'review_follow_up_task_closure_policy.forbid_child_tasks';
+    }
+    return kind === 'residual_risk'
+        ? 'review_finding_policy.residual_risk'
+        : `review_finding_policy.findings.${severity}`;
 }
 
 function emptyCounts(): Record<ReviewFindingDispositionAction, number> {
@@ -259,11 +421,22 @@ function evaluateIds(
 
     const totalCount = countsByAction.fix_now + countsByAction.create_follow_up + countsByAction.ignore;
     const blockingCount = countsByAction.fix_now;
+    const closurePolicyEvidence = policyResolution.follow_up_task_closure_policy.eligible
+        ? {
+            base_review_finding_policy: clonePolicy(policyResolution.base_policy),
+            review_follow_up_task_closure_policy: cloneClosurePolicy(
+                policyResolution.follow_up_task_closure_policy
+            ),
+            review_follow_up_task_closure_policy_source:
+                policyResolution.follow_up_task_closure_policy_source
+        }
+        : {};
     return {
         schema_version: 1,
         policy_id: policyResolution.policy.policy_id,
         policy_source: policyResolution.source,
         policy_diagnostics: [...policyResolution.diagnostics],
+        ...closurePolicyEvidence,
         findings,
         residual_risks: residualRisks,
         counts_by_action: countsByAction,

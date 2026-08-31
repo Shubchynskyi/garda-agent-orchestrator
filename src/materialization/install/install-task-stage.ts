@@ -1,7 +1,12 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { ensureDirectory, pathExists, readTextFile } from '../../core/filesystem';
-import { buildTaskContentWithExistingQueue } from '../content-builders';
+import {
+    buildTaskContentWithExistingQueue,
+    getTaskQueueTableRange,
+    setTaskQueueRowsInManagedBlock
+} from '../content-builders';
 import type { InstallFilesystemStage } from './install-contracts';
 
 export interface RunInstallTaskStageOptions {
@@ -11,6 +16,43 @@ export interface RunInstallTaskStageOptions {
     preserveExisting: boolean;
     answerDependentOnly: boolean;
     filesystem: InstallFilesystemStage;
+}
+
+function inspectSafeTaskFile(taskPath: string, targetRoot: string): boolean {
+    const resolvedTargetRoot = path.resolve(targetRoot);
+    const resolvedTaskPath = path.resolve(taskPath);
+    const relativePath = path.relative(resolvedTargetRoot, resolvedTaskPath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        throw new Error(`GARDA_INSTALL_BLOCKED: TASK.md escapes target root: ${taskPath}`);
+    }
+
+    let stats: fs.Stats;
+    try {
+        stats = fs.lstatSync(taskPath);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return false;
+        }
+        throw error;
+    }
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+        throw new Error(`GARDA_INSTALL_BLOCKED: TASK.md must be a regular file inside target root: ${taskPath}`);
+    }
+    return true;
+}
+
+function buildTaskContentPreservingExplicitEmptyQueue(
+    templateContent: string,
+    existingContent: string
+): string | null {
+    const nextContent = buildTaskContentWithExistingQueue(templateContent, existingContent);
+    if (!nextContent) return null;
+
+    const existingQueue = getTaskQueueTableRange(existingContent);
+    if (existingQueue && existingQueue.rowsStartIndex === existingQueue.rowsEndIndex) {
+        return setTaskQueueRowsInManagedBlock(nextContent, []);
+    }
+    return nextContent;
 }
 
 export function runInstallTaskStage(options: RunInstallTaskStageOptions): void {
@@ -34,17 +76,19 @@ export function runInstallTaskStage(options: RunInstallTaskStageOptions): void {
                 ensureDirectory(destDir);
             }
 
-            if (pathExists(destPath)) {
+            if (inspectSafeTaskFile(destPath, targetRoot)) {
+                if (!dryRun) {
+                    filesystem.backupFile(destPath, relativePath);
+                }
                 const templateContent = filesystem.getTemplateContent(sourcePath, relativePath);
                 if (templateContent !== null) {
                     const existingContent = readTextFile(destPath);
-                    const nextContent = buildTaskContentWithExistingQueue(
+                    const nextContent = buildTaskContentPreservingExplicitEmptyQueue(
                         templateContent,
                         existingContent
                     );
                     if (preserveExisting) metrics.skippedExisting++;
                     if (nextContent && nextContent !== existingContent) {
-                        filesystem.backupFile(destPath, relativePath);
                         if (!dryRun) {
                             filesystem.writeTextFile(destPath, nextContent);
                         }
@@ -69,20 +113,35 @@ export function runInstallTaskStage(options: RunInstallTaskStageOptions): void {
     if (!pathExists(taskSourcePath)) {
         return;
     }
-    if (pathExists(taskDestPath)) {
+    if (inspectSafeTaskFile(taskDestPath, targetRoot)) {
+        if (!dryRun) {
+            filesystem.backupFile(taskDestPath, TASK_QUEUE_FILENAME);
+        }
         const templateContent = filesystem.getTemplateContent(
             taskSourcePath,
             TASK_QUEUE_FILENAME
         );
-        if (
-            templateContent !== null
-            && filesystem.syncTaskFileOnDisk(
-                taskDestPath,
-                TASK_QUEUE_FILENAME,
-                templateContent
-            )
-        ) {
-            metrics.aligned++;
+        if (templateContent !== null) {
+            if (dryRun) {
+                const existingContent = readTextFile(taskDestPath);
+                const nextContent = buildTaskContentPreservingExplicitEmptyQueue(
+                    templateContent,
+                    existingContent
+                );
+                if (nextContent && nextContent !== existingContent) {
+                    metrics.aligned++;
+                }
+            } else {
+                const existingContent = readTextFile(taskDestPath);
+                const nextContent = buildTaskContentPreservingExplicitEmptyQueue(
+                    templateContent,
+                    existingContent
+                );
+                if (nextContent && nextContent !== existingContent) {
+                    filesystem.writeTextFile(taskDestPath, nextContent);
+                    metrics.aligned++;
+                }
+            }
         }
         return;
     }

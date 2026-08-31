@@ -21,6 +21,10 @@ import {
 } from '../shared/known-nonblocking-signals';
 import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
+function formatInlineText(value: string): string {
+    return value.replace(/[\r\n\u2028\u2029]+/gu, ' ').trim();
+}
+
 export function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
 }
@@ -315,10 +319,49 @@ export function formatNextStepText(result: NextStepResult): string {
             }
         }
     }
+    if (result.task_start_guidance) {
+        const guidance = result.task_start_guidance;
+        if (guidance.skill.mode === 'direct') {
+            const activationState = guidance.skill.activation_commands.length > 0
+                ? 'guarded activation command(s) are listed above'
+                : 'no activation command is pending';
+            lines.push(
+                `TaskStartSkillSuggestion: ${guidance.skill.suggested_skill_ids.join(', ')}; ${activationState}`
+            );
+        } else {
+            lines.push(
+                `TaskStartSkillCatalog: relevant=none; catalog=${guidance.skill.catalog_path || 'unavailable'}`
+            );
+        }
+        if (guidance.review) {
+            const reviewLaneSummary = guidance.review.lanes.length > 0
+                ? guidance.review.lanes.map((lane) => (
+                    `${lane.id}:${formatInlineText(lane.display_label)}:${lane.selection}:profile_${lane.profile_state}`
+                )).join(', ')
+                : 'none';
+            const omittedSuffix = guidance.review.omitted_lane_count > 0
+                ? `; omitted=${guidance.review.omitted_lane_count}`
+                : '';
+            lines.push(
+                `TaskStartReview${guidance.review.mode === 'direct' ? 'Suggestion' : 'Catalog'}: ` +
+                `${reviewLaneSummary}${omittedSuffix}; advisory_only=true`
+            );
+            lines.push(
+                'TaskStartReviewPolicy: guidance never makes a lane mandatory; catalog/profile policy and RequiredReviews remain authoritative.'
+            );
+        }
+    }
     if (result.quality_checklist) {
         lines.push(result.quality_checklist.visible_summary_line);
     }
-    lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
+    lines.push(`ReviewExecutionOrder: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
+    const findingPolicyActions = result.review.review_finding_policy_actions;
+    lines.push(
+        `FindingPolicy: ${result.review.review_finding_policy_id} (${result.review.review_finding_policy_source}); `
+        + `critical=${findingPolicyActions.critical}; high=${findingPolicyActions.high}; `
+        + `medium=${findingPolicyActions.medium}; low=${findingPolicyActions.low}; `
+        + `residual_risk=${findingPolicyActions.residual_risk}`
+    );
     if (result.review.required_reviews.length > 0) {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);
     } else {
@@ -371,7 +414,7 @@ export function formatNextStepText(result: NextStepResult): string {
         lines.push(`FinalUserReportPath: ${result.final_report.final_user_report_path}`);
         lines.push(`CopyPasteFinalUserReportSha256: ${result.final_report.final_user_report_sha256}`);
         lines.push(`CopyPasteFinalUserReport:\n${result.final_report.final_user_report_body}`);
-        lines.push('FinalUserReportInstruction: write a short summary of what you did, then paste CopyPasteFinalUserReport exactly as printed, without code fences, wrappers, paraphrase, interpretation, summarization, or reformatting; after that, present only the commit command and commit permission question listed in FinalReportOrder.');
+        lines.push('FinalUserReportInstruction: write a short summary of what you did, then paste the compact CopyPasteFinalUserReport exactly as printed; do not expand referenced audit artifacts into chat; after that, present only the commit command and commit permission question listed in FinalReportOrder.');
         lines.push(`CloseoutArtifact: ${result.final_report.closeout_json_path}`);
         lines.push(`CloseoutMarkdown: ${result.final_report.closeout_markdown_path}`);
         lines.push('FinalReportOrder:');

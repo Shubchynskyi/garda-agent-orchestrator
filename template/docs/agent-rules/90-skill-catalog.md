@@ -29,6 +29,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Template must stay generic; project-specific specialists are not written back into `template/`.
 - Capability flags for optional specialists are managed in:
   `garda-agent-orchestrator/live/config/review-capabilities.json`.
+- Optional custom review-lane declarations are managed in `garda-agent-orchestrator/live/config/review-catalog.json`; absence remains compatible with the built-in review lanes.
+- Profile lane states and review dependency graphs are managed in `garda-agent-orchestrator/live/config/profiles.json` and become immutable for a task when its current task snapshot is created.
 - Compact optional-skill discovery metadata for pack suggestion and init-time recommendations is managed in:
   `garda-agent-orchestrator/live/config/skills-index.json`.
 - Compact task-start optional-skill selection headlines are managed in:
@@ -48,6 +50,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - after the user selects a pack, install/copy it into `garda-agent-orchestrator/live/skills/**` without reading the full optional `SKILL.md`;
   - do not open a full optional `SKILL.md` unless that selected skill is actually being activated for a task or a hard activation rule requires it;
   - after a pack is installed, full optional skills live under `garda-agent-orchestrator/live/skills/**`.
+- During ordinary task execution, use the compact task-start catalog summary, preflight snapshot, and generated reviewer launch input. Do not read the complete review catalog or unrelated review skills into normal agent context.
 
 ## Preflight Gate (Mandatory)
 - Before preflight, enter task mode explicitly:

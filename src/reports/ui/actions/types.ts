@@ -63,6 +63,10 @@ export interface UiActionAuditRecord {
     timed_out?: boolean;
     timeout_ms?: number;
     error?: string;
+    task_id?: string;
+    before_notes_sha256?: string | null;
+    after_notes_sha256?: string | null;
+    proposed_value?: Record<string, boolean>;
 }
 
 export interface ParsedUiSettingValue {

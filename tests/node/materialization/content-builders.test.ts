@@ -270,7 +270,7 @@ describe('buildTaskContentWithExistingQueue', () => {
 
         assert.ok(result!.startsWith('preface\n'));
         assert.ok(result!.includes('New header.'));
-        assert.match(result!, /\| T-OLD \| DONE\s+\| P1\s+\| area \| old\s+\| me\s+\| 2026-01-01 \| default \| old\s+\|/);
+        assert.match(result!, /\| T-OLD \| 🟩 DONE\s+\| P1\s+\| area \| old\s+\| me\s+\| 2026-01-01 \| default \| old\s+\|/);
         assert.ok(result!.includes('## User Notes'));
         assert.ok(result!.includes('keep this'));
         assert.ok(!result!.includes('T-NEW'));
@@ -341,7 +341,7 @@ describe('buildTaskContentWithExistingQueue', () => {
 
         assert.ok(result!.startsWith('operator preface\n\n'));
         assert.ok(result!.includes('New header.'));
-        assert.match(result!, /\| T-OLD \| TODO\s+\| P1\s+\| area \| old\s+\| me\s+\| 2026-01-01 \| default \| old\s+\|/);
+        assert.match(result!, /\| T-OLD \| 🟦 TODO\s+\| P1\s+\| area \| old\s+\| me\s+\| 2026-01-01 \| default \| old\s+\|/);
         assert.ok(result!.includes('## User Notes'));
         assert.ok(result!.includes('keep suffix'));
         assert.ok(!result!.includes('Old generated header.'));

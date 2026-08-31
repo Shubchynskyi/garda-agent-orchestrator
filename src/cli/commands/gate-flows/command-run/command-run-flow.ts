@@ -2,13 +2,19 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { appendTaskEventAsync } from '../../../../gate-runtime/task-events-io';
+import { isPlainRecord } from '../../../../core/records';
+import { readTaskQueueEntries } from '../../../../core/task-queue-read';
 import {
     buildOutputTelemetry,
     formatVisibleSavingsLine,
 } from '../../../../gate-runtime/token-telemetry';
 import { EXIT_GATE_FAILURE, EXIT_SUCCESS } from '../../../exit-codes';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import { isFocusedIntermediateCommand } from '../../../../gates/shared/focused-intermediate-command-grammar';
+import {
+    getChangedTestPathsTargetedByCommandTokens,
+    isFocusedIntermediateCommand
+} from '../../../../gates/shared/focused-intermediate-command-grammar';
+import { hasTestFirstExpectedRedDeclaration } from '../../../../gates/test-first/test-first-declaration';
 import { executeCommandAsync, splitCommandLine } from '../../../gate-cli/gates-subprocess';
 
 const ALLOWED_COMMAND_SOURCES = ['node-test', 'targeted-test', 'typecheck', 'validation'] as const;
@@ -16,6 +22,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_FAILURE_TAIL_LINES = 50;
 
 type IntermediateCommandSource = (typeof ALLOWED_COMMAND_SOURCES)[number];
+type IntermediateCommandStatus = 'PASSED' | 'FAILED' | 'EXPECTED_FAILURE' | 'UNEXPECTED_PASS';
 
 export interface RunIntermediateCommandOptions {
     taskId?: unknown;
@@ -27,6 +34,8 @@ export interface RunIntermediateCommandOptions {
     preflightPath?: unknown;
     preflightSha256?: unknown;
     coverageContractSha256?: unknown;
+    expectFailure?: unknown;
+    signal?: AbortSignal;
     repoRoot?: unknown;
     eventsRoot?: unknown;
 }
@@ -46,8 +55,12 @@ interface IntermediateCommandRecord {
     task_id: string;
     command_source: IntermediateCommandSource;
     command: string;
-    status: 'PASSED' | 'FAILED';
+    status: IntermediateCommandStatus;
     exit_code: number;
+    expected_failure?: true;
+    test_scope_sha256?: string;
+    timed_out?: boolean;
+    cancelled?: boolean;
     duration_ms: number;
     output_artifact: string;
     output_artifact_sha256: string;
@@ -100,6 +113,10 @@ function normalizeCommandSource(value: unknown): IntermediateCommandSource {
     return commandSource as IntermediateCommandSource;
 }
 
+function normalizeBoolean(value: unknown): boolean {
+    return value === true || String(value || '').trim().toLowerCase() === 'true';
+}
+
 function basenameLower(token: string): string {
     return path.basename(token).toLowerCase();
 }
@@ -128,6 +145,82 @@ function isAllowedIntermediateCommand(command: string, commandSource: Intermedia
         return isNpmToken(tokens[0]) && args[0] === 'run' && /^validate(?::|-|$)/.test(args[1] ?? '');
     }
     return false;
+}
+
+interface ExpectedFailurePreflightBinding {
+    preflightSha256: string;
+    testScopeSha256: string;
+}
+
+function readExpectedFailurePreflightBinding(options: {
+    repoRoot: string;
+    taskId: string;
+    command: string;
+    commandSource: IntermediateCommandSource;
+    preflightPath?: string;
+    requestedPreflightSha256?: string;
+}): ExpectedFailurePreflightBinding {
+    if (options.commandSource !== 'node-test' && options.commandSource !== 'targeted-test') {
+        throw new Error('--expect-failure is allowed only for node-test or targeted-test commands.');
+    }
+    if (!options.preflightPath) {
+        throw new Error('--expect-failure requires --preflight-path.');
+    }
+    const reviewsRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'reviews'));
+    if (!gateHelpers.isPathRealpathInsideRoot(options.preflightPath, reviewsRoot)) {
+        throw new Error('--expect-failure preflight must be a regular artifact inside the Garda reviews root.');
+    }
+    let preflight: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(options.preflightPath, 'utf8')) as unknown;
+        if (!isPlainRecord(parsed)) {
+            throw new Error('not an object');
+        }
+        preflight = parsed;
+    } catch {
+        throw new Error('--expect-failure preflight must be a readable JSON object.');
+    }
+    if (String(preflight.task_id || '').trim() !== options.taskId) {
+        throw new Error('--expect-failure preflight task_id must match --task-id.');
+    }
+    if (String(preflight.scope_category || '').trim().toLowerCase() !== 'test-only') {
+        throw new Error('--expect-failure requires a current test-only preflight scope.');
+    }
+    const taskEntry = readTaskQueueEntries(options.repoRoot).get(options.taskId);
+    if (!hasTestFirstExpectedRedDeclaration(taskEntry)) {
+        throw new Error('--expect-failure requires the exact TASK.md Notes marker "Test-first: expected-red".');
+    }
+    const changedFiles = new Set(
+        (Array.isArray(preflight.changed_files) ? preflight.changed_files : [])
+            .map((entry) => gateHelpers.normalizePath(String(entry || '').trim()).replace(/^\.\/?/u, ''))
+            .filter(Boolean)
+    );
+    const focusedTestPaths = getChangedTestPathsTargetedByCommandTokens(
+        splitCommandLine(options.command),
+        [...changedFiles]
+    );
+    if (focusedTestPaths.length === 0) {
+        throw new Error('--expect-failure command must name a concrete changed test from the current preflight scope.');
+    }
+    const actualPreflightSha256 = gateHelpers.fileSha256(options.preflightPath);
+    if (!actualPreflightSha256) {
+        throw new Error('Unable to hash --expect-failure preflight evidence.');
+    }
+    if (
+        options.requestedPreflightSha256
+        && options.requestedPreflightSha256 !== actualPreflightSha256
+    ) {
+        throw new Error('--preflight-sha256 does not match the current --expect-failure preflight artifact.');
+    }
+    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
+    const testScopeSha256 = String(metrics.scope_content_sha256 || metrics.scope_sha256 || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/u.test(testScopeSha256)) {
+        throw new Error('--expect-failure preflight is missing a valid current scope SHA-256 binding.');
+    }
+    return {
+        preflightSha256: actualPreflightSha256,
+        testScopeSha256
+    };
 }
 
 function buildDefaultArtifacts(
@@ -166,7 +259,7 @@ function boundedTail(lines: string[]): string[] {
 }
 
 function formatStatusLines(
-    status: 'PASSED' | 'FAILED',
+    status: IntermediateCommandStatus,
     commandSource: IntermediateCommandSource,
     command: string,
     exitCode: number,
@@ -174,8 +267,13 @@ function formatStatusLines(
     artifactPath: string,
     outputPath: string,
 ): string[] {
+    const statusLabel = status === 'EXPECTED_FAILURE'
+        ? 'TEST_FIRST_EXPECTED_FAILURE_RECORDED'
+        : status === 'UNEXPECTED_PASS'
+            ? 'TEST_FIRST_EXPECTED_FAILURE_NOT_REPRODUCED'
+            : `INTERMEDIATE_COMMAND_${status}`;
     return [
-        `INTERMEDIATE_COMMAND_${status}`,
+        statusLabel,
         `CommandSource: ${commandSource}`,
         `Command: ${command}`,
         `ExitCode: ${exitCode}`,
@@ -208,18 +306,27 @@ async function persistCommandEvent(
     taskId: string,
     commandSource: IntermediateCommandSource,
     command: string,
-    status: 'PASSED' | 'FAILED',
+    status: IntermediateCommandStatus,
     record: IntermediateCommandRecord,
     artifactPath: string,
     artifactSha256: string,
     eventsRoot?: string,
 ): Promise<void> {
+    const expectedFailure = record.expected_failure === true;
+    const eventType = expectedFailure
+        ? 'TEST_FIRST_EXPECTED_FAILURE_RECORDED'
+        : 'INTERMEDIATE_COMMAND_RUN';
+    const outcome = expectedFailure
+        ? (status === 'EXPECTED_FAILURE' ? 'PASS' : 'FAIL')
+        : status;
     await appendTaskEventAsync(
         gateHelpers.joinOrchestratorPath(repoRoot, ''),
         taskId,
-        'INTERMEDIATE_COMMAND_RUN',
-        status,
-        `Intermediate ${commandSource} command ${status.toLowerCase()}.`,
+        eventType,
+        outcome,
+        expectedFailure
+            ? `Test-first ${commandSource} expected failure ${status === 'EXPECTED_FAILURE' ? 'recorded' : 'not reproduced'}.`
+            : `Intermediate ${commandSource} command ${status.toLowerCase()}.`,
         {
             command_source: commandSource,
             command,
@@ -234,6 +341,13 @@ async function persistCommandEvent(
             output_telemetry: record.output_telemetry,
             exit_code: record.exit_code,
             duration_ms: record.duration_ms,
+            ...(expectedFailure ? {
+                expected_failure: true,
+                recorded_status: status,
+                test_scope_sha256: record.test_scope_sha256,
+                timed_out: record.timed_out === true,
+                cancelled: record.cancelled === true
+            } : {}),
         },
         {
             actor: 'gate',
@@ -252,7 +366,20 @@ export async function runIntermediateCommandCommand(
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
     const preflightPathInput = normalizeOptionalString(options.preflightPath);
     const preflightPath = preflightPathInput ? path.resolve(repoRoot, preflightPathInput) : undefined;
-    const preflightSha256 = normalizeOptionalSha256(options.preflightSha256, '--preflight-sha256')
+    const requestedPreflightSha256 = normalizeOptionalSha256(options.preflightSha256, '--preflight-sha256');
+    const expectFailure = normalizeBoolean(options.expectFailure);
+    const expectedFailureBinding = expectFailure
+        ? readExpectedFailurePreflightBinding({
+            repoRoot,
+            taskId,
+            command,
+            commandSource,
+            preflightPath,
+            requestedPreflightSha256
+        })
+        : null;
+    const preflightSha256 = expectedFailureBinding?.preflightSha256
+        ?? requestedPreflightSha256
         ?? (preflightPath ? gateHelpers.fileSha256(preflightPath) ?? undefined : undefined);
     const coverageContractSha256 = normalizeOptionalSha256(options.coverageContractSha256, '--coverage-contract-sha256');
 
@@ -273,7 +400,11 @@ export async function runIntermediateCommandCommand(
         options.outputPath,
     );
     const startedAt = Date.now();
-    const result = await executeCommandAsync(command, { cwd: repoRoot, timeoutMs });
+    const result = await executeCommandAsync(command, {
+        cwd: repoRoot,
+        timeoutMs,
+        signal: options.signal
+    });
     const durationMs = Date.now() - startedAt;
     const rawLines = result.outputLines;
     fs.mkdirSync(path.dirname(artifacts.outputPath), { recursive: true });
@@ -284,7 +415,15 @@ export async function runIntermediateCommandCommand(
     }
     const outputArtifactSizeBytes = fs.statSync(artifacts.outputPath).size;
 
-    const status = result.exitCode === EXIT_SUCCESS ? 'PASSED' : 'FAILED';
+    const status: IntermediateCommandStatus = expectFailure
+        ? result.timedOut || result.cancelled
+            ? 'FAILED'
+            : result.exitCode === EXIT_SUCCESS
+                ? 'UNEXPECTED_PASS'
+                : 'EXPECTED_FAILURE'
+        : result.exitCode === EXIT_SUCCESS
+            ? 'PASSED'
+            : 'FAILED';
     const statusLines = formatStatusLines(
         status,
         commandSource,
@@ -298,7 +437,11 @@ export async function runIntermediateCommandCommand(
     const telemetry = buildOutputTelemetry(rawLines, visibleLines, {
         filterMode: 'compact_summary',
         parserName: 'intermediate-command',
-        parserStrategy: status === 'PASSED' ? 'status_summary' : 'bounded_failure_tail',
+        parserStrategy: status === 'PASSED'
+            ? 'status_summary'
+            : status === 'EXPECTED_FAILURE'
+                ? 'bounded_expected_failure_tail'
+                : 'bounded_failure_tail',
     });
     const record: IntermediateCommandRecord = {
         schema_version: 1,
@@ -307,6 +450,12 @@ export async function runIntermediateCommandCommand(
         command,
         status,
         exit_code: result.exitCode,
+        ...(expectFailure ? {
+            expected_failure: true as const,
+            test_scope_sha256: expectedFailureBinding!.testScopeSha256,
+            timed_out: result.timedOut,
+            cancelled: result.cancelled
+        } : {}),
         duration_ms: durationMs,
         output_artifact: artifacts.outputPath,
         output_artifact_sha256: outputArtifactSha256,
@@ -341,7 +490,9 @@ export async function runIntermediateCommandCommand(
     });
     const outputLines = [...visibleLines, `OutputTelemetry: ${formatTelemetryLine(telemetry)}`];
     return {
-        exitCode: result.exitCode,
+        exitCode: expectFailure
+            ? (status === 'EXPECTED_FAILURE' ? EXIT_SUCCESS : EXIT_GATE_FAILURE)
+            : result.exitCode,
         outputLines: savingsLine ? [...outputLines, savingsLine] : outputLines,
     };
 }

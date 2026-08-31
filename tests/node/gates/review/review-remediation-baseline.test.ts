@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
-import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
+import { serializeRedactedJson, sha256RedactedJsonPayload } from '../../../../src/core/redaction';
 import type { ReviewFindingsDispositionArtifact } from '../../../../src/gates/review/review-findings-disposition-artifact';
 import type { ReviewFindingsValidationArtifact } from '../../../../src/gates/review/review-findings-validation-artifact';
 import {
@@ -27,8 +27,12 @@ import {
 } from '../../../../src/gates/review-remediation/review-remediation-delta-contract';
 import {
     classifyReviewRemediationDelta,
+    REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES,
     REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS
 } from '../../../../src/gates/review-remediation/review-remediation-delta';
+import {
+    getReviewRemediationDeltaClassificationViolations
+} from '../../../../src/gates/review-remediation/review-remediation-validation-evidence';
 
 const temporaryRoots: string[] = [];
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
@@ -536,6 +540,32 @@ describe('review remediation delta classification', () => {
         });
     }
 
+    it('keeps delta line evidence valid after durable redacted JSON serialization', () => {
+        const fixture = buildFixture(createTempRoot());
+        const sourcePath = path.join(fixture.root, 'src', 'example.ts');
+        fs.writeFileSync(
+            sourcePath,
+            'const match = html.match(/const actionToken = "([^"]+)";/u);\n',
+            'utf8'
+        );
+        fixture.baseline.delta_base = buildReviewRemediationDeltaBase({
+            repoRoot: fixture.root,
+            taskId: fixture.taskId,
+            reviewType: fixture.reviewType,
+            reviewTreeStateSha256: fixture.treeSha256,
+            changedFiles: fixture.deltaBaseFiles
+        });
+        const serialized = serializeRedactedJson(fixture.baseline);
+        fs.writeFileSync(fixture.baselinePath, serialized, 'utf8');
+        fixture.baselineSha256 = hash(serialized);
+        fs.appendFileSync(sourcePath, 'export const fixed = true;\n', 'utf8');
+
+        const result = classifyFixture(fixture);
+
+        assert.equal(result.full_review_required, false);
+        assert.equal(result.changed_lines_total, 1);
+    });
+
     it('excludes unchanged task files and reports exact post-baseline line counts', () => {
         const fixture = buildFixture(createTempRoot());
         fs.appendFileSync(path.join(fixture.root, 'src', 'example.ts'), 'export const fixed = true;\n', 'utf8');
@@ -548,6 +578,155 @@ describe('review remediation delta classification', () => {
         assert.equal(result.file_deltas[0].additions, 1);
         assert.equal(result.file_deltas[0].deletions, 0);
         assert.equal(result.changed_lines_total, 1);
+        assert.equal(result.full_review_required, false);
+        assert.equal(result.scope.membership_unchanged, true);
+        assert.deepEqual(result.scope.required_delta_targets, ['src/example.ts']);
+        assert.ok(result.scope.optional_context_files.includes('src/second.ts'));
+        assert.ok(result.readable_diff.page_count > 0);
+    });
+
+    it('redacts snapshot text and rejects replaced readable evidence', () => {
+        const fixture = buildFixture(createTempRoot());
+        const sourcePath = path.join(fixture.root, 'src', 'example.ts');
+        const secret = 'plain-text-secret-token';
+        fs.writeFileSync(sourcePath, `export const apiToken = "${secret}";\n`, 'utf8');
+        fixture.baseline.delta_base = buildReviewRemediationDeltaBase({
+            repoRoot: fixture.root,
+            taskId: fixture.taskId,
+            reviewType: fixture.reviewType,
+            reviewTreeStateSha256: fixture.treeSha256,
+            changedFiles: fixture.deltaBaseFiles
+        });
+        fixture.baselineSha256 = writeJson(fixture.baselinePath, fixture.baseline);
+
+        const baselineEntry = fixture.baseline.delta_base.entries.find((entry) => entry.path === 'src/example.ts');
+        assert.ok(baselineEntry);
+        assert.equal(baselineEntry.redaction_applied, true);
+        assert.doesNotMatch(baselineEntry.redacted_lines?.join('') || '', new RegExp(secret, 'u'));
+
+        const longAddedLine = `export const payload = "${'x'.repeat(REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES * 2)}";\n`;
+        fs.appendFileSync(sourcePath, longAddedLine, 'utf8');
+        const result = classifyFixture(fixture);
+        const repeated = classifyFixture(fixture);
+
+        assert.equal(result.full_review_required, false);
+        assert.ok(result.readable_diff.page_count >= 3);
+        assert.ok(result.readable_diff.pages.every((page) => (
+            page.utf8_bytes <= REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES
+        )));
+        assert.deepEqual(result.readable_diff, repeated.readable_diff);
+        assert.doesNotMatch(JSON.stringify(result.readable_diff), new RegExp(secret, 'u'));
+        assert.deepEqual(getReviewRemediationDeltaClassificationViolations(result), []);
+
+        const tampered = structuredClone(result);
+        tampered.readable_diff.pages[0].lines[0].text = 'forged replacement\n';
+        const violations = getReviewRemediationDeltaClassificationViolations(tampered);
+        assert.ok(violations.some((violation) => (
+            violation.includes('readable_diff.pages[0].page_sha256')
+        )));
+        assert.ok(violations.some((violation) => violation.includes('readable_diff.evidence_sha256')));
+
+        const redactionEquivalentTamper = structuredClone(result);
+        const redactedPage = redactionEquivalentTamper.readable_diff.pages.find((page) => (
+            page.lines.some((line) => line.text.includes('<redacted>'))
+        ));
+        assert.ok(redactedPage);
+        const redactedLine = redactedPage.lines.find((line) => line.text.includes('<redacted>'));
+        assert.ok(redactedLine);
+        redactedLine.text = redactedLine.text.replace('<redacted>', 'raw-secret');
+        const { page_sha256: ignoredPageHash, ...pageWithoutHash } = redactedPage;
+        void ignoredPageHash;
+        redactedPage.page_sha256 = sha256RedactedJsonPayload(pageWithoutHash);
+        const {
+            evidence_sha256: ignoredEvidenceHash,
+            ...evidenceWithoutHash
+        } = redactionEquivalentTamper.readable_diff;
+        void ignoredEvidenceHash;
+        redactionEquivalentTamper.readable_diff.evidence_sha256 = sha256RedactedJsonPayload(
+            evidenceWithoutHash
+        );
+
+        const redactionEquivalentViolations = getReviewRemediationDeltaClassificationViolations(
+            redactionEquivalentTamper
+        );
+        assert.ok(redactionEquivalentViolations.some((violation) => (
+            violation.includes('readable_diff.pages') && violation.includes('only redacted text')
+        )));
+        assert.ok(redactionEquivalentViolations.some((violation) => (
+            violation.includes('readable_diff.pages') && violation.includes('page_sha256')
+        )));
+    });
+
+    it('forces FULL when non-text content snapshot budget or path identity is invalid', () => {
+        const binaryFixture = buildFixture(createTempRoot());
+        fs.writeFileSync(
+            path.join(binaryFixture.root, 'src', 'example.ts'),
+            Buffer.from([0x00, 0x01, 0x02, 0x03])
+        );
+        const binaryResult = classifyFixture(binaryFixture);
+        assert.equal(binaryResult.full_review_required, true);
+        assert.match(binaryResult.full_review_reasons.join('\n'), /content is not an ordinary text modification/iu);
+
+        const budgetFixture = buildFixture(createTempRoot());
+        fs.writeFileSync(
+            path.join(budgetFixture.root, 'src', 'example.ts'),
+            Buffer.alloc(REVIEW_REMEDIATION_DELTA_MAX_TEXT_BYTES + 1, 0x61)
+        );
+        const budgetResult = classifyFixture(budgetFixture);
+        assert.equal(budgetResult.full_review_required, true);
+        assert.match(budgetResult.full_review_reasons.join('\n'), /content_size_limit_exceeded/iu);
+
+        const replacedFixture = buildFixture(createTempRoot());
+        const replacedPath = path.join(replacedFixture.root, 'src', 'example.ts');
+        const fsForPatch = requireFromTest('node:fs') as {
+            openSync: (filePath: fs.PathLike, ...args: unknown[]) => number;
+        };
+        const originalOpenSync = fsForPatch.openSync;
+        let replacementAttempted = false;
+        fsForPatch.openSync = (filePath: fs.PathLike, ...args: unknown[]) => {
+            if (!replacementAttempted && path.resolve(String(filePath)) === path.resolve(replacedPath)) {
+                replacementAttempted = true;
+                fs.rmSync(replacedPath);
+                fs.writeFileSync(replacedPath, 'untrusted replacement content\n', 'utf8');
+            }
+            return originalOpenSync(filePath, ...args);
+        };
+        let replacedResult: ReturnType<typeof classifyFixture>;
+        try {
+            replacedResult = classifyFixture(replacedFixture);
+        } finally {
+            fsForPatch.openSync = originalOpenSync;
+        }
+        assert.equal(replacementAttempted, true);
+        assert.equal(replacedResult.full_review_required, true);
+        assert.match(replacedResult.full_review_reasons.join('\n'), /unreviewable/iu);
+    });
+
+    it('forces FULL for scope membership new deleted and type drift', () => {
+        const newFileFixture = buildFixture(createTempRoot());
+        const newFile = 'src/post-baseline-added.ts';
+        fs.writeFileSync(path.join(newFileFixture.root, newFile), 'export const added = true;\n', 'utf8');
+        const newFileResult = classifyFixture(
+            newFileFixture,
+            [...newFileFixture.deltaBaseFiles, newFile]
+        );
+        assert.equal(newFileResult.full_review_required, true);
+        assert.equal(newFileResult.scope.membership_unchanged, false);
+        assert.equal(newFileResult.file_deltas.find((entry) => entry.path === newFile)?.operation, 'added');
+
+        const deletedFixture = buildFixture(createTempRoot());
+        fs.rmSync(path.join(deletedFixture.root, 'src', 'example.ts'));
+        const deletedResult = classifyFixture(deletedFixture);
+        assert.equal(deletedResult.full_review_required, true);
+        assert.equal(deletedResult.file_deltas.find((entry) => entry.path === 'src/example.ts')?.operation, 'deleted');
+
+        const typeFixture = buildFixture(createTempRoot());
+        const typePath = path.join(typeFixture.root, 'src', 'example.ts');
+        fs.rmSync(typePath);
+        fs.mkdirSync(typePath);
+        const typeResult = classifyFixture(typeFixture);
+        assert.equal(typeResult.full_review_required, true);
+        assert.equal(typeResult.file_deltas.find((entry) => entry.path === 'src/example.ts')?.operation, 'type_changed');
     });
 
     it('retains permission-only changes in the remediation delta', () => {
@@ -586,6 +765,8 @@ describe('review remediation delta classification', () => {
             'path entered the current task scope after the baseline and is now missing'
         );
         assert.equal(result.changed_lines_total, null);
+        assert.equal(result.full_review_required, true);
+        assert.equal(result.scope.membership_unchanged, false);
     });
 
     it('classifies every single-domain remediation delta deterministically', () => {
@@ -897,10 +1078,19 @@ describe('review remediation delta classification', () => {
         assert.deepEqual(result.changed_files, ['src/link.ts']);
         assert.equal(result.file_deltas[0].operation, 'modified');
         assert.equal(result.file_deltas[0].reason, 'line delta is unavailable for symbolic_link -> symbolic_link');
+        assert.equal(result.full_review_required, true);
     });
 
     it('rejects foreign and incomplete baseline evidence before reading reuse policy', () => {
         const foreignFixture = buildFixture(createTempRoot());
+        assert.throws(() => classifyReviewRemediationDelta({
+            repoRoot: foreignFixture.root,
+            taskId: foreignFixture.taskId,
+            reviewType: foreignFixture.reviewType,
+            baselineArtifactPath: foreignFixture.baselinePath,
+            baselineArtifactSha256: hash('forged-baseline-hash'),
+            currentChangedFiles: foreignFixture.deltaBaseFiles
+        }), /artifact hash mismatch/iu);
         assert.throws(() => classifyReviewRemediationDelta({
             repoRoot: foreignFixture.root,
             taskId: 'T-foreign',

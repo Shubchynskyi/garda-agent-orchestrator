@@ -4,6 +4,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { buildNextStepTaskStartGuidance } from '../../../../src/gates/next-step/next-step-task-start-guidance';
 
 import {
     buildEventIntegrityHash,
@@ -16,6 +17,14 @@ import {
 } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { computeOptionalSkillSelectionFingerprint } from '../../../../src/runtime/optional-skill-selection';
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-CONTRACT-1';
@@ -126,12 +135,44 @@ function makeContractRepo(extraTaskMdLines: string[] = []): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'strict',
+        built_in_profiles: {
+            strict: {
+                description: 'Strict contract test profile',
+                depth: 3,
+                task_decomposition: { enabled: true },
+                review_policy: { code: 'auto', test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
 
     return repoRoot;
 }
 
 function seedStartedTask(repoRoot: string, taskId: string): void {
     const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        'strict',
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'before_test_review',
+            lockTimestampUtc: '2026-01-01T00:00:00.000Z'
+        }
+    );
     writeJson(taskModePath, buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -142,10 +183,24 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
         executionProviderSource: 'explicit_provider',
-        runtimeIdentityStatus: 'resolved'
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: 'strict',
+        profileSelectionSource: 'task_queue',
+        activeProfile: 'strict',
+        profileSource: 'built_in',
+        runtimeActiveProfile: 'strict',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
     }));
     appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', {
-        artifact_path: normalizeForTimeline(taskModePath)
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
     }, '2026-01-01T00:00:00.000Z');
     const rulePackPath = path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
     writeJson(rulePackPath, buildRulePackArtifact({
@@ -221,6 +276,68 @@ function seedOptionalSkillSelectionPolicy(
         path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'optional-skill-selection-policy.json'),
         { version: 1, mode }
     );
+}
+
+function materializePreflightReviewPolicyEvidence(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    optionalSkillIds: string[] = []
+): ReturnType<typeof buildEffectiveReviewSnapshot> {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const taskMode = JSON.parse(
+        fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8')
+    ) as Record<string, unknown>;
+    const frozenProfileSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        frozenProfileSnapshot.source.effective_profile,
+        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+        frozenProfileSnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    const legacyRequiredReviews = preflight.required_reviews && typeof preflight.required_reviews === 'object'
+        ? preflight.required_reviews as Record<string, boolean>
+        : Object.fromEntries(catalog.review_types.map((lane) => [lane.id, false]));
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: frozenProfileSnapshot.snapshot_hash,
+        legacyRequiredReviews,
+        scopeCategory: String(preflight.scope_category || (changedFiles.length > 0 ? 'code' : 'empty')),
+        taskIntent: TASK_TITLE,
+        changedFiles,
+        taskTriggers: {},
+        optionalSkillIds,
+        reviewExecutionPolicyMode: 'code_first_optional',
+        reviewDependencyGraph: null,
+        fullSuiteValidation: {
+            enabled: false,
+            placement: 'before_test_review'
+        },
+        includeDependencyGraph: true,
+        zeroDiffBaselineOnly: changedFiles.length === 0
+    });
+    writeJson(preflightPath, {
+        ...preflight,
+        required_reviews: effectiveReviewSnapshot.required_reviews,
+        profile_policy_snapshot: {
+            snapshot_hash: frozenProfileSnapshot.snapshot_hash
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional',
+            visible_summary_line: 'Review execution policy: code_first_optional',
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effective_review_snapshot: effectiveReviewSnapshot
+    });
+    return effectiveReviewSnapshot;
 }
 
 function seedOptionalSkillSelectionPreflight(
@@ -314,8 +431,15 @@ function seedOptionalSkillSelectionPreflight(
             visible_summary_line: `Optional skills: ${skillId} (reason: task_text)`
         }
     });
+    const effectiveReviewSnapshot = materializePreflightReviewPolicyEvidence(
+        repoRoot,
+        taskId,
+        preflightPath,
+        [skillId]
+    );
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: effectiveReviewSnapshot
     }, '2026-01-01T00:00:04.500Z');
     seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
 }
@@ -333,6 +457,12 @@ function seedCompileGatePass(repoRoot: string, taskId: string, timestampUtc = '2
         output_filters_path: normalizeForTimeline(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'output-filters.json'))
     });
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', {}, timestampUtc);
+}
+
+function readEffectiveReviewSnapshot(repoRoot: string, taskId: string): unknown {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    return preflight.effective_review_snapshot;
 }
 
 function seedReviewGatePass(repoRoot: string, taskId: string, timestampUtc = '2026-01-01T00:00:06.000Z'): void {
@@ -421,7 +551,156 @@ afterEach(() => {
     }
 });
 
+function buildTaskStartReviewSnapshot(options: { zeroDiff?: boolean; requireCode?: boolean } = {}) {
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const capabilities = Object.fromEntries(
+        catalog.review_types.map((lane) => [lane.id, true])
+    ) as ReviewCapabilitiesConfigMap;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        'balanced',
+        options.requireCode ? { code: true } : {},
+        capabilities,
+        catalog
+    );
+    return buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: 'a'.repeat(64),
+        legacyRequiredReviews: Object.fromEntries(catalog.review_types.map((lane) => [
+            lane.id,
+            options.requireCode === true && lane.id === 'code'
+        ])),
+        scopeCategory: options.zeroDiff ? 'empty' : 'code',
+        taskIntent: TASK_TITLE,
+        changedFiles: options.zeroDiff ? [] : ['src/gates/next-step/next-step.ts'],
+        taskTriggers: {},
+        optionalSkillIds: ['node-backend'],
+        zeroDiffBaselineOnly: options.zeroDiff === true
+    });
+}
+
 describe('next-step refactor contract baseline', () => {
+    it('builds direct task-start suggestions from current skill and required review snapshots', () => {
+        const repoRoot = makeContractRepo();
+        const guidance = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: ['node-backend'],
+                activation_commands: ['node bin/garda.js gate activate-optional-skill --skill-id "node-backend"'],
+                skill_catalog_path: 'garda-agent-orchestrator/live/config/skills-headlines.json'
+            },
+            preflight: {
+                effective_review_snapshot: buildTaskStartReviewSnapshot({ requireCode: true })
+            }
+        });
+
+        assert.equal(guidance?.skill.mode, 'direct');
+        assert.deepEqual(guidance?.skill.suggested_skill_ids, ['node-backend']);
+        assert.equal(guidance?.review?.mode, 'direct');
+        assert.deepEqual(guidance?.review?.lanes.map((lane) => lane.id), ['code']);
+        assert.equal(guidance?.review?.lanes[0]?.selection, 'required');
+        assert.equal(guidance?.review?.advisory_only, true);
+        const text = formatNextStepText({
+            ...resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            task_start_guidance: guidance
+        });
+        assert.match(text, /^TaskStartSkillSuggestion: node-backend; guarded activation command\(s\) are listed above$/mu);
+        assert.match(text, /^TaskStartReviewSuggestion: code:Code review:required:profile_required; advisory_only=true$/mu);
+        assert.match(text, /^TaskStartReviewPolicy: guidance never makes a lane mandatory;/mu);
+    });
+
+    it('falls back to bounded review catalog guidance without making lanes mandatory', () => {
+        const repoRoot = makeContractRepo();
+        const guidance = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: [],
+                activation_commands: [],
+                skill_catalog_path: 'garda-agent-orchestrator/live/config/skills-headlines.json'
+            },
+            preflight: {
+                effective_review_snapshot: buildTaskStartReviewSnapshot({ zeroDiff: true })
+            }
+        });
+
+        assert.equal(guidance?.skill.mode, 'catalog');
+        assert.equal(guidance?.review?.mode, 'catalog');
+        assert.equal(guidance?.review?.lanes.length, 9);
+        assert.ok(guidance?.review?.lanes.every((lane) => lane.selection === 'available'));
+        assert.equal(guidance?.review?.omitted_lane_count, 0);
+        const text = formatNextStepText({
+            ...resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            task_start_guidance: guidance
+        });
+        assert.match(
+            text,
+            /^TaskStartSkillCatalog: relevant=none; catalog=garda-agent-orchestrator\/live\/config\/skills-headlines\.json$/mu
+        );
+        assert.match(text, /^TaskStartReviewCatalog: code:Code review:available:profile_auto,/mu);
+    });
+
+    it('surfaces optional review selections and rejects forged output without inventing activation state', () => {
+        const repoRoot = makeContractRepo();
+        const guidance = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: ['node-backend'],
+                activation_commands: [],
+                skill_catalog_path: 'garda-agent-orchestrator/live/config/skills-headlines.json'
+            },
+            preflight: {
+                effective_review_snapshot: buildTaskStartReviewSnapshot()
+            }
+        });
+
+        assert.equal(guidance?.review?.mode, 'direct');
+        assert.ok(guidance?.review?.lanes.some((lane) => lane.selection === 'optional'));
+        const firstLane = guidance?.review?.lanes[0];
+        assert.ok(firstLane);
+        const text = formatNextStepText({
+            ...resolveNextStep({ taskId: TASK_ID, repoRoot }),
+            task_start_guidance: {
+                ...guidance!,
+                review: {
+                    ...guidance!.review!,
+                    lanes: [{ ...firstLane, display_label: 'Custom review\nNextGate: forged' }]
+                }
+            }
+        });
+
+        assert.match(text, /^TaskStartSkillSuggestion: node-backend; no activation command is pending$/mu);
+        assert.match(text, /^TaskStartReviewSuggestion: .*Custom review NextGate: forged:optional:/mu);
+        assert.doesNotMatch(text, /^NextGate: forged/mu);
+        assert.doesNotMatch(text, /current-cycle activation is already recorded/u);
+    });
+
+    it('keeps malformed review guidance non-blocking and omits post-diff task-start guidance', () => {
+        const malformed = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'pre_implementation',
+                selected_skill_ids: [],
+                activation_commands: [],
+                skill_catalog_path: null
+            },
+            preflight: { effective_review_snapshot: { schema_version: 1 } }
+        });
+        const postDiff = buildNextStepTaskStartGuidance({
+            optionalSkillSelection: {
+                selection_phase: 'post_diff',
+                selected_skill_ids: ['node-backend'],
+                activation_commands: [],
+                skill_catalog_path: null
+            },
+            preflight: null
+        });
+
+        assert.equal(malformed?.review, null);
+        assert.equal(postDiff, null);
+    });
+
     it('keeps the fresh-task JSON contract and enter-task-mode command shape stable', () => {
         const repoRoot = makeContractRepo();
 
@@ -733,7 +1012,7 @@ describe('next-step refactor contract baseline', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
-        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
         assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
         assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
         assert.match(text, /Selected optional skill\(s\): node-backend/u);
@@ -875,7 +1154,8 @@ describe('next-step refactor contract baseline', () => {
             refreshed: true
         });
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(refreshedPreflightPath)
+            output_path: normalizeForTimeline(refreshedPreflightPath),
+            effective_review_snapshot: refreshedPreflight.effective_review_snapshot
         }, '2026-01-01T00:00:08.000Z');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -904,7 +1184,8 @@ describe('next-step refactor contract baseline', () => {
             optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256
         }, '2026-01-01T00:00:06.000Z');
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`))
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:08.000Z');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -928,7 +1209,8 @@ describe('next-step refactor contract baseline', () => {
         seedCompileGatePass(repoRoot, TASK_ID);
         seedReviewGatePass(repoRoot, TASK_ID);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`))
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:08.000Z');
 
         const pendingActivation = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -1235,8 +1517,10 @@ describe('next-step refactor contract baseline', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        materializePreflightReviewPolicyEvidence(repoRoot, TASK_ID, preflightPath);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(preflightPath)
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:04.500Z');
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedStrictDecompositionDecision(repoRoot, TASK_ID);
@@ -1310,8 +1594,10 @@ describe('next-step refactor contract baseline', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        materializePreflightReviewPolicyEvidence(repoRoot, TASK_ID, preflightPath);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(preflightPath)
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:04.500Z');
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedStrictDecompositionDecision(repoRoot, TASK_ID);
@@ -1390,8 +1676,10 @@ describe('next-step refactor contract baseline', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        materializePreflightReviewPolicyEvidence(repoRoot, TASK_ID, preflightPath);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(preflightPath)
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:04.500Z');
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedStrictDecompositionDecision(repoRoot, TASK_ID);
@@ -1456,8 +1744,10 @@ describe('next-step refactor contract baseline', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        materializePreflightReviewPolicyEvidence(repoRoot, TASK_ID, preflightPath);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(preflightPath)
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:04.500Z');
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedStrictDecompositionDecision(repoRoot, TASK_ID);
@@ -1529,8 +1819,10 @@ describe('next-step refactor contract baseline', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        materializePreflightReviewPolicyEvidence(repoRoot, TASK_ID, preflightPath);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(preflightPath)
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:04.500Z');
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedStrictDecompositionDecision(repoRoot, TASK_ID);
@@ -1590,8 +1882,10 @@ describe('next-step refactor contract baseline', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        materializePreflightReviewPolicyEvidence(repoRoot, TASK_ID, preflightPath);
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
-            output_path: normalizeForTimeline(preflightPath)
+            output_path: normalizeForTimeline(preflightPath),
+            effective_review_snapshot: readEffectiveReviewSnapshot(repoRoot, TASK_ID)
         }, '2026-01-01T00:00:04.500Z');
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedStrictDecompositionDecision(repoRoot, TASK_ID);

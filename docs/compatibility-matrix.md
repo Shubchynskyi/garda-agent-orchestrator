@@ -81,8 +81,8 @@ Required reviews run as independent fresh-context delegated sub-agents only on p
 ## Review Type Support
 
 Review lanes are available through the same gate infrastructure.
-Whether a specific review type activates depends on the preflight classifier and `review-capabilities.json`,
-not the provider.
+Whether a specific review type activates depends on the catalog, capability flag, profile state, trigger, and
+preflight scope—not the provider. The task snapshot also freezes the validated dependency graph that orders launches.
 
 | Review Type | Mandatory | Pass Token | All Providers |
 |---|:---:|---|:---:|
@@ -95,6 +95,10 @@ not the provider.
 | performance | No | `PERFORMANCE REVIEW PASSED` | ✅ |
 | infra | No | `INFRA REVIEW PASSED` | ✅ |
 | dependency | No | `DEPENDENCY REVIEW PASSED` | ✅ |
+
+The table lists compatibility-owned built-ins and their immutable verdict tokens. Optional custom lanes are declared in `review-catalog.json`, start disabled, and become provider-independent after their skill, capability, and profile state are enabled. Garda derives canonical `<REVIEW ID> REVIEW PASSED/FAILED` tokens from the stable lane ID; custom prompt bodies and verdict overrides are not supported. Legacy workspaces without the catalog retain the built-in table unchanged.
+
+Normal provider bridges consume the compact task-start catalog summary, immutable preflight snapshot, and lane-specific generated launch input. They do not load the full repo catalog into every agent or reviewer context. Catalog/profile mutations use guarded preview-confirm-apply and affect only future task snapshots.
 
 ## Test Coverage by Provider
 
@@ -144,4 +148,5 @@ Additional provider-relevant test suites:
 | Cross-provider router tests | `tests/node/materialization/cross-provider-router-matrix.test.ts` |
 | Provider compliance tests | `tests/node/validators/provider-compliance.test.ts` |
 | Review capabilities config | `garda-agent-orchestrator/live/config/review-capabilities.json` |
+| Optional review catalog | `garda-agent-orchestrator/live/config/review-catalog.json` |
 | Token economy config | `garda-agent-orchestrator/live/config/token-economy.json` |

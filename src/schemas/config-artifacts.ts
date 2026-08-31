@@ -8,6 +8,7 @@ import {
     validateProfilesConfig,
     validateReviewArtifactStorageConfig,
     validateReviewCapabilitiesConfig,
+    validateReviewCatalogConfig,
     validateRuntimeRetentionConfig,
     validateSkillPacksConfig,
     validateTokenEconomyConfig
@@ -19,6 +20,7 @@ export * from './config-artifacts-workflow';
 
 const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'review-capabilities': validateReviewCapabilitiesConfig,
+    'review-catalog': validateReviewCatalogConfig,
     paths: validatePathsConfig,
     'token-economy': validateTokenEconomyConfig,
     'output-filters': validateOutputFiltersConfig,

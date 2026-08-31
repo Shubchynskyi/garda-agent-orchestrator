@@ -220,7 +220,10 @@ const reviewResultHandlers = createReviewResultHandlers({
 
 export const {
     handleRecordReviewResult,
-    handleRecordReviewReceipt
+    handleRecordReviewReceipt,
+    handleRecordReviewOutputCorrectionTransport,
+    handleRecordReviewOutputCorrectionResponse,
+    handleRecordReviewOutputCorrectionInvocation
 } = reviewResultHandlers;
 
 export async function handleMaterializeReviewFollowUpTasks(gateArgv: string[]): Promise<void> {

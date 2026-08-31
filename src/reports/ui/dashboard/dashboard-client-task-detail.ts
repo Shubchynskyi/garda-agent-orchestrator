@@ -1,3 +1,8 @@
+import {
+    TASK_CLOSURE_POLICY_ACTION_ID,
+    TASK_CLOSURE_POLICY_CONFIRMATION_PHRASE
+} from '../actions/task-closure-policy-actions';
+
 /** Browser-side dashboard script fragment (task-detail). */
 export const UI_DASHBOARD_CLIENT_TASK_DETAIL = `function reviewSummary(audit) {
   const attempts = audit && audit.review_attempt_summary;
@@ -30,6 +35,128 @@ function taskCommandList(taskId) {
       ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(action.id) + '" data-task-action-mode="execute"' + (action.disabled ? ' disabled' : '') + '>' + safe(action.disabled ? t('actionUnavailable') : t('run')) + '</button>' + (action.mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>' + (action.disabled ? '<p class="task-action-unavailable">' + safe(action.unavailable) + '</p>' : '')
       : '<p class="empty">' + inlineText(t('taskCommandUnavailable')) + '</p>')
     + '</section>').join('') + '</div>';
+}
+function taskClosurePolicyStateMessage(policy) {
+  if (!policy) return taskClosurePolicyText('inapplicable');
+  if (policy.state === 'completed') return taskClosurePolicyText('completed');
+  if (policy.state === 'invalid') return taskClosurePolicyText('invalid');
+  if (policy.state === 'pending_next_cycle') return taskClosurePolicyText('pendingNextCycle');
+  if (policy.state === 'inapplicable') return taskClosurePolicyText('inapplicable');
+  return '';
+}
+function taskClosurePolicyValueText(policy) {
+  if (!policy) return '-';
+  return 'skip_low_findings=' + Boolean(policy.skip_low_findings)
+    + '; forbid_child_tasks=' + Boolean(policy.forbid_child_tasks);
+}
+function taskClosurePolicyPanel(detail) {
+  const policy = detail.review_follow_up_task_closure_policy;
+  if (!policy) return '';
+  const stored = policy.stored || {};
+  const effective = policy.effective || stored;
+  const disabled = !actionsEnabled || !policy.editable;
+  const reason = taskClosurePolicyStateMessage(policy) || policy.editable_reason || '';
+  const auditPolicy = detail.audit && detail.audit.review_findings_audit
+    ? detail.audit.review_findings_audit.review_follow_up_task_closure_policy
+    : null;
+  const diagnostics = Array.isArray(policy.diagnostics) && policy.diagnostics.length > 0
+    ? '<ul class="list">' + policy.diagnostics.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>'
+    : '';
+  return '<section class="task-command-card task-closure-policy-card">'
+    + '<h3 class="task-section-title">' + safe(taskClosurePolicyText('title')) + '</h3>'
+    + '<p class="empty">' + safe(taskClosurePolicyText('help')) + '</p>'
+    + '<div class="detail-table"><table><tbody>'
+    + '<tr><th>' + safe(taskClosurePolicyText('storedValues')) + '</th><td><code>' + safe(taskClosurePolicyValueText(stored)) + '</code></td></tr>'
+    + '<tr><th>' + safe(taskClosurePolicyText('effectiveValues')) + '</th><td><code>' + safe(taskClosurePolicyValueText(effective)) + '</code> <span class="muted">(' + safe(policy.effective_source || '-') + ')</span></td></tr>'
+    + (auditPolicy ? '<tr><th>' + safe(t('audit')) + '</th><td><code>ignored_low=' + safe(auditPolicy.ignored_low_findings_count) + '; retained_current_task=' + safe(auditPolicy.retained_current_task_count) + '; prohibited_descendants=' + safe(auditPolicy.prohibited_descendant_creation_count) + '; remaining_blockers=' + safe(auditPolicy.remaining_blocker_count) + '</code></td></tr>' : '')
+    + '</tbody></table></div>'
+    + '<label class="profile-check"><input id="task-closure-skip-low" type="checkbox"' + (stored.skip_low_findings ? ' checked' : '') + (disabled ? ' disabled' : '') + '> ' + safe(taskClosurePolicyText('skipLowFindings')) + '</label>'
+    + '<label class="profile-check"><input id="task-closure-forbid-children" type="checkbox"' + (stored.forbid_child_tasks ? ' checked' : '') + (disabled ? ' disabled' : '') + '> ' + safe(taskClosurePolicyText('forbidChildTasks')) + '</label>'
+    + (reason ? '<p class="task-action-unavailable">' + safe(reason) + '</p>' : '')
+    + diagnostics
+    + '<div class="task-command-buttons">'
+    + '<button type="button" id="task-closure-policy-preview"' + (disabled ? ' disabled' : '') + '>' + safe(t('preview')) + '</button>'
+    + '<button type="button" id="task-closure-policy-apply"' + (disabled ? ' disabled' : '') + '>' + safe(t('apply')) + '</button>'
+    + '</div><div id="task-closure-policy-status" class="task-action-status"></div>'
+    + '</section>';
+}
+function taskClosurePolicyFormValue() {
+  const skipLow = document.getElementById('task-closure-skip-low');
+  const forbidChildren = document.getElementById('task-closure-forbid-children');
+  return {
+    skip_low_findings: Boolean(skipLow && skipLow.checked),
+    forbid_child_tasks: Boolean(forbidChildren && forbidChildren.checked)
+  };
+}
+function sameTaskClosurePolicyValue(left, right) {
+  return Boolean(left && right)
+    && left.skip_low_findings === right.skip_low_findings
+    && left.forbid_child_tasks === right.forbid_child_tasks;
+}
+function renderTaskClosurePolicyResult(taskId, result) {
+  const node = document.getElementById('task-closure-policy-status');
+  if (!node) return;
+  node.innerHTML = '<section class="command-preview-panel">'
+    + '<div class="command-preview-main"><strong>' + safe(result.task_id || taskId) + '</strong></div>'
+    + '<div class="command-preview-meta"><span>' + safe(t('statusColumn')) + '<code>' + safe(resultStatusText(result.status)) + '</code></span>'
+    + '<span>' + safe(t('proposed')) + '<code>' + safe(JSON.stringify(result.proposed_value || {})) + '</code></span></div>'
+    + (result.unavailable_reason ? '<p class="task-action-unavailable">' + safe(result.unavailable_reason) + '</p>' : '')
+    + (result.audit_path ? '<p><strong>' + safe(t('audit')) + ':</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
+    + '</section>';
+  focusVisibleActionResult(node);
+}
+async function requestTaskClosurePolicy(taskId, mode) {
+  const proposedValue = taskClosurePolicyFormValue();
+  if (mode === 'execute' && (
+    !currentTaskClosurePolicyPreview
+    || currentTaskClosurePolicyPreview.task_id !== taskId
+    || !sameTaskClosurePolicyValue(currentTaskClosurePolicyPreview.proposed_value, proposedValue)
+  )) {
+    const node = document.getElementById('task-closure-policy-status');
+    if (node) node.innerHTML = '<p class="task-action-unavailable">' + safe(taskClosurePolicyText('previewRequired')) + '</p>';
+    return;
+  }
+  const confirmation = mode === 'execute'
+    ? window.prompt(t('typeToRunAction') + ' "' + ${JSON.stringify(TASK_CLOSURE_POLICY_CONFIRMATION_PHRASE)} + '" ' + t('typeToRunActionTail'))
+    : null;
+  if (mode === 'execute' && confirmation === null) return;
+  const response = await fetch('/api/tasks/' + encodeURIComponent(taskId) + '/actions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({
+      action_id: ${JSON.stringify(TASK_CLOSURE_POLICY_ACTION_ID)},
+      mode,
+      confirmation,
+      ...proposedValue,
+      expected_notes_sha256: mode === 'execute' ? currentTaskClosurePolicyPreview.expected_notes_sha256 : null
+    })
+  });
+  const result = await response.json();
+  renderTaskClosurePolicyResult(taskId, result);
+  if (response.ok && result.status === 'previewed') {
+    currentTaskClosurePolicyPreview = {
+      task_id: taskId,
+      proposed_value: proposedValue,
+      expected_notes_sha256: result.expected_notes_sha256
+    };
+  }
+  if (response.ok && result.status === 'executed') {
+    currentTaskClosurePolicyPreview = null;
+    const reportResponse = await fetch('/api/report');
+    currentReport = await reportResponse.json();
+    await loadDetail(taskId);
+  }
+}
+function wireTaskClosurePolicyControls(taskId) {
+  const previewButton = document.getElementById('task-closure-policy-preview');
+  const applyButton = document.getElementById('task-closure-policy-apply');
+  const skipLow = document.getElementById('task-closure-skip-low');
+  const forbidChildren = document.getElementById('task-closure-forbid-children');
+  const clearPreview = () => { currentTaskClosurePolicyPreview = null; };
+  if (previewButton) previewButton.addEventListener('click', () => requestTaskClosurePolicy(taskId, 'preview'));
+  if (applyButton) applyButton.addEventListener('click', () => requestTaskClosurePolicy(taskId, 'execute'));
+  if (skipLow) skipLow.addEventListener('change', clearPreview);
+  if (forbidChildren) forbidChildren.addEventListener('change', clearPreview);
 }
 function blockerText(item) {
   if (typeof item === 'string') {
@@ -281,6 +408,7 @@ function renderTaskDetail(detail) {
     + metric(t('changedLines'), stats.changed_lines_total)
     + metric(t('dataColumn'), t('dataFull'))
     + '</div>'
+    + taskClosurePolicyPanel(detail)
     + '<h3 class="task-section-title">' + safe(t('taskActionsTitle')) + '</h3><p class="empty">' + safe(t('taskActionsHelp')) + '</p><div class="task-command-buttons">' + planButton(detail) + '</div><div id="task-action-status" class="task-action-status"></div>' + taskCommandList(detail.task_id)
     + '<h3 class="task-section-title">' + safe(t('fullSuiteTitle')) + '</h3>' + fullSuiteSummary(fullSuite)
     + '<h3 class="task-section-title">' + safe(t('qualityGateLatestCheck')) + '</h3>' + taskQualityChecklistSummary(detail.quality_checklist)
@@ -289,6 +417,7 @@ function renderTaskDetail(detail) {
     + '<h3 class="task-section-title">' + safe(t('reviews')) + '</h3>' + reviewSummary(audit)
     + '<h3 class="task-section-title">' + safe(t('artifacts')) + '</h3>' + artifactList(detail.artifact_links);
   wireTaskActionButtons(detail.task_id);
+  wireTaskClosurePolicyControls(detail.task_id);
   const showPlanButton = document.getElementById('show-task-plan');
   if (showPlanButton) {
     showPlanButton.addEventListener('click', () => renderTaskPlanModal(detail));

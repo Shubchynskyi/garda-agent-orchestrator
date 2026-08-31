@@ -885,6 +885,62 @@ describe('runInit', () => {
         }
     });
 
+    it('materializes review catalog and preserves custom definitions on reinit', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const catalogPath = path.join(bundleRoot, 'live', 'config', 'review-catalog.json');
+            const defaultCatalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+            assert.deepEqual(defaultCatalog, {
+                version: 1,
+                custom_review_types: []
+            });
+            assert.deepEqual(
+                defaultCatalog,
+                JSON.parse(fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-catalog.json'), 'utf8'))
+            );
+
+            const customCatalog = {
+                version: 1,
+                custom_review_types: [{
+                    id: 'architecture-boundary',
+                    display_label: 'Architecture boundary review',
+                    enabled_by_default: false,
+                    skill_id: 'security-review',
+                    trigger: {
+                        mode: 'signals',
+                        signal_ids: ['scope:architecture']
+                    },
+                    coverage_category_ids: ['maintainability'],
+                    reviewer_role: {
+                        role_id: 'architecture-specialist',
+                        focus_tags: ['boundaries']
+                    }
+                }]
+            };
+            fs.writeFileSync(catalogPath, JSON.stringify(customCatalog, null, 2), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), customCatalog);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('preserves optional skill selection policy values and custom fields on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
@@ -1018,6 +1074,10 @@ describe('runInit', () => {
             assert.ok(usage.includes('workflow show --target-root "."'));
             assert.ok(usage.includes('garda-agent-orchestrator/live/config/review-capabilities.json'));
             assert.ok(usage.includes('review-capabilities list|enable|disable'));
+            assert.ok(usage.includes('garda-agent-orchestrator/live/config/review-catalog.json'));
+            assert.ok(usage.includes('review-catalog list|show|explain|validate'));
+            assert.ok(usage.includes('Missing catalogs remain legacy-compatible.'));
+            assert.ok(usage.includes('affect future task snapshots only'));
             assert.ok(usage.includes('ordinary_doc_paths'));
             assert.ok(usage.includes('Full repository test validation after each task is currently disabled.'));
             assert.ok(usage.includes('garda-agent-orchestrator/'));

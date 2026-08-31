@@ -1,3 +1,8 @@
+import {
+    getActiveTaskLifecycleGateIds,
+    resolveFirstActiveTaskLifecycleGate
+} from '../../runtime/task-lifecycle-phase-runtime';
+
 export interface CloseoutRoutingCommand {
     label: string;
     command: string;
@@ -20,6 +25,7 @@ export interface RequiredReviewsCheckCloseoutOptions {
 
 export interface DocImpactCloseoutOptions {
     docImpactGatePassed: boolean;
+    requiresProjectMemoryBeforeAssessment?: boolean;
     compatibilityHint: string;
     command: CloseoutRoutingCommand;
 }
@@ -63,6 +69,7 @@ export interface PostReviewCloseoutRouteState {
     zeroDiffNoReviewCloseout: boolean;
     requiredReviewsCommand: string;
     docImpactGatePassed: boolean;
+    docImpactRequiresProjectMemoryBeforeAssessment?: boolean;
     docImpactCompatibilityHint: string;
     docImpactCommand: string;
     fullSuiteEnabled: boolean;
@@ -86,10 +93,6 @@ export interface PostReviewCloseoutRouteState {
 
 function closeoutCommand(label: string, command: string): CloseoutRoutingCommand {
     return { label, command };
-}
-
-function docImpactCommandClaimsProjectMemoryEvidence(command: string): boolean {
-    return /\s--project-memory-(updated|update-not-needed)\s+true(?:\s|$)/.test(` ${command} `);
 }
 
 function buildProjectMemoryImpactRoute(options: PostReviewCloseoutRoutingOptions): CloseoutRoutingRoute {
@@ -121,6 +124,7 @@ export function resolvePostReviewCloseoutRouteFromState(
         },
         docImpact: {
             docImpactGatePassed: state.docImpactGatePassed,
+            requiresProjectMemoryBeforeAssessment: state.docImpactRequiresProjectMemoryBeforeAssessment,
             compatibilityHint: state.docImpactCompatibilityHint,
             command: closeoutCommand('Run doc impact gate', state.docImpactCommand)
         },
@@ -156,80 +160,98 @@ export function resolvePostReviewCloseoutRouteFromState(
 export function resolvePostReviewCloseoutRoute(
     options: PostReviewCloseoutRoutingOptions
 ): CloseoutRoutingRoute {
-    if (!options.requiredReviews.requiredReviewsGatePassed) {
-        return {
-            status: 'BLOCKED',
-            nextGate: 'required-reviews-check',
-            title: options.requiredReviews.zeroDiffNoReviewCloseout
-                ? 'Validate zero-diff no-review closeout.'
-                : 'Run required reviews check.',
-            reason: options.requiredReviews.zeroDiffNoReviewCloseout
-                ? 'Profile-forced reviews were suppressed because the current preflight is BASELINE_ONLY with no reviewable diff; required-reviews-check must validate audited no-op evidence before closeout.'
-                : 'All required review artifacts appear present, but the review gate has not validated them. If the command includes --review-authorship-attestation-json, leave each value false unless you personally observed real delegated subagent review output and receipt for that lane; change a lane to true only for that case. False is correct when reviewer launch, authorship, or receipt provenance is absent, self-authored, fabricated, substituted, or uncertain.',
-            commands: [options.requiredReviews.command]
-        };
-    }
-
-    if (
-        options.fullSuite.enabled
-        && !options.fullSuite.gatePassed
-        && options.fullSuite.timeoutBlockerResolvedByRepairTask !== true
-    ) {
-        if (options.fullSuite.notRequiredForDocsOnly) {
-            return {
-                status: 'BLOCKED',
-                nextGate: 'full-suite-validation',
-                title: 'Record full-suite validation as not required.',
-                reason:
-                    `Effective workflow config enables full-suite validation at ${options.fullSuite.configPath}, ` +
-                    'but the current scope is docs-only. Record a SKIPPED/NOT_REQUIRED artifact instead of running the configured full-suite command.',
-                commands: [options.fullSuite.command]
-            };
+    const closeoutRoute = resolveFirstActiveTaskLifecycleGate<CloseoutRoutingRoute>(
+        getActiveTaskLifecycleGateIds('closeout', {
+            review_gate_required: true,
+            full_suite_before_completion: options.fullSuite.enabled,
+            project_memory_impact_required: options.projectMemory.required
+        }),
+        {
+            'required-reviews-check': () => options.requiredReviews.requiredReviewsGatePassed
+                ? null
+                : {
+                    status: 'BLOCKED',
+                    nextGate: 'required-reviews-check',
+                    title: options.requiredReviews.zeroDiffNoReviewCloseout
+                        ? 'Validate zero-diff no-review closeout.'
+                        : 'Run required reviews check.',
+                    reason: options.requiredReviews.zeroDiffNoReviewCloseout
+                        ? 'Profile-forced reviews were suppressed because the current preflight is BASELINE_ONLY with no reviewable diff; required-reviews-check must validate audited no-op evidence before closeout.'
+                        : 'All required review artifacts appear present, but the review gate has not validated them. If the command includes --review-authorship-attestation-json, leave each value false unless you personally observed real delegated subagent review output and receipt for that lane; change a lane to true only for that case. False is correct when reviewer launch, authorship, or receipt provenance is absent, self-authored, fabricated, substituted, or uncertain.',
+                    commands: [options.requiredReviews.command]
+                },
+            'full-suite-validation': () => {
+                if (
+                    options.fullSuite.gatePassed
+                    || options.fullSuite.timeoutBlockerResolvedByRepairTask === true
+                ) {
+                    return null;
+                }
+                if (options.fullSuite.notRequiredForDocsOnly) {
+                    return {
+                        status: 'BLOCKED',
+                        nextGate: 'full-suite-validation',
+                        title: 'Record full-suite validation as not required.',
+                        reason:
+                            `Effective workflow config enables full-suite validation at ${options.fullSuite.configPath}, ` +
+                            'but the current scope is docs-only. Record a SKIPPED/NOT_REQUIRED artifact instead of running the configured full-suite command.',
+                        commands: [options.fullSuite.command]
+                    };
+                }
+                return {
+                    status: 'BLOCKED',
+                    nextGate: 'full-suite-validation',
+                    title: options.fullSuite.placement === 'before_completion'
+                        ? 'Run full-suite validation before completion.'
+                        : 'Run full-suite validation.',
+                    reason:
+                        `Effective workflow config enables full-suite validation at ${options.fullSuite.configPath} with placement '${options.fullSuite.placement}'. ` +
+                        `Command: ${options.fullSuite.commandText}. ${options.fullSuite.timeoutForecastLine || ''}`.trim(),
+                    commands: [options.fullSuite.command]
+                };
+            },
+            'project-memory-impact': () => {
+                if (
+                    !options.docImpact.docImpactGatePassed
+                    && options.docImpact.requiresProjectMemoryBeforeAssessment !== true
+                ) {
+                    return null;
+                }
+                return options.projectMemory.evidenceCurrent
+                    ? null
+                    : buildProjectMemoryImpactRoute(options);
+            },
+            'doc-impact-gate': () => options.docImpact.docImpactGatePassed
+                ? null
+                : {
+                    status: 'BLOCKED',
+                    nextGate: 'doc-impact-gate',
+                    title: 'Record documentation impact.',
+                    reason: `Completion requires an explicit docs decision. ${options.docImpact.compatibilityHint}`,
+                    commands: [options.docImpact.command]
+                }
         }
-        return {
-            status: 'BLOCKED',
-            nextGate: 'full-suite-validation',
-            title: options.fullSuite.placement === 'before_completion'
-                ? 'Run full-suite validation before completion.'
-                : 'Run full-suite validation.',
-            reason:
-                `Effective workflow config enables full-suite validation at ${options.fullSuite.configPath} with placement '${options.fullSuite.placement}'. ` +
-                `Command: ${options.fullSuite.commandText}. ${options.fullSuite.timeoutForecastLine || ''}`.trim(),
-            commands: [options.fullSuite.command]
-        };
+    );
+    if (closeoutRoute) {
+        return closeoutRoute;
     }
 
-    if (
-        options.projectMemory.required
-        && !options.projectMemory.evidenceCurrent
-        && !options.docImpact.docImpactGatePassed
-        && docImpactCommandClaimsProjectMemoryEvidence(options.docImpact.command.command)
-    ) {
-        return buildProjectMemoryImpactRoute(options);
-    }
-
-    if (!options.docImpact.docImpactGatePassed) {
-        return {
-            status: 'BLOCKED',
-            nextGate: 'doc-impact-gate',
-            title: 'Record documentation impact.',
-            reason: `Completion requires an explicit docs decision. ${options.docImpact.compatibilityHint}`,
-            commands: [options.docImpact.command]
-        };
-    }
-
-    if (options.projectMemory.required && !options.projectMemory.evidenceCurrent) {
-        return buildProjectMemoryImpactRoute(options);
-    }
-
-    if (!options.completion.completionGatePassed) {
-        return {
-            status: 'BLOCKED',
-            nextGate: 'completion-gate',
-            title: 'Run completion gate.',
-            reason: 'All upstream gates appear ready; completion has not finalized the task.',
-            commands: [options.completion.command]
-        };
+    const terminalRoute = resolveFirstActiveTaskLifecycleGate<CloseoutRoutingRoute>(
+        getActiveTaskLifecycleGateIds('terminal', {}),
+        {
+            'completion-gate': () => !options.completion.completionGatePassed
+                ? {
+                    status: 'BLOCKED',
+                    nextGate: 'completion-gate',
+                    title: 'Run completion gate.',
+                    reason: 'All upstream gates appear ready; completion has not finalized the task.',
+                    commands: [options.completion.command]
+                }
+                : null
+        }
+    );
+    if (terminalRoute) {
+        return terminalRoute;
     }
 
     return {

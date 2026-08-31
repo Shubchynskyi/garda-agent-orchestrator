@@ -16,6 +16,11 @@ import {
 import {
     validateReviewFindingsContract
 } from '../../../../src/gates/review/review-findings-artifact-verdict';
+import { REVIEW_FINDINGS_SCHEMA_VERSION } from '../../../../src/gates/review/review-findings-schema';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import {
+    buildReviewRemediationReviewContract
+} from '../../../../src/gates/review-remediation/review-remediation-review-contract';
 
 const {
     ALL_REVIEW_FLAGS,
@@ -433,7 +438,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
         assert.equal(result.review_cycle_block?.latest_failed_review?.review_type, 'security');
         assert.equal(result.review_cycle_block?.latest_failed_review?.summary, 'security finding 1');
         assert.ok(text.includes('LatestFailedReview: review_type="security"'));
@@ -722,7 +727,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
     });
 
     it('validates repeated immutable review evidence with one indexed snapshot read per file', () => {
@@ -853,19 +858,33 @@ describe('gates/next-step review cycle guard attempts', () => {
             obligation_count: 1,
             contract_sha256: coverageContractSha256
         };
-        writeJson(contextPath, {
-            schema_version: 3,
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const reviewExecution = buildReviewRemediationReviewContract({
+            taskId: TASK_ID,
+            reviewType,
+            preflightSha256: fileSha256(preflightPath),
+            fullReviewScope: ['src/app.ts']
+        });
+        const reviewContext = {
+            schema_version: 4,
             task_id: TASK_ID,
             review_type: reviewType,
+            preflight_path: preflightPath,
+            preflight_sha256: fileSha256(preflightPath),
+            task_scope: { changed_files: ['src/app.ts'] },
             tree_state: {
                 tree_state_sha256: treeStateSha256
             },
-            coverage_contract: coverageContract
-        });
+            coverage_contract: coverageContract,
+            review_execution: reviewExecution
+        };
+        writeJson(contextPath, reviewContext);
+        const reviewExecutionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings;
+        assert.ok(reviewExecutionBindings);
         const reviewContextSha256 = fileSha256(contextPath);
         const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}.md`);
         const artifactContent = JSON.stringify({
-            schema_version: 1,
+            schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
             task_id: TASK_ID,
             review_type: reviewType,
             review_context_sha256: reviewContextSha256,
@@ -889,6 +908,12 @@ describe('gates/next-step review cycle guard attempts', () => {
                     }],
                     finding_ids: ['F-001']
                 }]
+            },
+            review_execution: {
+                mode: reviewExecution.mode,
+                contract_sha256: reviewExecution.contract_sha256,
+                covered_delta_targets: [],
+                inspected_prior_finding_ids: []
             },
             findings: {
                 critical: [],
@@ -918,7 +943,8 @@ describe('gates/next-step review cycle guard attempts', () => {
             expectedReviewType: reviewType,
             expectedReviewContextSha256: reviewContextSha256,
             expectedTreeStateSha256: treeStateSha256,
-            coverageContract: coverageContract as never
+            coverageContract: coverageContract as never,
+            expectedReviewExecutionContract: reviewExecution
         });
         assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
         const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
@@ -949,6 +975,7 @@ describe('gates/next-step review cycle guard attempts', () => {
             review_artifact_sha256: artifactSha256,
             review_context_sha256: reviewContextSha256,
             review_tree_state_sha256: treeStateSha256,
+            ...reviewExecutionBindings,
             review_findings_validation: {
                 artifact_path: validationArtifactPath.replace(/\\/g, '/'),
                 artifact_sha256: validationArtifactSha256,
@@ -986,7 +1013,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
         assert.deepEqual(result.review_cycle_block?.counts_by_review_type.code, {
             total: 2,
             passed: 0,
@@ -1047,15 +1074,29 @@ describe('gates/next-step review cycle guard attempts', () => {
                 obligation_count: 1,
                 contract_sha256: coverageContractSha256
             };
-            writeJson(contextPath, {
-                schema_version: 3,
+            const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+            const reviewExecution = buildReviewRemediationReviewContract({
+                taskId: TASK_ID,
+                reviewType,
+                preflightSha256: fileSha256(preflightPath),
+                fullReviewScope: ['src/app.ts']
+            });
+            const reviewContext = {
+                schema_version: 4,
                 task_id: TASK_ID,
                 review_type: reviewType,
+                preflight_path: preflightPath,
+                preflight_sha256: fileSha256(preflightPath),
+                task_scope: { changed_files: ['src/app.ts'] },
                 tree_state: {
                     tree_state_sha256: treeStateSha256
                 },
-                coverage_contract: coverageContract
-            });
+                coverage_contract: coverageContract,
+                review_execution: reviewExecution
+            };
+            writeJson(contextPath, reviewContext);
+            const reviewExecutionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings;
+            assert.ok(reviewExecutionBindings);
             const reviewContextSha256 = fileSha256(contextPath);
             const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-${scenario.action}.md`);
             const findings = {
@@ -1075,7 +1116,7 @@ describe('gates/next-step review cycle guard attempts', () => {
                 coverage_obligation_ids: ['FILE-001']
             }];
             const artifactContent = JSON.stringify({
-                schema_version: 1,
+                schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
                 task_id: TASK_ID,
                 review_type: reviewType,
                 review_context_sha256: reviewContextSha256,
@@ -1100,6 +1141,12 @@ describe('gates/next-step review cycle guard attempts', () => {
                         finding_ids: [scenario.findingId]
                     }]
                 },
+                review_execution: {
+                    mode: reviewExecution.mode,
+                    contract_sha256: reviewExecution.contract_sha256,
+                    covered_delta_targets: [],
+                    inspected_prior_finding_ids: []
+                },
                 findings,
                 residual_risks: [],
                 reviewer_notes: []
@@ -1117,7 +1164,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                 expectedReviewType: reviewType,
                 expectedReviewContextSha256: reviewContextSha256,
                 expectedTreeStateSha256: treeStateSha256,
-                coverageContract: coverageContract as never
+                coverageContract: coverageContract as never,
+                expectedReviewExecutionContract: reviewExecution
             });
             assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
             const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
@@ -1173,6 +1221,7 @@ describe('gates/next-step review cycle guard attempts', () => {
                 review_artifact_sha256: artifactSha256,
                 review_context_sha256: reviewContextSha256,
                 review_tree_state_sha256: treeStateSha256,
+                ...reviewExecutionBindings,
                 review_findings_disposition: reviewFindingsDisposition,
                 review_findings_validation: {
                     artifact_path: validationArtifactPath.replace(/\\/g, '/'),
@@ -1471,7 +1520,7 @@ describe('gates/next-step review cycle guard attempts', () => {
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
         assert.ok(result.reason.includes('timeline_integrity=1>0'));
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
         assert.equal(
             result.review_cycle_block?.latest_failed_review?.summary,
             'explicit security failure with forged PASS snapshot 1'
@@ -1557,7 +1606,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>=1'));
     });
 
     it('surfaces WARN_ONLY review cycle violations without blocking the next gate', () => {
@@ -1717,7 +1766,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=45>15'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=45>=15'));
         assert.ok(result.reason.includes('total_non_test_review_count=45>30'));
         assert.ok(result.reason.includes('cumulative_total_attempts=54'));
         assert.ok(result.reason.includes('cumulative_non_test_reviews=45'));

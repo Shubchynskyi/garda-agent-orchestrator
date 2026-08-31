@@ -247,6 +247,7 @@ function seedReviewArtifacts(repoRoot: string): SeededReviewArtifacts {
             follow_up_pending_count: 1,
             blocking_count: 0
         },
+        review_findings_disposition: dispositionArtifact.disposition_result,
         review_output_contract: {
             schema_version: 1,
             format: 'findings_json',

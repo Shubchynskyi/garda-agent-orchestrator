@@ -1,9 +1,11 @@
 import * as fs from 'node:fs';
 
+import { sha256RedactedJsonPayload } from '../../../../core/redaction';
 import { isPlainRecord } from '../../../../core/records';
 import {
     buildReviewContext
 } from '../../../../gates/review-context/build-review-context';
+import { readReviewContextChangedFiles } from '../../../../gates/review-context/review-context-diff';
 import { fileSha256 } from '../../../../gates/shared/helpers';
 import { assertReviewLifecycleGuardFromEntries } from '../../../../gates/review/review-lifecycle-guard';
 import {
@@ -12,6 +14,18 @@ import {
 import {
     computeReviewContextReuseHash
 } from '../../../../gates/review-reuse/review-reuse';
+import {
+    getAuthoritativeReviewRemediationDecisionViolations,
+    type AuthoritativeReviewRemediationDecision,
+    type ReviewRemediationDecisionClassification
+} from '../../../../gates/review-remediation/review-remediation-recovery-routing';
+import {
+    buildReviewRemediationReviewContract,
+    getReviewRemediationReviewContractViolations,
+    type ReviewRemediationAuthoritativeDecisionBinding,
+    type ReviewRemediationReviewContract,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../../../../gates/review-remediation/review-remediation-review-contract';
 import { inspectTaskEventFile } from '../../../../gate-runtime/task-events';
 import {
     buildAcceptedCurrentPassReviewContextCommandResult,
@@ -69,18 +83,118 @@ function hasFreshPassingReviewAfterBoundary(options: {
     });
 }
 
-function resolvePersistedRemediationReusePolicy(options: {
+export interface PersistedRemediationReusePolicy {
+    blockedReason: string;
+    preservedScopeMismatchReason: string;
+    reviewExecutionContract?: ReviewRemediationReviewContract | null;
+    reviewExecutionValidationAuthority?: ReviewRemediationReviewContractValidationAuthority | null;
+    persistedRemediationReuseRequired?: boolean;
+    failClosed?: boolean;
+}
+
+export function bindAuthoritativeRemediationDecisionToPreflight(
+    decision: AuthoritativeReviewRemediationDecision,
+    preflightSha256: string
+): ReviewRemediationAuthoritativeDecisionBinding {
+    const normalizedPreflightSha256 = String(preflightSha256 || '').trim().toLowerCase();
+    if ('preflight_sha256' in decision) {
+        const existingBinding = decision as ReviewRemediationAuthoritativeDecisionBinding;
+        const violations = getAuthoritativeReviewRemediationDecisionViolations(existingBinding);
+        if (existingBinding.preflight_sha256 !== normalizedPreflightSha256) {
+            violations.push('authoritative remediation decision preflight_sha256 is stale.');
+        }
+        if (violations.length > 0) {
+            throw new Error(`Persisted authoritative remediation decision is invalid: ${violations.join(' ')}`);
+        }
+        return existingBinding;
+    }
+    const decisionWithoutHash = {
+        ...decision,
+        preflight_sha256: normalizedPreflightSha256
+    } as Record<string, unknown>;
+    delete decisionWithoutHash.decision_sha256;
+    return {
+        ...decisionWithoutHash,
+        decision_sha256: sha256RedactedJsonPayload(decisionWithoutHash)
+    } as unknown as ReviewRemediationAuthoritativeDecisionBinding;
+}
+
+function emptyPersistedRemediationReusePolicy(
+    overrides: Partial<PersistedRemediationReusePolicy> = {}
+): PersistedRemediationReusePolicy {
+    return {
+        blockedReason: '',
+        preservedScopeMismatchReason: '',
+        ...overrides
+    };
+}
+
+export function buildAuthenticatedRemediationReviewExecution(options: {
+    taskId: string;
+    reviewType: string;
+    preflightSha256: string;
+    fullReviewScope: readonly string[];
+    authoritativeDecision: AuthoritativeReviewRemediationDecision;
+    authoritativeClassification: ReviewRemediationDecisionClassification;
+    persistedDecisionSha256?: string | null;
+}): {
+    contract: ReviewRemediationReviewContract;
+    validationAuthority: ReviewRemediationReviewContractValidationAuthority;
+} {
+    const authoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+        options.authoritativeDecision,
+        options.preflightSha256
+    );
+    const contract = buildReviewRemediationReviewContract({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: options.preflightSha256,
+        fullReviewScope: options.fullReviewScope,
+        authoritativeDecision,
+        classification: options.authoritativeClassification
+    });
+    const validationAuthority: ReviewRemediationReviewContractValidationAuthority = {
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: options.preflightSha256,
+        mode: contract.mode,
+        fullReviewScope: options.fullReviewScope,
+        persistedDecisionSha256: options.persistedDecisionSha256
+            ?? options.authoritativeDecision.decision_sha256,
+        authoritativeDecisionSha256: options.authoritativeDecision.decision_sha256,
+        authoritativeClassificationSha256: options.authoritativeDecision.classification_sha256,
+        authoritativeDecision,
+        authoritativeClassification: options.authoritativeClassification
+    };
+    const violations = getReviewRemediationReviewContractViolations(contract, validationAuthority);
+    if (violations.length > 0) {
+        throw new Error(`Authenticated remediation review execution is invalid: ${violations.join(' ')}`);
+    }
+    return { contract, validationAuthority };
+}
+
+export function resolvePersistedRemediationReusePolicy(options: {
     events: Record<string, unknown>[];
     taskId: string;
     reviewType: string;
     preflightPath: string;
     timelinePath: string;
-}): { blockedReason: string; preservedScopeMismatchReason: string } {
+    preflightPayload?: Record<string, unknown> | null;
+}): PersistedRemediationReusePolicy {
     const resolvedPreflightSha256 = fileSha256(options.preflightPath);
     if (!resolvedPreflightSha256) {
-        return { blockedReason: '', preservedScopeMismatchReason: '' };
+        return emptyPersistedRemediationReusePolicy();
     }
     const preflightSha256 = resolvedPreflightSha256.toLowerCase();
+    let preflightPayload = options.preflightPayload || null;
+    if (!preflightPayload) {
+        try {
+            preflightPayload = JSON.parse(fs.readFileSync(options.preflightPath, 'utf8')) as Record<string, unknown>;
+        } catch {
+            preflightPayload = null;
+        }
+    }
+    const fullReviewScope = readReviewContextChangedFiles(preflightPayload?.changed_files);
     const hasMatchingRestartEvent = options.events.some((event) => {
         const details = isPlainRecord(event.details) ? event.details : {};
         return String(event.event_type || '').trim() === 'REVIEW_CYCLE_RESTARTED'
@@ -91,11 +205,11 @@ function resolvePersistedRemediationReusePolicy(options: {
         hasMatchingRestartEvent
         && !inspectTaskEventFile(options.timelinePath, options.taskId).status.startsWith('PASS')
     ) {
-        return {
+        return emptyPersistedRemediationReusePolicy({
             blockedReason:
                 'review reuse blocked because the persisted remediation timeline failed hash-chain integrity validation',
-            preservedScopeMismatchReason: ''
-        };
+            failClosed: true
+        });
     }
     for (let index = options.events.length - 1; index >= 0; index -= 1) {
         const event = options.events[index];
@@ -109,6 +223,162 @@ function resolvePersistedRemediationReusePolicy(options: {
             || taskEventSequence(event) <= 0
         ) {
             continue;
+        }
+        if (details.authoritative_review_decision !== undefined) {
+            const authoritativeDecision = details.authoritative_review_decision;
+            const violations = getAuthoritativeReviewRemediationDecisionViolations(
+                authoritativeDecision,
+                { expectedTaskId: options.taskId }
+            );
+            if (violations.length > 0 || !isPlainRecord(authoritativeDecision)) {
+                return emptyPersistedRemediationReusePolicy({
+                    blockedReason:
+                        `review reuse blocked because the persisted authoritative remediation decision `
+                        + `failed validation: ${violations.join(' ')}`,
+                    failClosed: true
+                });
+            }
+            if (authoritativeDecision.status !== 'READY') {
+                return emptyPersistedRemediationReusePolicy({
+                    blockedReason:
+                        `review reuse blocked because the persisted authoritative remediation decision is `
+                        + `${String(authoritativeDecision.status || 'unknown')}`,
+                    failClosed: true
+                });
+            }
+            const authoritativeClassification = details.authoritative_review_classification;
+            if (authoritativeClassification !== undefined) {
+                if (!isPlainRecord(authoritativeClassification) || !preflightPayload) {
+                    return emptyPersistedRemediationReusePolicy({
+                        blockedReason:
+                            'review reuse blocked because the persisted authoritative remediation classification is invalid',
+                        failClosed: true
+                    });
+                }
+                const typedDecision = authoritativeDecision as unknown as AuthoritativeReviewRemediationDecision;
+                const typedClassification = authoritativeClassification as unknown as ReviewRemediationDecisionClassification;
+                const authorityLane = typedDecision.lane_decisions.find((entry) => (
+                    entry.review_type === typedDecision.current_review_type
+                ));
+                if (!authorityLane || authorityLane.mode === 'REUSE') {
+                    return emptyPersistedRemediationReusePolicy({
+                        blockedReason:
+                            'review reuse blocked because the persisted remediation authority has no executable FULL/DELTA origin lane',
+                        failClosed: true
+                    });
+                }
+                try {
+                    buildAuthenticatedRemediationReviewExecution({
+                        taskId: options.taskId,
+                        reviewType: authorityLane.review_type,
+                        preflightSha256,
+                        fullReviewScope,
+                        authoritativeDecision: typedDecision,
+                        authoritativeClassification: typedClassification,
+                        persistedDecisionSha256: typedDecision.decision_sha256
+                    });
+                } catch (error: unknown) {
+                    return emptyPersistedRemediationReusePolicy({
+                            blockedReason:
+                                'review reuse blocked because the persisted remediation authority failed authentication: '
+                            + (error instanceof Error ? error.message : String(error)),
+                        failClosed: true
+                    });
+                }
+            }
+            const laneDecision = Array.isArray(authoritativeDecision.lane_decisions)
+                ? authoritativeDecision.lane_decisions.find((entry) => (
+                    isPlainRecord(entry)
+                    && String(entry.review_type || '').trim().toLowerCase() === options.reviewType
+                ))
+                : undefined;
+            if (!isPlainRecord(laneDecision)) {
+                return emptyPersistedRemediationReusePolicy({
+                    blockedReason:
+                        `review reuse blocked because the persisted authoritative remediation decision `
+                        + `does not contain required lane '${options.reviewType}'`,
+                    failClosed: true
+                });
+            }
+            if (laneDecision.reuse_eligible !== true) {
+                if (hasFreshPassingReviewAfterBoundary({
+                    events: options.events,
+                    boundarySequence: taskEventSequence(event),
+                    taskId: options.taskId,
+                    reviewType: options.reviewType,
+                    preflightSha256
+                })) {
+                    return emptyPersistedRemediationReusePolicy();
+                }
+                let execution = {
+                    contract: null as ReviewRemediationReviewContract | null,
+                    validationAuthority: null as ReviewRemediationReviewContractValidationAuthority | null
+                };
+                if (authoritativeClassification !== undefined && laneDecision.mode !== 'REUSE') {
+                    try {
+                        execution = buildAuthenticatedRemediationReviewExecution({
+                            taskId: options.taskId,
+                            reviewType: options.reviewType,
+                            preflightSha256,
+                            fullReviewScope,
+                            authoritativeDecision: authoritativeDecision as unknown as AuthoritativeReviewRemediationDecision,
+                            authoritativeClassification:
+                                authoritativeClassification as unknown as ReviewRemediationDecisionClassification,
+                            persistedDecisionSha256: String(authoritativeDecision.decision_sha256 || '')
+                        });
+                    } catch (error: unknown) {
+                        return emptyPersistedRemediationReusePolicy({
+                            blockedReason:
+                                'review reuse blocked because the persisted lane execution failed authentication: '
+                                + (error instanceof Error ? error.message : String(error)),
+                            failClosed: true
+                        });
+                    }
+                }
+                return emptyPersistedRemediationReusePolicy({
+                    blockedReason: String(laneDecision.reason || '').trim()
+                        || `review reuse blocked by authoritative remediation lane '${options.reviewType}'`,
+                    reviewExecutionContract: execution.contract,
+                    reviewExecutionValidationAuthority: execution.validationAuthority
+                });
+            }
+            if (authoritativeClassification !== undefined && laneDecision.mode === 'REUSE') {
+                return emptyPersistedRemediationReusePolicy({
+                    preservedScopeMismatchReason: String(laneDecision.reason || '').trim(),
+                    persistedRemediationReuseRequired: true
+                });
+            }
+            let execution = {
+                contract: null as ReviewRemediationReviewContract | null,
+                validationAuthority: null as ReviewRemediationReviewContractValidationAuthority | null
+            };
+            if (authoritativeClassification !== undefined) {
+                try {
+                    execution = buildAuthenticatedRemediationReviewExecution({
+                        taskId: options.taskId,
+                        reviewType: options.reviewType,
+                        preflightSha256,
+                        fullReviewScope,
+                        authoritativeDecision: authoritativeDecision as unknown as AuthoritativeReviewRemediationDecision,
+                        authoritativeClassification:
+                            authoritativeClassification as unknown as ReviewRemediationDecisionClassification,
+                        persistedDecisionSha256: String(authoritativeDecision.decision_sha256 || '')
+                    });
+                } catch (error: unknown) {
+                    return emptyPersistedRemediationReusePolicy({
+                        blockedReason:
+                            'review reuse blocked because the persisted lane execution failed authentication: '
+                            + (error instanceof Error ? error.message : String(error)),
+                        failClosed: true
+                    });
+                }
+            }
+            return emptyPersistedRemediationReusePolicy({
+                blockedReason: '',
+                preservedScopeMismatchReason: String(laneDecision.reason || '').trim(),
+                reviewExecutionContract: execution.contract,
+                reviewExecutionValidationAuthority: execution.validationAuthority
+            });
         }
         const category = String(details.remediation_category || '').trim() || 'unknown';
         const invalidatedReviewTypes = new Set(
@@ -126,22 +396,48 @@ function resolvePersistedRemediationReusePolicy(options: {
                 reviewType: options.reviewType,
                 preflightSha256
             })) {
-                return { blockedReason: '', preservedScopeMismatchReason: '' };
-            }
-            return {
+                    return emptyPersistedRemediationReusePolicy();
+                }
+            return emptyPersistedRemediationReusePolicy({
                 blockedReason:
                     `review reuse blocked by persisted remediation classification '${category}' ` +
                     `for invalidated review type '${options.reviewType}'`,
-                preservedScopeMismatchReason: ''
-            };
+            });
         }
-        return {
+        return emptyPersistedRemediationReusePolicy({
             blockedReason: '',
             preservedScopeMismatchReason:
                 `persisted remediation classification '${category}' preserved review type '${options.reviewType}'`
-        };
+        });
     }
-    return { blockedReason: '', preservedScopeMismatchReason: '' };
+    return emptyPersistedRemediationReusePolicy();
+}
+
+export function shouldAcceptCurrentPassReviewEvidence(
+    evidence: { accepted: boolean; reusedExistingReview: boolean } | null,
+    reviewReuseBlockedReason: string
+): boolean {
+    return evidence?.accepted === true
+        && (!reviewReuseBlockedReason || evidence.reusedExistingReview === false);
+}
+
+function reviewContextMatchesExecutionContract(
+    reviewContextPath: string,
+    contract: ReviewRemediationReviewContract | null | undefined
+): boolean {
+    if (!contract) {
+        return true;
+    }
+    try {
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewExecution = isPlainRecord(reviewContext.review_execution)
+            ? reviewContext.review_execution
+            : null;
+        return String(reviewExecution?.contract_sha256 || '').trim().toLowerCase()
+            === contract.contract_sha256;
+    } catch {
+        return false;
+    }
 }
 
 export async function runBuildReviewContextCommand(
@@ -163,12 +459,29 @@ export async function runBuildReviewContextCommand(
         outputPath,
         scopedDiffMetadataPath,
         focusedRequiredTestPath,
-        reviewReuseBlockedReason
+        reviewReuseBlockedReason,
+        reviewExecutionContract,
+        reviewExecutionValidationAuthority,
+        persistedRemediationReuseRequired
     } = resolveBuildReviewContextCommandInputs(options);
-    let persistedRemediationReusePolicy = {
-        blockedReason: '',
-        preservedScopeMismatchReason: ''
-    };
+    if ((reviewExecutionContract === null) !== (reviewExecutionValidationAuthority === null)) {
+        throw new Error('Review execution contract and validation authority must be supplied together.');
+    }
+    const explicitReviewExecutionViolations = reviewExecutionContract && reviewExecutionValidationAuthority
+        ? getReviewRemediationReviewContractViolations(
+            reviewExecutionContract,
+            reviewExecutionValidationAuthority
+        )
+        : [];
+    if (explicitReviewExecutionViolations.length > 0) {
+        throw new Error(
+            `Explicit remediation review execution authority is invalid: `
+            + explicitReviewExecutionViolations.join(' ')
+        );
+    }
+    const explicitLaneDecision = reviewExecutionValidationAuthority?.authoritativeDecision?.lane_decisions
+        .find((entry) => entry.review_type === reviewType) || null;
+    let persistedRemediationReusePolicy = emptyPersistedRemediationReusePolicy();
     if (taskId) {
         assertReviewLifecycleGuardFromEntries(
             String(timelinePath),
@@ -183,7 +496,8 @@ export async function runBuildReviewContextCommand(
                 taskId,
                 reviewType,
                 preflightPath,
-                timelinePath: String(timelinePath)
+                timelinePath: String(timelinePath),
+                preflightPayload
             });
         }
         assertRequiredUpstreamReviewDependencies({
@@ -196,11 +510,25 @@ export async function runBuildReviewContextCommand(
             runtimeReviewerIdentity
         });
     }
+    const effectiveReviewExecutionContract = reviewExecutionContract
+        || persistedRemediationReusePolicy.reviewExecutionContract;
+    const effectiveReviewExecutionValidationAuthority = reviewExecutionValidationAuthority
+        || persistedRemediationReusePolicy.reviewExecutionValidationAuthority;
+    if (persistedRemediationReusePolicy.failClosed) {
+        throw new Error(persistedRemediationReusePolicy.blockedReason);
+    }
     const effectiveReviewReuseBlockedReason = reviewReuseBlockedReason
+        || (explicitLaneDecision?.reuse_eligible === false
+            ? explicitLaneDecision.reason
+            : '')
         || persistedRemediationReusePolicy.blockedReason;
     const effectiveRemediationPreservedScopeMismatchReason =
-        String(options.remediationPreservedScopeMismatchReason || '').trim()
+        (explicitLaneDecision?.reuse_eligible === true
+            ? explicitLaneDecision.reason
+            : '')
         || persistedRemediationReusePolicy.preservedScopeMismatchReason;
+    const effectivePersistedRemediationReuseRequired = persistedRemediationReuseRequired
+        || persistedRemediationReusePolicy.persistedRemediationReuseRequired;
     let previousReviewContextReuseSha256: string | null = null;
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()) {
         try {
@@ -211,7 +539,7 @@ export async function runBuildReviewContextCommand(
             previousReviewContextReuseSha256 = null;
         }
     }
-    const currentPassReviewEvidence = taskId && !effectiveReviewReuseBlockedReason
+    const currentPassReviewEvidence = taskId
         ? tryAcceptCurrentPassReviewEvidence({
             repoRoot,
             taskId,
@@ -222,7 +550,14 @@ export async function runBuildReviewContextCommand(
             timelineEventsSummary: timelineSummary
         })
         : null;
-    if (currentPassReviewEvidence?.accepted) {
+    const currentPassReviewEvidenceAccepted = shouldAcceptCurrentPassReviewEvidence(
+        currentPassReviewEvidence,
+        effectiveReviewReuseBlockedReason
+    ) && reviewContextMatchesExecutionContract(
+        currentPassReviewEvidence?.reviewContextPath || outputPath,
+        effectiveReviewExecutionContract
+    );
+    if (currentPassReviewEvidenceAccepted && currentPassReviewEvidence) {
         await emitCurrentPassReviewContextReuseAccepted({
             repoRoot,
             taskId,
@@ -262,7 +597,9 @@ export async function runBuildReviewContextCommand(
         repoRoot,
         focusedRequiredTestPath,
         ruleContextSectionsCache: options.ruleContextSectionsCache || null,
-        ruleFileContentCache: options.ruleFileContentCache || null
+        ruleFileContentCache: options.ruleFileContentCache || null,
+        reviewExecutionContract: effectiveReviewExecutionContract,
+        reviewExecutionValidationAuthority: effectiveReviewExecutionValidationAuthority
     });
     let reviewReuseResult: ReviewReuseResult = {
         reused: false,
@@ -281,6 +618,7 @@ export async function runBuildReviewContextCommand(
             preflightPath,
             outputPath: result.output_path,
             ruleContextArtifactPath: result.rule_context.artifact_path,
+            selectedSkill: result.rule_context.selected_skill,
             telemetryLockTimeoutMs: options.telemetryLockTimeoutMs,
             telemetryLockRetryMs: options.telemetryLockRetryMs
         });
@@ -317,13 +655,21 @@ export async function runBuildReviewContextCommand(
         }
     }
 
+    if (effectivePersistedRemediationReuseRequired && !reviewReuseResult.reused) {
+        throw new Error(
+            `Persisted authoritative remediation decision requires accepted current-cycle reused evidence `
+            + `for '${reviewType}', but that evidence is missing, stale, or forged. `
+            + `Reuse validation: ${reviewReuseResult.reason}`
+        );
+    }
+
     return buildGeneratedReviewContextCommandResult({
         reviewType,
         outputPath: result.output_path,
         ruleContextArtifactPath: result.rule_context.artifact_path,
         tokenEconomyActive: result.token_economy_active,
         reviewReuseResult,
-        currentPassReviewEvidenceAccepted: currentPassReviewEvidence?.accepted === true,
+        currentPassReviewEvidenceAccepted,
         currentPassReviewEvidenceReason:
             effectiveReviewReuseBlockedReason
             || currentPassReviewEvidence?.reason

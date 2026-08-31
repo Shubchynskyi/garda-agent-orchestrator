@@ -16,6 +16,7 @@ node bin/garda.js gate validate-config
 | `token-economy.json` | Reviewer-context compaction and token savings | Yes |
 | `output-filters.json` | Gate output compaction profiles (compile, test, lint, review) | Yes |
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
+| `review-catalog.json` | Optional custom review-lane declarations; absence keeps built-in compatibility | Yes, through guarded `garda review-catalog ...` commands |
 | `paths.json` | Preflight classification roots and trigger regexes | Yes |
 | `skill-packs.json` | Installed built-in domain packs | Yes, through `garda skills add/remove` |
 | `optional-skill-selection-policy.json` | Repo-local policy for preprompt-time optional skill selection (`off`, `optional`, `mandatory`; legacy aliases remain read-compatible) | Yes |
@@ -28,7 +29,7 @@ node bin/garda.js gate validate-config
 | `skills-headlines.json` | Compact task-start optional-skill selection surface with installed skill headlines and pack summaries | No, generated from live skill/pack manifests |
 
 `garda.config.json` is rewritten from the bundled template during init/reinit/update, so stale local edits do not become the long-term source of truth.
-The editable live configs above are merged forward during init/reinit/update: existing live values are preserved and missing template keys are filled in.
+The editable live configs above are merged forward during init/reinit/update: existing live values are preserved and ordinary missing template keys are filled in. The guarded `profiles.json` remediation-mode policy is the exception: omission is preserved for an existing profile so a legacy workspace cannot acquire DELTA behavior without explicit migration.
 
 ## Validation
 
@@ -197,6 +198,69 @@ The CLI validates that a matching live review skill is installed before enabling
 
 `skills-index.json` is still a generated runtime index under `live/config/`, but it is **not** part of `garda.config.json` and is **not** validated by `gate validate-config`.
 
+## Review Catalog
+
+The review catalog extends the compatibility-owned built-in review lanes with repo-local declarative lanes.
+
+**Optional file:** `live/config/review-catalog.json`
+
+```json
+{
+  "version": 1,
+  "custom_review_types": [
+    {
+      "id": "architecture",
+      "display_label": "Architecture review",
+      "enabled_by_default": false,
+      "skill_id": "architecture-review",
+      "trigger": {
+        "mode": "signals",
+        "signal_ids": ["architecture"]
+      },
+      "coverage_category_ids": ["maintainability"],
+      "reviewer_role": {
+        "role_id": "architecture-reviewer",
+        "focus_tags": ["maintainability"]
+      }
+    }
+  ]
+}
+```
+
+Built-in lanes remain defined by Garda compatibility contracts and retain their canonical pass/fail tokens. Custom IDs are stable lowercase kebab-case identifiers; Garda derives their canonical verdict tokens and rejects prompt bodies, verdict overrides, built-in replacements, unknown metadata, and `enabled_by_default: true`. A custom lane becomes eligible only after its skill is installed, its capability is enabled, and the selected profile assigns it `auto` or `required`.
+
+Triggers use either `manual` mode or validated `signals`. The selected profile supplies lane state and its `review_dependency_graph`; preflight resolves those inputs into the immutable task catalog/policy snapshot and launch order. Existing tasks never observe later catalog, capability, profile, or dependency changes. Normal task agents use the compact `TaskStartReviewCatalog` and preflight snapshot, while reviewers receive only their generated launch input; neither should load the full catalog as routine context.
+
+Inspection is read-only and safe for legacy workspaces:
+
+```text
+garda review-catalog list --target-root "."
+garda review-catalog show architecture --profile balanced --target-root "."
+garda review-catalog explain architecture --profile balanced --target-root "."
+garda review-catalog validate --target-root "."
+```
+
+When the file is absent, these commands resolve the built-in compatibility catalog and validation still passes. Fresh init and reinit materialize the default `{ "version": 1, "custom_review_types": [] }` and preserve valid custom definitions. Existing legacy workspaces remain untouched until an operator explicitly runs the guarded migration:
+
+```text
+garda review-catalog migrate --target-root "."
+garda review-catalog migrate --confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601> --target-root "."
+garda review-catalog migrate --apply --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --confirmation-receipt-sha256 <hash> --target-root "."
+```
+
+The preview proves that the normalized explicit catalog/profile/capability configuration preserves required reviews, verdict and receipt tokens, dependency order, task-report review lanes, and the configured or implicit review-execution preset. Migration retains the legacy capability source, preserves explicit capability choices, and leaves custom lanes disabled. Confirmation and apply bind both managed config and workflow policy state; invalid or stale input fails before writes, interrupted multi-file publication rolls back from the transaction backup, and a repeated normalized migration is an auditable `NO_CHANGE`.
+
+Mutation commands are `create`, `update`, `enable`, `disable`, `profile-bind`, and `dependency`. They never write immediately: the first call returns a semantic preview plus current-state and plan hashes; `--confirm` with fresh operator confirmation creates a one-time receipt; `--apply` consumes that receipt and revalidates the same hashes and managed filesystem boundaries under the transaction lock. Management is rejected while agent tasks are active.
+
+Successful changes record an audit entry and recovery backup. A failed multi-file publish automatically restores the pre-write state and records `ROLLED_BACK`; use the reported backup and audit paths for diagnosis, then run the inverse guarded mutation when recovery is needed. Do not hand-edit runtime receipts or treat a backup as an apply receipt.
+
+Troubleshooting order:
+
+1. Run `review-catalog validate` and `review-catalog explain <id> --profile <name>`.
+2. Verify the referenced skill, capability flag, profile state, and dependency IDs.
+3. If confirmation is stale, discard it and create a new preview after all active tasks finish.
+4. If publish failed, inspect the rollback diagnostic and audit record; do not replay a consumed or stale receipt.
+
 ## Profile Review Finding Policy
 
 Profiles can define how findings reported by delegated reviewers are handled independently from which review lanes run.
@@ -254,6 +318,41 @@ garda profile policy apply balanced --preset strict \
 Use `--copy-from <profile>` to copy the source profile's effective policy or `--reset` to restore a built-in profile from the shipped definition. User-profile reset deterministically uses the shipped `balanced` policy and fails closed when that shipped baseline is unavailable. A legacy profile preview reports the fail-closed migration, and applying the unchanged preview materializes the explicit `strict` policy. Apply serializes all profile-config writers and rechecks the preview hash while holding the write lock. Changed mutations use an fsynced write-ahead audit transaction (`PREPARED` followed by `COMMITTED` or `ABORTED`); every CLI or UI profile writer removes a dead-owner lock and recovers an interrupted transaction from the current config hash before computing its mutation. Bounded hash-only evidence in `runtime/profile-finding-policy-audit.jsonl` stores the active-task count and full-list SHA-256 without raw task identifiers, distinguishes discovery failure from a verified empty result, and affects future task snapshots only; already-entered tasks retain their locked profile policy.
 
 For `--preset custom`, provide all five actions: `--critical fix_now`, `--high <action>`, `--medium <action>`, `--low <action>`, and `--residual-risk <action>`. Profile writers wait for a short bounded lock window before reporting contention, while active-task discovery is performed outside the serialized config-write section. Interactive profile creation also rejects a commit if `profiles.json` changed while prompts were open, preventing inheritance from a stale source snapshot.
+
+## Profile Remediation Review Mode Policy
+
+New shipped profiles declare an explicit conservative policy:
+
+```json
+{
+  "review_remediation_mode_policy": {
+    "schema_version": 2,
+    "policy_id": "conservative_review_remediation_mode_v1",
+    "initial_review_mode": "FULL",
+    "delta_eligible_review_types": ["api", "code", "db", "dependency", "infra", "performance", "refactor", "security", "test"],
+    "force_full_categories": ["ambiguous", "generated_churn", "global"],
+    "max_delta_changed_files": 4,
+    "max_delta_changed_lines": 240,
+    "max_consecutive_delta_reviews": 3
+  }
+}
+```
+
+Schema 2 enables every review lane present in the current catalog for bounded DELTA remediation when a profile
+is created or a schema-1 policy is migrated. Custom lanes use their stable lowercase kebab-case ID and must be
+registered in `review-catalog.json`.
+Profile validation and effective-policy resolution reject syntactically valid but unregistered lane IDs. Remove a lane from `delta_eligible_review_types`
+to force only that lane to FULL; an empty array disables DELTA for every lane. Existing schema-2 allowlists are
+preserved so explicit removals remain stable. Valid schema-1 policies are upgraded
+once during init. An unresolved schema-1 policy and a profile with no policy both keep legacy FULL-only behavior.
+
+The first review for every lane remains `FULL`. Eligible remediation may use
+`DELTA` only while the immutable task snapshot, exhaustive baseline lineage,
+scope membership, findings reconciliation, and bounded risk checks remain
+valid. Missing policy is not defaulted during init/update of an existing
+profile: it is preserved as a visible legacy `FULL`-only state. To migrate,
+create a current profile or add the exact schema-valid policy explicitly before
+starting the next task. Existing task snapshots never change retroactively.
 
 Profiles also control how non-blocking `create_follow_up` items become backlog work:
 

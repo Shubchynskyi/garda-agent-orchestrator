@@ -20,9 +20,23 @@ export interface TaskStatsResult {
     effective_depth: number | null;
     depth_escalated: boolean;
     review_attempt_summary?: ReviewAttemptSummary | null;
+    review_execution_mode_summary?: ReviewExecutionModeSummary | null;
     budget_forecast: BudgetForecast | null;
     budget_comparison: BudgetComparisonResult | null;
     token_economy: TokenEconomySummary;
+}
+
+export interface ReviewExecutionModeSummary {
+    total_attempts: number;
+    full_count: number;
+    delta_count: number;
+    legacy_unknown_count: number;
+    by_review_type: Record<string, {
+        full_count: number;
+        delta_count: number;
+        legacy_unknown_count: number;
+    }>;
+    visible_summary_line: string;
 }
 
 export interface TokenEconomySummary {

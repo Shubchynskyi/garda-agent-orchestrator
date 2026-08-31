@@ -310,7 +310,7 @@ test('task reset alias reopen confirm routes through guarded task-reset gate', (
         assert.ok(output.includes('TargetStatus: TODO'));
         assert.ok(!output.includes('GARDA_CLI_FAILED'));
         const taskMd = fs.readFileSync(path.join(tmpDir, 'TASK.md'), 'utf8');
-        assert.ok(taskMd.includes('| T-001 | TODO |'), 'reopen alias should use the canonical guarded reset flow');
+        assert.ok(taskMd.includes('| T-001 | 🟦 TODO |'), 'reopen alias should use the canonical guarded reset flow');
         assert.ok(!fs.existsSync(path.join(tmpDir, 'task')), 'confirm alias must not create a bootstrap destination');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

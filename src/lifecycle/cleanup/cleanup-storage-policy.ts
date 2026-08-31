@@ -1,12 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
-import { KNOWN_SUFFIXES, invalidateIndex as invalidateReviewsIndex } from '../../gate-runtime/reviews-index';
+import {
+    invalidateIndex as invalidateReviewsIndex,
+    rebuildIndex
+} from '../../gate-runtime/reviews-index';
 import {
     parseActiveReviewArtifactTaskId,
-    parseKnownReviewArtifactTaskId
+    parseStructuredTaskArtifactTaskId
 } from '../../core/task-ids';
-import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import { ensureWithinRoot } from '../generic-utils';
 import type {
     ReviewArtifactRetentionMode,
@@ -108,8 +110,13 @@ export function compressFileGzip(filePath: string): string {
     return compressedPath;
 }
 
-function isHeavyForensicReviewArtifact(fileName: string): boolean {
-    return HEAVY_FORENSIC_REVIEW_SUFFIXES.some((suffix) => fileName.endsWith(suffix));
+function isHeavyForensicReviewArtifact(fileName: string, artifactType: string): boolean {
+    if (HEAVY_FORENSIC_REVIEW_SUFFIXES.some((suffix) => fileName.endsWith(suffix))) {
+        return true;
+    }
+    return artifactType.endsWith('-review-context.json')
+        || artifactType.endsWith('-review-output.md')
+        || artifactType.endsWith('-scoped.diff');
 }
 
 function buildEmptyStoragePolicyResult(retentionMode: ReviewArtifactRetentionMode): StoragePolicyResult {
@@ -145,11 +152,18 @@ export function applyForensicCompressionPolicy(
         return result;
     }
 
+    const indexedEntriesByFileName = new Map(
+        rebuildIndex(safeReviewsDir).entries.map((entry) => [entry.fileName, entry])
+    );
     for (const entry of entries) {
-        if (entry.endsWith('.gz') || !isHeavyForensicReviewArtifact(entry)) continue;
+        const indexedEntry = indexedEntriesByFileName.get(entry);
+        if (
+            entry.endsWith('.gz')
+            || !indexedEntry
+            || !isHeavyForensicReviewArtifact(entry, indexedEntry.artifactType)
+        ) continue;
 
-        const knownTaskId = parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES);
-        if (!knownTaskId || !forensicTaskIds.has(knownTaskId)) continue;
+        if (!forensicTaskIds.has(indexedEntry.taskId)) continue;
 
         const filePath = path.join(safeReviewsDir, entry);
         let safeFilePath: string;
@@ -218,6 +232,9 @@ export function applyStoragePolicy(
         ? policy.compressAfterDays * 24 * 60 * 60 * 1000
         : 0;
 
+    const indexedTaskIdsByFileName = new Map(
+        rebuildIndex(safeReviewsDir).entries.map((entry) => [entry.fileName, entry.taskId])
+    );
     for (const entry of entries) {
         if (!entry.endsWith('.json') && !entry.endsWith('.md') && !entry.endsWith('.diff')) continue;
 
@@ -229,10 +246,10 @@ export function applyStoragePolicy(
             result.preserved.push(entry);
             continue;
         }
-        const knownTaskId = parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES);
         const taskId = parseActiveReviewArtifactTaskId(entry, protectedTaskIds)
-            ?? knownTaskId
-            ?? resolveStructuredOrJsonReviewArtifactTaskId(safeFilePath, entry);
+            ?? indexedTaskIdsByFileName.get(entry)
+            ?? parseStructuredTaskArtifactTaskId(entry)
+            ?? null;
         if (!taskId) continue;
         if (targetTaskIds && !targetTaskIds.has(taskId)) {
             result.preserved.push(entry);

@@ -303,6 +303,59 @@ describe('planned-scope diff accounting', { concurrency: false }, () => {
         }
     });
 
+    it('keeps unchanged authorized scope baseline-only through classify-change', () => {
+        const commandRepoRoot = createGateTempRepo();
+        const taskId = 'T-979-21-F5-unchanged-command-contract';
+        try {
+            fs.writeFileSync(
+                path.join(commandRepoRoot, '.gitignore'),
+                'TASK.md\ngarda-agent-orchestrator/runtime/\n',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(commandRepoRoot, 'AGENTS.md'), '# AGENTS.md\n', 'utf8');
+            writeLines(path.join(commandRepoRoot, 'project', 'planned.ts'), 4, 'planned');
+            initializeGitRepo(commandRepoRoot);
+            seedTaskQueue(commandRepoRoot, taskId);
+            seedInitAnswers(commandRepoRoot);
+
+            runWithRepoCwd(commandRepoRoot, () => {
+                runEnterTaskMode({
+                    repoRoot: commandRepoRoot,
+                    taskId,
+                    taskSummary: 'Keep unchanged planned scope baseline-only'
+                });
+                loadTaskEntryRulePack(commandRepoRoot, taskId);
+                runHandshakeForTask(commandRepoRoot, taskId);
+                runShellSmokeForTask(commandRepoRoot, taskId);
+            });
+
+            const outputPath = path.join(
+                commandRepoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'reviews',
+                `${taskId}-preflight.json`
+            );
+            const result = runWithRepoCwd(commandRepoRoot, () => runClassifyChangeCommand({
+                repoRoot: commandRepoRoot,
+                taskId,
+                taskIntent: 'Keep unchanged planned scope baseline-only',
+                changedFiles: ['project/planned.ts'],
+                outputPath,
+                emitMetrics: false
+            }));
+            const payload = JSON.parse(result.outputText);
+
+            assert.deepEqual(payload.authorized_files, ['project/planned.ts']);
+            assert.deepEqual(payload.changed_files, []);
+            assert.equal(payload.zero_diff_guard.zero_diff_detected, true);
+            assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+            assert.equal(payload.zero_diff_guard.completion_requires_audited_no_op, true);
+        } finally {
+            fs.rmSync(commandRepoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('accounts for mixed planned modification, rename, delete, recreate, and untracked states', () => {
         writeLines(path.join(repoRoot, 'src', 'unchanged.ts'), 1, 'unchanged');
         writeLines(path.join(repoRoot, 'src', 'modified.ts'), 1, 'modified-before');

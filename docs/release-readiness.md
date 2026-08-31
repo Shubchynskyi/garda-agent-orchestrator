@@ -4,6 +4,79 @@ This tracked checklist is the release-cut source of truth for static readiness.
 Local `TASK.md` and `TASK_DONE.md` files are intentionally gitignored operator
 queues and must not be treated as publish blockers by release validation.
 
+## 1.4.0
+
+- [x] Package metadata is aligned to `1.4.0` in `package.json`, `package-lock.json`, `VERSION`, and the tracked package-surface baseline.
+- [x] `CHANGELOG.md` starts with a populated `1.4.0` section, while release readiness verifies that the complete released tail beginning at `1.3.0` remains content-identical to the `v1.3.0` tag.
+- [x] Release readiness rejects any existing `v1.4.0` tag. The publish workflow independently validates tag/version parity and rejects both reruns and any distinct prior `publish.yml` run for the same tag through read-only GitHub Actions history.
+- [x] The 165 commits after `master`/`v1.3.0` were audited by conventional prefix: 18 `feat`, 141 `fix`, and 6 `test`, with no merge commits, explicit breaking-change markers, or tracked-file deletions.
+- [x] README, CLI, Node runtime, Node platform, and release-runbook compatibility references name the `1.4.x` line and preserve the Node 22.13+/24 support matrix.
+- [x] Release notes cover the guarded review catalog, compatibility migration, dynamic review ordering, authenticated delta/full remediation, correction and recovery hardening, workflow manifests, operator UI changes, and safer uninstall behavior.
+- [x] The bundled `1.4.0` update announcement gives existing users an actionable catalog validation command and keeps explicit migration optional and preview-only.
+- [x] All tracked Markdown documents are covered by the repository-relative link validator, and package smoke separately validates links in the installed public-document surface.
+- [x] Published tarballs retain the compiled-only CLI contract and omit `src/**`, `tests/**`, `.node-build/**`, and `.scripts-build/**`.
+- [x] The deterministic offline package-surface baseline is refreshed from the final `1.4.0` packed surface with a release-audit rationale.
+- [x] `.github/workflows/publish.yml` remains the primary Trusted Publishing workflow for `v*` tags, and its `npm-release` GitHub Environment is release-tag restricted.
+- [x] npm Trusted Publisher settings remain GitHub Actions publisher `Shubchynskyi` / `garda-agent-orchestrator` / `publish.yml`, with allowed action `npm stage publish`.
+- [x] The public package still requires npm-side staged approval with maintainer 2FA; after verification, Publishing access can remain `Require two-factor authentication and disallow tokens`.
+- [x] Post-publish verification includes npm `latest`, package integrity/provenance visibility, and `npx --yes garda-agent-orchestrator@1.4.0 --version`.
+- [x] Frozen profile/effective-review-snapshot behavior is aligned across compile, POST_PREFLIGHT rule-pack, required-review, and `next-step` flows; the final full Node suite completes without failures.
+- [x] Review selection, findings/disposition, final closeout, review-cycle restart, public-command inventory, lifecycle cleanup, and lifecycle writer-audit regressions are resolved and covered by focused plus full-suite tests.
+- [x] The ignored local deployed `garda-agent-orchestrator/live/version.json` bundle reports `1.4.0`, and setup, verify, and manifest validation pass against the refreshed bundle.
+- [x] The final handoff contract requires a clean-tree `npm run release:preflight` on Node 24 and the supported Node 22.13+ line; creating or pushing `v1.4.0` and approving the staged npm release remain explicit operator actions after the release commit.
+
+### Current validation decision
+
+**READY FOR RELEASE COMMIT as of 2026-08-29 on Windows with Node 24.11.1 and
+npm 11.18.0.** The final full Node run completed all 36 shards with 9,176
+passing tests, 28 intentional skips, and zero failures or cancellations. The
+exact `c8 npm test` coverage run repeated the same 9,204-test result and reported
+90.01% statements/lines, 79.34% branches, and 93% functions.
+
+Dependency-boundary validation, TypeScript checks including unused-symbol
+enforcement, ESLint, both npm audits, release smoke, packaging smoke, version
+parity, and deterministic package-surface validation pass. The refreshed local
+bundle passes setup, verify, and manifest validation. Embedded-bundle parity is
+reported as `SKIPPED` by design because the generated bundle is gitignored and
+there are no tracked embedded parity items.
+
+There are no remaining known code or test blockers. The worktree intentionally
+contains the uncommitted release preparation, so it is ready for a release
+commit but not yet for a tag. After that commit, run the exact clean-tree
+`npm run release:preflight` on Node 24 and the supported Node 22.13+ line before
+creating `v1.4.0`; the target tag is currently unassigned.
+
+The local proof intentionally runs before `v1.4.0` exists. After the operator
+pushes the tag, the workflow verifies that tag against `package.json`, both
+lockfile version fields, and `VERSION`. It then deletes only the checkout's
+ephemeral `refs/tags/v1.4.0` ref before running the unchanged preflight. No
+environment variable can make an assigned version pass readiness.
+
+### Package-growth impact evidence
+
+Compared with the published `1.3.0` baseline, the final `1.4.0` packed surface
+grows from 1,333 files and 15,160,503 unpacked bytes to 1,377 files and
+16,471,563 bytes: 44 files (3.30%) and 1,311,060 bytes (8.65%). The increase is
+the compiled review-catalog, remediation, workflow-manifest, UI, template, and
+public-documentation surface. It adds no production dependencies or consumer
+`preinstall`, `install`, or `postinstall` scripts.
+
+The lexical review counters change by `exec +4`, `fetch +5`, `fs +205`,
+`readFile +33`, and `writeFile +6`; `child_process` is unchanged. These are
+expected references in the audited runtime and test-supporting release surface,
+not vulnerability findings. The tracked baseline binds the final counts so
+growth beyond its explicit allowances, lifecycle-script drift, or lexical
+risk-signal growth fails release validation.
+
+The package smoke treats install and cold CLI startup as measured release
+contracts. On Windows with Node 24.11.1 and npm 11.18.0, the focused package
+smoke measured a local tarball install at 6,392 ms and a packaged `--version`
+launch at 3,541 ms. The deterministic regression ceilings remain 60,000 ms for
+local install and 10,000 ms for cold startup, while functional pack, install,
+and invocation checks remain mandatory. The focused packaging suite passed all
+16 tests, and both `npm audit` and `npm audit --omit=dev` reported zero known
+vulnerabilities on 2026-08-29.
+
 ## 1.3.0
 
 - [x] Package metadata is aligned to `1.3.0` in `package.json`, `package-lock.json`, `VERSION`, and the tracked package-surface baseline.

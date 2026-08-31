@@ -15,6 +15,7 @@ import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 
 const TASK_ID = 'T-NEXT-1';
@@ -108,6 +109,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [

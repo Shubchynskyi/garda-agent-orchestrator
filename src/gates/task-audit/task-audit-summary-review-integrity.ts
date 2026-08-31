@@ -10,7 +10,7 @@ import {
     type ReviewReuseTelemetryEventLike
 } from '../review-reuse/review-reuse-telemetry';
 import {
-    REVIEW_TRUST_COMPATIBILITY_TYPES,
+    collectEffectiveReviewTypeIds,
     collectKnownRequiredReviewTypes,
     collectUnsafeRequiredReviewTypeIssues,
     getCanonicalReviewContextPath,
@@ -21,6 +21,10 @@ import {
     safeReadJson
 } from './task-audit-summary-review-common';
 import { reviewReceiptMatchesCurrentReviewDomain, type FinalCloseoutReviewTrustSummary } from './task-audit-summary-review-trust';
+import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
 
 export interface FinalCloseoutReviewIntegrityAttestation {
     schema_version: 1;
@@ -198,8 +202,14 @@ function reviewIntegrityArtifactExists(reviewsRoot: string, taskId: string, revi
     return fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`)) || fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}.md`)) || fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`));
 }
 
-function discoverReviewIntegrityObservationTypes(reviewsRoot: string, taskId: string): string[] {
-    return REVIEW_TRUST_COMPATIBILITY_TYPES.filter((reviewType) => reviewIntegrityArtifactExists(reviewsRoot, taskId, reviewType)).sort();
+function discoverReviewIntegrityObservationTypes(
+    reviewsRoot: string,
+    taskId: string,
+    currentPreflight?: Record<string, unknown> | null
+): string[] {
+    return collectEffectiveReviewTypeIds(currentPreflight)
+        .filter((reviewType) => reviewIntegrityArtifactExists(reviewsRoot, taskId, reviewType))
+        .sort();
 }
 
 function collectReviewIntegrityIssues(options: {
@@ -233,6 +243,22 @@ function collectReviewIntegrityIssues(options: {
                 issues.push(`${reviewType}: missing or invalid review receipt`);
             }
             continue;
+        }
+        if (options.currentPreflight && isCustomReviewLaneInSnapshot(options.currentPreflight, reviewType)) {
+            try {
+                const laneEvidenceViolations = getReviewLaneArtifactEvidenceViolations({
+                    artifact: receipt,
+                    preflight: options.currentPreflight,
+                    reviewType,
+                    label: `Review receipt for '${reviewType}'`
+                });
+                issues.push(...laneEvidenceViolations.map((violation) => `${reviewType}: ${violation}`));
+            } catch (error) {
+                issues.push(
+                    `${reviewType}: custom review lane binding cannot be validated: `
+                    + (error instanceof Error ? error.message : String(error))
+                );
+            }
         }
         if (!reviewExists) {
             issues.push(`${reviewType}: missing review artifact`);
@@ -518,13 +544,16 @@ function buildReviewIntegrityAttestationUnlocked(options: {
     reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; currentPreflight?: Record<string, unknown> | null;
     timelineEvents?: readonly ReviewReuseTelemetryEventLike[]; initialIssues?: string[];
 }): FinalCloseoutReviewIntegrityAttestation {
-    const requiredReviewTypes = collectKnownRequiredReviewTypes(options.requiredReviews);
-    const unsafeRequiredReviewTypeIssues = collectUnsafeRequiredReviewTypeIssues(options.requiredReviews);
+    const requiredReviewTypes = collectKnownRequiredReviewTypes(options.requiredReviews, options.currentPreflight);
+    const unsafeRequiredReviewTypeIssues = collectUnsafeRequiredReviewTypeIssues(
+        options.requiredReviews,
+        options.currentPreflight
+    );
     const rawRequiredReviewCount = Object.values(options.requiredReviews || {}).filter((required) => required === true).length;
     const requiredReviewCount = requiredReviewTypes.length;
     const observationReviewTypes = requiredReviewCount > 0
         ? requiredReviewTypes
-        : discoverReviewIntegrityObservationTypes(options.reviewsRoot, options.taskId);
+        : discoverReviewIntegrityObservationTypes(options.reviewsRoot, options.taskId, options.currentPreflight);
     const independentReviewCompleted =
         options.reviewTrustSummary?.status === 'INDEPENDENT_AUDITED'
         && options.reviewTrustSummary.independent_review_attested === true;
@@ -659,9 +688,10 @@ function stringArrayField(source: Record<string, unknown>, field: string): strin
 
 export function collectReviewAuthorshipAttestationIssues(
     reviewGate: Record<string, unknown> | null,
-    requiredReviews: Record<string, boolean>
+    requiredReviews: Record<string, boolean>,
+    currentPreflight?: Record<string, unknown> | null
 ): string[] {
-    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews);
+    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews, currentPreflight);
     if (requiredReviewTypes.length === 0) {
         return [];
     }

@@ -269,13 +269,58 @@ test('inspectTaskEventFile validates integrity chain', () => {
         const content = events.map(e => JSON.stringify(e)).join('\n') + '\n';
         fs.writeFileSync(filePath, content, 'utf8');
 
-        const result = inspectTaskEventFile(filePath, 'T-001');
+        const observedEvents: Array<{ lineNumber: number; message: unknown }> = [];
+        const result = inspectTaskEventFile(filePath, 'T-001', {
+            onIntegrityEvent: (event, lineNumber) => {
+                observedEvents.push({ lineNumber, message: event.message });
+            }
+        });
         assert.equal(result.status, 'PASS');
         assert.equal(result.matching_events, 3);
         assert.equal(result.integrity_event_count, 3);
         assert.equal(result.violations.length, 0);
         assert.equal(result.first_integrity_sequence, 1);
         assert.equal(result.last_integrity_sequence, 3);
+        assert.deepEqual(observedEvents, [
+            { lineNumber: 1, message: 'Event 1' },
+            { lineNumber: 2, message: 'Event 2' },
+            { lineNumber: 3, message: 'Event 3' }
+        ]);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile fails closed when integrity observer throws', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'observer-error.jsonl');
+        const event: Record<string, unknown> = {
+            timestamp_utc: new Date().toISOString(),
+            task_id: 'T-001',
+            event_type: 'test',
+            outcome: 'PASS',
+            integrity: {
+                schema_version: 1,
+                task_sequence: 1,
+                prev_event_sha256: null
+            } as Record<string, unknown>
+        };
+        (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
+        fs.writeFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
+
+        const result = inspectTaskEventFile(filePath, 'T-001', {
+            onIntegrityEvent: () => {
+                throw new Error('observer fixture failure');
+            }
+        });
+
+        assert.equal(result.status, 'FAILED');
+        assert.equal(result.integrity_event_count, 1);
+        assert.ok(result.violations.some(violation => (
+            violation.includes('integrity-event observer failed at line 1')
+            && violation.includes('observer fixture failure')
+        )));
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -360,10 +405,14 @@ test('inspectTaskEventFile handles PASS_WITH_LEGACY_PREFIX', () => {
         const content = [JSON.stringify(legacy), JSON.stringify(integrityEvent)].join('\n') + '\n';
         fs.writeFileSync(filePath, content, 'utf8');
 
-        const result = inspectTaskEventFile(filePath, 'T-001');
+        const observedEventTypes: unknown[] = [];
+        const result = inspectTaskEventFile(filePath, 'T-001', {
+            onIntegrityEvent: (event) => observedEventTypes.push(event.event_type)
+        });
         assert.equal(result.status, 'PASS_WITH_LEGACY_PREFIX');
         assert.equal(result.legacy_event_count, 1);
         assert.equal(result.integrity_event_count, 1);
+        assert.deepEqual(observedEventTypes, ['test']);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

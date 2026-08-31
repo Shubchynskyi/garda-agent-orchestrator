@@ -17,6 +17,10 @@ import {
 import {
     resolveReviewRemediationClassifyChangedFiles
 } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-remediation-artifacts';
+import {
+    excludeUnchangedDirtyWorkspaceBaselineFiles
+} from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-shared';
+import { fileSha256 } from '../../../../../../src/gates/shared/helpers';
 import type {
     ReviewRemediationImpactAnalysis,
     ReviewRemediationScopeBoundary
@@ -187,6 +191,46 @@ describe('cli/commands/gate-flows/recovery remediation units', () => {
         ]);
         assert.equal(classification.non_test_review_reuse_candidate, true);
         assert.equal(classification.test_review_reuse_candidate, true);
+    });
+
+    it('excludes only unchanged dirty-workspace baseline files from evidence-only live scope', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-remediation-baseline-'));
+        const taskFile = 'src/app.ts';
+        const baselineFile = 'tests/user-change.test.ts';
+        const absoluteBaselinePath = path.join(repoRoot, ...baselineFile.split('/'));
+        fs.mkdirSync(path.dirname(absoluteBaselinePath), { recursive: true });
+        fs.writeFileSync(absoluteBaselinePath, 'user-owned baseline\n', 'utf8');
+        const baseline = {
+            schema_version: 1,
+            captured_at_utc: '2026-08-14T00:00:00.000Z',
+            changed_files: [baselineFile],
+            file_hashes: {
+                [baselineFile]: fileSha256(absoluteBaselinePath)
+            }
+        };
+
+        try {
+            assert.deepEqual(
+                excludeUnchangedDirtyWorkspaceBaselineFiles(
+                    repoRoot,
+                    [taskFile, baselineFile],
+                    baseline
+                ),
+                [taskFile]
+            );
+
+            fs.writeFileSync(absoluteBaselinePath, 'later mutation\n', 'utf8');
+            assert.deepEqual(
+                excludeUnchangedDirtyWorkspaceBaselineFiles(
+                    repoRoot,
+                    [taskFile, baselineFile],
+                    baseline
+                ),
+                [taskFile, baselineFile]
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('builds refresh classification scope from prior, replay, expansion, and explicit files', () => {

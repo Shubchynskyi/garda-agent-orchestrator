@@ -9,6 +9,7 @@ import {
     getShellSmokeEvidenceViolations
 } from '../../../../gates/diagnostics/shell-smoke-preflight';
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import { forEachJsonlLine } from '../../../../gate-runtime/task-events';
 import {
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionGateViolations,
@@ -35,6 +36,44 @@ export function resolveGateFlowTimelinePath(repoRoot: string, taskId: string): s
     return gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
 }
 
+function recoverRequiredEventTypesFromTruncatedTimeline(
+    timelinePath: string,
+    taskId: string,
+    requirements: GateFlowTimelineRequirement[],
+    timelineEvidence: OptionalSkillTimelineEvidence
+): void {
+    if (!timelineEvidence.boundedRead?.truncated) {
+        return;
+    }
+    const missingEventTypes = new Set(
+        requirements
+            .map((requirement) => requirement.eventType.trim().toUpperCase())
+            .filter((eventType) => eventType && !timelineEvidence.eventTypes.has(eventType))
+    );
+    if (missingEventTypes.size === 0) {
+        return;
+    }
+
+    forEachJsonlLine(timelinePath, (rawLine) => {
+        let event: Record<string, unknown>;
+        try {
+            event = JSON.parse(rawLine) as Record<string, unknown>;
+        } catch {
+            timelineEvidence.invalidJson = true;
+            return;
+        }
+        const eventTaskId = String(event.task_id || '').trim();
+        if (eventTaskId && eventTaskId !== taskId) {
+            return;
+        }
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        if (missingEventTypes.has(eventType)) {
+            timelineEvidence.eventTypes.add(eventType);
+            missingEventTypes.delete(eventType);
+        }
+    });
+}
+
 export function evaluateGateFlowTimelineReadiness(params: {
     orchestratorRoot: string;
     repoRoot: string;
@@ -47,6 +86,12 @@ export function evaluateGateFlowTimelineReadiness(params: {
         params.orchestratorRoot,
         params.taskId,
         timelinePath
+    );
+    recoverRequiredEventTypesFromTruncatedTimeline(
+        timelinePath,
+        params.taskId,
+        params.requirements,
+        timelineEvidence
     );
     const violations: string[] = [];
     if (!timelineEvidence.exists) {

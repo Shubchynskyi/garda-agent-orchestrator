@@ -265,6 +265,7 @@ export function handleUninstall(commandArgv: string[], packageJson: PackageJsonL
 
     formatKeyValueOutput(uninstallResult as unknown as Record<string, unknown>, [
         'targetRoot', 'keepPrimaryEntrypoint', 'keepTaskFile',
+        'taskFileDecision', 'taskFileRecoveryPath',
         'keepRuntimeArtifacts', 'dryRun', 'backupRoot',
         'preservedRuntimePath', 'filesDeleted', 'directoriesDeleted',
         'filesRestored', 'itemsBackedUp', 'rollbackStatus',

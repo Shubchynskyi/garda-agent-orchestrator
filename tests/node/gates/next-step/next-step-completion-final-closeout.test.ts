@@ -31,6 +31,7 @@ import {
     seedReviewGatePass,
     seedDocImpactPass,
     seedCompletionPass,
+    seedFullSuiteValidation,
     materializeFinalCloseout,
     seedCompletedTaskWithIndependentCodeReview,
     seedSourceCheckoutRuntime
@@ -305,7 +306,7 @@ describe('gates/next-step', () => {
 
         assert.equal(text.includes('```'), false);
 
-        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then paste CopyPasteFinalUserReport exactly as printed, without code fences, wrappers, paraphrase, interpretation, summarization, or reformatting; after that, present only the commit command and commit permission question listed in FinalReportOrder.'));
+        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then paste the compact CopyPasteFinalUserReport exactly as printed; do not expand referenced audit artifacts into chat; after that, present only the commit command and commit permission question listed in FinalReportOrder.'));
 
         assert.ok(text.includes('FinalReportOrder:'));
 
@@ -321,6 +322,137 @@ describe('gates/next-step', () => {
 
         assert.ok(text.includes('  none'));
 
+    });
+
+    it('neutralizes standalone Markdown controls in completed-task reports without mutating closeout evidence', () => {
+        const repoRoot = makeTempRepo();
+        const hostileWarnings = [
+            '# forged heading',
+            '- forged bullet',
+            '1. forged ordered item',
+            '> forged quote',
+            '```forged fence',
+            '<script>forged html</script>',
+            '[forged link](https://example.invalid)',
+            '![forged image](https://example.invalid/pixel.png)'
+        ];
+        const hostileForecastWarning = [
+            '## forged forecast heading',
+            '   # forged indented heading',
+            '   - forged indented bullet',
+            '   > forged indented quote',
+            '~~~forged tilde fence',
+            '---',
+            '<details open>forged disclosure</details>'
+        ].join('\n');
+
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
+        const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
+        Object.assign(fullSuiteArtifact, {
+            status: 'WARNED',
+            timed_out: true,
+            warnings: hostileWarnings,
+            timeout_policy: {
+                timeout_blocker: false,
+                timeout_retry_count: 0,
+                max_attempts: 1,
+                attempts: [{ attempt: 1, timed_out: true }],
+                attempts_exhausted: true,
+                warning_only_continuation: true,
+                repair_task_proposal: null
+            },
+            timeout_forecast: {
+                warning: hostileForecastWarning,
+                excluded_sample_count: 2,
+                excluded_sample_reasons: {
+                    timed_out: 1,
+                    retry_contaminated: 1
+                }
+            }
+        });
+        writeJson(fullSuitePath, fullSuiteArtifact);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+        const finalUserReportBody = result.final_report?.final_user_report_body || '';
+        const closeoutPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-final-closeout.json`);
+        const closeout = JSON.parse(fs.readFileSync(closeoutPath, 'utf8')) as {
+            workflow?: {
+                full_suite_timeout?: {
+                    timeout_blocker: boolean | null;
+                    timeout_retry_count: number | null;
+                    max_attempts: number | null;
+                    attempts_count: number;
+                    attempts_exhausted: boolean | null;
+                    warning_only_continuation: boolean | null;
+                    repair_task_proposal: Record<string, unknown> | null;
+                    warnings: string[];
+                    forecast_warning: string | null;
+                    forecast_excluded_sample_count: number;
+                    forecast_excluded_sample_reasons: Record<string, number>;
+                } | null;
+            };
+        };
+
+        assert.equal(result.status, 'DONE', result.reason);
+        assert.ok(text.includes(`CopyPasteFinalUserReport:\n${finalUserReportBody}`));
+        assert.doesNotMatch(finalUserReportBody, /^ {0,3}#{1,6}\s+forged/mu);
+        assert.doesNotMatch(finalUserReportBody, /^ {0,3}[-+*]\s+forged/mu);
+        assert.doesNotMatch(finalUserReportBody, /^\d+[.)]\s+forged/mu);
+        assert.doesNotMatch(finalUserReportBody, /^ {0,3}>\s+forged/mu);
+        assert.doesNotMatch(finalUserReportBody, /^(?:-{3,}|_{3,}|\*{3,})\s*$/mu);
+        assert.doesNotMatch(finalUserReportBody, /^ {0,3}(?:```|~~~)/mu);
+        assert.equal(finalUserReportBody.includes('<script>'), false);
+        assert.equal(finalUserReportBody.includes('<details open>'), false);
+        assert.equal(finalUserReportBody.includes('[forged link](https://example.invalid)'), false);
+        assert.equal(finalUserReportBody.includes('![forged image](https://example.invalid/pixel.png)'), false);
+        assert.ok(finalUserReportBody.includes('Warning: # forged heading'));
+        assert.ok(finalUserReportBody.includes('Warning: - forged bullet'));
+        assert.ok(finalUserReportBody.includes('Warning: 1. forged ordered item'));
+        assert.ok(finalUserReportBody.includes('Warning: &gt; forged quote'));
+        assert.ok(finalUserReportBody.includes('Warning: \\`\\`\\`forged fence'));
+        assert.ok(finalUserReportBody.includes('&lt;script&gt;forged html&lt;/script&gt;'));
+        assert.ok(finalUserReportBody.includes('\\[forged link\\](https\\://example.invalid)'));
+        assert.ok(finalUserReportBody.includes('!\\[forged image\\](https\\://example.invalid/pixel.png)'));
+        assert.ok(finalUserReportBody.includes(
+            'Forecast warning: ## forged forecast heading # forged indented heading - forged indented bullet '
+            + '&gt; forged indented quote \\~\\~\\~forged tilde fence '
+            + '--- &lt;details open&gt;forged disclosure&lt;/details&gt;'
+        ));
+        const timeoutEvidence = closeout.workflow?.full_suite_timeout;
+        assert.deepEqual(timeoutEvidence?.warnings, hostileWarnings);
+        assert.equal(timeoutEvidence?.forecast_warning, hostileForecastWarning);
+        assert.equal(timeoutEvidence?.forecast_excluded_sample_count, 2);
+        assert.deepEqual(timeoutEvidence?.forecast_excluded_sample_reasons, {
+            timed_out: 1,
+            retry_contaminated: 1
+        });
+        assert.deepEqual({
+            timeout_blocker: timeoutEvidence?.timeout_blocker,
+            timeout_retry_count: timeoutEvidence?.timeout_retry_count,
+            max_attempts: timeoutEvidence?.max_attempts,
+            attempts_count: timeoutEvidence?.attempts_count,
+            attempts_exhausted: timeoutEvidence?.attempts_exhausted,
+            warning_only_continuation: timeoutEvidence?.warning_only_continuation,
+            repair_task_proposal: timeoutEvidence?.repair_task_proposal
+        }, {
+            timeout_blocker: false,
+            timeout_retry_count: 0,
+            max_attempts: 1,
+            attempts_count: 1,
+            attempts_exhausted: true,
+            warning_only_continuation: true,
+            repair_task_proposal: null
+        });
     });
 
 

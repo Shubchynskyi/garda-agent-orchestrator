@@ -64,6 +64,7 @@ import {
     getCompileGateEvidence,
     formatReviewArtifactRootEscapeViolation,
     formatReviewArtifactPathEscapeViolation,
+    hasRequiredSpecializedReviews,
     isReviewArtifactPathInsideRoots,
     testCompileScopeDrift,
     testReviewArtifacts,
@@ -439,14 +440,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     const skipCode = skipReviewsList.includes('code');
     const verdicts = resolveExpectedReviewVerdicts(required, providedVerdicts, skipReviewsList);
     const canSkipCode = !!required.code
-        && !required.db
-        && !required.security
-        && !required.refactor
-        && !required.api
-        && !required.test
-        && !required.performance
-        && !required.infra
-        && !required.dependency
+        && !hasRequiredSpecializedReviews(required)
         && validatedPreflight.changed_files_count <= 1
         && validatedPreflight.changed_lines_total <= 8;
 

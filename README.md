@@ -79,6 +79,7 @@ If you want persistent commands, install globally.
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
 | **Specialist Review Lanes** | code, db, security, refactor, api, test, performance, infra, and dependency reviews when the task scope requires them |
+| **Extensible Review Catalog** | Guarded custom review lanes, profile states, dependency graphs, immutable task snapshots, and legacy-compatible defaults |
 | **Node Runtime** | Public CLI and gate flows run through the Node/TypeScript router with no shell runtime dependency |
 | **Compact Command Hints** | Agent rules teach efficient CLI flags for everyday commands |
 
@@ -112,9 +113,10 @@ The provider list is maintained in [docs/providers.md](docs/providers.md). That 
 | `garda rollback` | Roll back to a specific version or restore from the latest rollback snapshot |
 | `garda cleanup` | Preview/apply tiered runtime retention and inspect review-artifact policy |
 | `garda repair` | Inspect or rebuild runtime indexes, protected manifests, and stale lock state |
-| `garda uninstall` | Remove orchestrator with keep/delete choices |
+| `garda uninstall` | Remove orchestrator while preserving `TASK.md` by default; queue removal requires explicit `--keep-task-file no` |
 | `garda skills` | List, suggest, add, remove, and validate optional built-in skill packs |
 | `garda profile` | List, switch, create, delete, and validate workspace profiles |
+| `garda review-catalog` | Inspect, validate, explain, and safely manage built-in/custom review lanes |
 
 Published command names: `garda`, `gao`, `garda-agent-orchestrator`
 
@@ -140,7 +142,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 - **Node.js 24 LTS is the primary runtime baseline** for the public CLI, lifecycle commands, and gate commands. Node.js 22.13+ is also supported as the compatibility runtime line.
 - **A local Git working tree is required.** Garda uses `git status` and `git diff` from the local repository to derive task scope, dirty-worktree baselines, zero-diff evidence, protected control-plane drift, and review freshness. The hosting service does not matter: GitHub, GitLab, Bitbucket, a private server, or no remote at all are all acceptable as long as the project is a local Git repository and the `git` CLI is available.
-- **1.3.x compatibility stance:** Node 22.13+ is covered by `package.json` engines, CI matrix coverage, release validation, runtime diagnostics, and documentation. Node 24 remains the primary line.
+- **1.4.x compatibility stance:** Node 22.13+ is covered by `package.json` engines, CI matrix coverage, release validation, runtime diagnostics, and documentation. Node 24 remains the primary line.
 - **Compatibility note:** Node 23, Node 22 versions before 22.13.0, and Node 20 or older are outside the tested support matrix. Runtime diagnostics warn for those versions instead of blocking execution solely because of the Node version.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/garda.ts` compiles into the public `bin/garda.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
 - **Compiled-only npm package:** published tarballs include `dist/**`, `bin/garda.js`, templates, metadata, and public documentation, but omit the repository `src/**` and `tests/**` trees. Consumer installs do not require TypeScript, devDependencies, or a build step.
@@ -149,7 +151,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 - **GitHub Actions CI mirrors the release hot path with fast quality coverage:** `ci.yml` runs `typecheck`, focused test shards, `validate:release:fast` on Linux and Windows, pack/install smoke, and a cross-platform lifecycle smoke that installs from the current workflow branch instead of drifting to the repository default branch. The local release handoff remains stricter: `npm run release:preflight` ends with the full `validate:release` proof.
 - Root `tsconfig.json` extends `tsconfig.node-foundation.json`, so editors like IntelliJ IDEA or WebStorm can discover the repository without custom setup.
 
-| Node.js line | 1.3.x support status | Release/CI contract |
+| Node.js line | 1.4.x support status | Release/CI contract |
 |---|---|---|
 | Node 24 LTS | Official primary runtime | `package.json` allows `>=24.0.0`; GitHub Actions typecheck, unit, release validation, and cross-platform smoke run on Node 24. |
 | Node 22.13+ LTS | Official compatibility runtime | `package.json` allows `^22.13.0`; GitHub Actions typecheck, unit, release validation, and cross-platform smoke run on Node 22.13+. |
@@ -162,7 +164,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 | **[HOW_TO.md](HOW_TO.md)** | Step-by-step user guide |
 | **[docs/cli-reference.md](docs/cli-reference.md)** | Complete CLI command reference |
 | **[docs/architecture.md](docs/architecture.md)** | Design, runtime model, deployed files |
-| **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities |
+| **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities, and review catalog management |
 | **[docs/findings-contracts.md](docs/findings-contracts.md)** | Findings-only review lifecycle, policy, recovery, and legacy migration |
 | **[docs/node-platform-foundation.md](docs/node-platform-foundation.md)** | Node foundation, execution model, validators, and build/test skeleton |
 | **[docs/database/sqlite-persistence.md](docs/database/sqlite-persistence.md)** | Workspace-local derived SQLite catalog, authority boundary, recovery, and maintenance contract |
@@ -179,14 +181,14 @@ Garda was not started from scratch in this repository. Earlier versions were dev
 
 ## Recent Changes
 
-- Review launch, findings, coverage, remediation, reuse, and receipt evidence are now bound more tightly to the current task cycle and delegated reviewer identity.
-- Recovery paths preserve scoped dirty baselines, split work, protected-manifest state, and full-suite evidence without fabricating completion state.
-- Ordinary `next-step` routing performs fewer repeated Git and runtime-history reads through bounded snapshots, batching, and integrity-keyed caches.
-- A workspace-local SQLite catalog accelerates only benchmark-qualified bulk aggregation and derived project-memory search; canonical files remain authoritative for every trust-sensitive decision.
-- The npm package ships the compiled runtime and required public assets without `src/**`, tests, or local build trees, and offline package-surface scoring guards unexpected growth.
-- Release readiness now verifies version/tag uniqueness, changelog alignment, the package-surface baseline, and relative links across tracked Markdown documents.
+- A guarded review catalog now supports repository-specific review lanes, profile states, dependency order, CLI management, and matching local UI controls.
+- Active task cycles freeze their effective review catalog and policy, so later configuration changes cannot rewrite in-flight review requirements.
+- Authenticated review remediation can reuse valid evidence or run a bounded `DELTA` review; stale, ambiguous, protected, or oversized changes fall back to `FULL` review.
+- Review correction, recovery, follow-up, reuse, and closeout paths now retain stricter cycle, scope, launch, and evidence provenance.
+- Declarative lifecycle and workflow-settings manifests keep runtime routing, help, documentation, configuration, and UI behavior aligned.
+- `garda uninstall` preserves `TASK.md` by default; removing the task queue now requires the explicit `--keep-task-file no` override.
 
-See **[CHANGELOG.md](CHANGELOG.md)** for the complete 1.3.0 release notes.
+See **[CHANGELOG.md](CHANGELOG.md)** for the complete 1.4.0 release notes.
 
 ## Important Notes
 

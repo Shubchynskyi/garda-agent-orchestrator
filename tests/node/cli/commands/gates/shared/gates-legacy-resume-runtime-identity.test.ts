@@ -31,6 +31,7 @@ import { writeProtectedControlPlaneManifest } from '../../../../../../src/gates/
 import { getCurrentWorkflowConfigFileHashes } from '../../../../../../src/gates/workflow-config/workflow-config-work';
 import * as childProcess from 'node:child_process';
 import {
+    bindFixtureEffectiveReviewSnapshot,
     seedReusableReviewEvidence as seedCurrentReusableReviewEvidence,
     writeBudgetOutputFilters
 } from '../../gate-test-helpers';
@@ -299,6 +300,13 @@ function writePreflight(
         ...overrides
     };
     fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
+    bindFixtureEffectiveReviewSnapshot(
+        repoRoot,
+        taskId,
+        'code',
+        preflightPath,
+        path.join(reviewsRoot, `${taskId}-task-mode.json`)
+    );
     return preflightPath;
 }
 
@@ -1016,7 +1024,8 @@ describe('cli/commands/gates', () => {
             }
         });
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        const postPreflightRulePack = loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        assert.equal(postPreflightRulePack.exitCode, 0, JSON.stringify(postPreflightRulePack));
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
             taskId,
@@ -1198,7 +1207,8 @@ describe('cli/commands/gates', () => {
             }
         });
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        const postPreflightRulePack = loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        assert.equal(postPreflightRulePack.exitCode, 0, JSON.stringify(postPreflightRulePack));
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
             taskId,

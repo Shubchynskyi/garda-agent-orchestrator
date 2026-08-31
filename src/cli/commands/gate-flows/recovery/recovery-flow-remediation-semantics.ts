@@ -226,6 +226,19 @@ export function getReviewRemediationSemanticSignals(
             scopeSource: semanticFileScope.source
         };
     }
+    const semanticFileGroups = groupReviewRemediationFiles(
+        semanticFileScope.files,
+        testTriggerRegexes
+    );
+    if (impactAnalysis && (semanticFileGroups.source?.length || 0) > 0) {
+        return {
+            category: 'runtime_behavior',
+            matchedSignals: ['source remediation fallback'],
+            rationale: 'remediation changes source files but uses no narrower supported semantic phrase; classify as runtime behavior and fail closed before reuse',
+            changedFiles: semanticFileScope.files,
+            scopeSource: semanticFileScope.source
+        };
+    }
     if (
         impactAnalysis
         && scopeBoundary.status === 'OK'

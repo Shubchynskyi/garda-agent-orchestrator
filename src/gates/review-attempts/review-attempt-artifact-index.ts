@@ -6,7 +6,7 @@ import { isPlainRecord } from '../../core/records';
 import { assertCanonicalTaskId } from '../../core/task-ids';
 import {
     entriesForTask,
-    loadIndex,
+    loadTaskIndex,
     type ReviewsIndexEntry
 } from '../../gate-runtime/reviews-index';
 
@@ -87,7 +87,7 @@ export function createReviewAttemptArtifactIndex(
 ): ReviewAttemptArtifactIndex {
     const resolvedReviewsRoot = path.resolve(reviewsRoot);
     const safeTaskId = assertCanonicalTaskId(taskId);
-    const loadedIndex = loadIndex(resolvedReviewsRoot);
+    const loadedIndex = loadTaskIndex(resolvedReviewsRoot, safeTaskId);
     const taskEntries = entriesForTask(loadedIndex.index, safeTaskId);
     const entriesByFileName = new Map<string, ReviewsIndexEntry>();
     const duplicateFileNames = new Set<string>();

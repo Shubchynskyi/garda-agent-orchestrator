@@ -1,6 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatFinalUserReport } from '../../../../src/gates/task-audit/task-audit-summary';
+import { buildCompletionReviewOrderBlocker } from '../../../../src/gates/task-audit/task-audit-summary-lifecycle';
+import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
 
 import {
     fs,
@@ -37,6 +39,123 @@ describe('gates/task-audit-summary', () => {
     });
 
     describe('buildTaskAuditSummary', () => {
+
+        it('reports custom dependency order drift even when closeout gate events are otherwise present', () => {
+            const reviewDependencyGraph = compileReviewDependencyGraph({
+                catalogLaneIds: ['code', 'architecture-boundary', 'test'],
+                activeLaneIds: ['code', 'architecture-boundary', 'test'],
+                requiredReviewIds: ['code', 'architecture-boundary', 'test'],
+                mode: 'parallel_all',
+                declaration: {
+                    preparation_order: ['code', 'architecture-boundary', 'test'],
+                    dependencies: {
+                        'architecture-boundary': ['code'],
+                        test: ['architecture-boundary']
+                    }
+                }
+            });
+            const events = [
+                { event_type: 'COMPILE_GATE_PASSED', integrity: { task_sequence: 1 }, details: {} },
+                {
+                    event_type: 'REVIEW_PHASE_STARTED',
+                    integrity: { task_sequence: 2 },
+                    details: { review_type: 'architecture-boundary' }
+                },
+                {
+                    event_type: 'REVIEW_RECORDED',
+                    integrity: { task_sequence: 3 },
+                    details: { review_type: 'code' }
+                }
+            ];
+
+            const blocker = buildCompletionReviewOrderBlocker(
+                { code: true, 'architecture-boundary': true, test: true },
+                events,
+                null,
+                tmpDir,
+                reviewDependencyGraph
+            );
+
+            assert.equal(blocker?.gate, 'required-reviews-check');
+            assert.match(blocker?.reason || '', /architecture-boundary.*code.*downstream_started_early/u);
+        });
+
+        it('uses task sequence rather than timestamp-sorted array position for dependency closeout', () => {
+            const reviewDependencyGraph = compileReviewDependencyGraph({
+                catalogLaneIds: ['code', 'architecture-boundary'],
+                activeLaneIds: ['code', 'architecture-boundary'],
+                requiredReviewIds: ['code', 'architecture-boundary'],
+                mode: 'parallel_all',
+                declaration: {
+                    preparation_order: ['code', 'architecture-boundary'],
+                    dependencies: { 'architecture-boundary': ['code'] }
+                }
+            });
+            const timestampSortedButSequenceDivergedEvents = [
+                { event_type: 'COMPILE_GATE_PASSED', integrity: { task_sequence: 1 }, details: {} },
+                { event_type: 'REVIEW_RECORDED', integrity: { task_sequence: 4 }, details: { review_type: 'code' } },
+                {
+                    event_type: 'REVIEW_PHASE_STARTED',
+                    integrity: { task_sequence: 3 },
+                    details: { review_type: 'architecture-boundary' }
+                },
+                { event_type: 'REVIEW_RECORDED', integrity: { task_sequence: 2 }, details: { review_type: 'code' } }
+            ];
+
+            const blocker = buildCompletionReviewOrderBlocker(
+                { code: true, 'architecture-boundary': true },
+                timestampSortedButSequenceDivergedEvents,
+                null,
+                tmpDir,
+                reviewDependencyGraph
+            );
+
+            assert.equal(blocker?.gate, 'required-reviews-check');
+            assert.match(blocker?.reason || '', /architecture-boundary.*code.*downstream_started_early/u);
+        });
+
+        it('blocks dependency closeout when the upstream review record has blocking findings', () => {
+            const reviewDependencyGraph = compileReviewDependencyGraph({
+                catalogLaneIds: ['code', 'architecture-boundary'],
+                activeLaneIds: ['code', 'architecture-boundary'],
+                requiredReviewIds: ['code', 'architecture-boundary'],
+                mode: 'parallel_all',
+                declaration: {
+                    preparation_order: ['code', 'architecture-boundary'],
+                    dependencies: { 'architecture-boundary': ['code'] }
+                }
+            });
+            const events = [
+                { event_type: 'COMPILE_GATE_PASSED', integrity: { task_sequence: 1 }, details: {} },
+                {
+                    event_type: 'REVIEW_RECORDED',
+                    integrity: { task_sequence: 2 },
+                    details: {
+                        review_type: 'code',
+                        review_findings_disposition: {
+                            blocking_count: 1,
+                            verdict: 'fail_for_fix_now'
+                        }
+                    }
+                },
+                {
+                    event_type: 'REVIEW_PHASE_STARTED',
+                    integrity: { task_sequence: 3 },
+                    details: { review_type: 'architecture-boundary' }
+                }
+            ];
+
+            const blocker = buildCompletionReviewOrderBlocker(
+                { code: true, 'architecture-boundary': true },
+                events,
+                null,
+                tmpDir,
+                reviewDependencyGraph
+            );
+
+            assert.equal(blocker?.gate, 'required-reviews-check');
+            assert.match(blocker?.reason || '', /architecture-boundary.*code.*unaccepted_upstream_record/u);
+        });
 
         it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
             const now = new Date().toISOString();
@@ -326,8 +445,9 @@ describe('gates/task-audit-summary', () => {
             assert.equal(timeout?.warning_only_continuation, true);
             assert.equal(timeout?.forecast_excluded_sample_reasons.timed_out, 1);
             assert.ok(timeout?.visible_summary_line.includes('warning_only=true'));
-            assert.ok(finalUserReport.includes('Full-suite Timeout Evidence:'));
-            assert.ok(finalUserReport.includes('workflow-config.full_suite_validation.timeout_blocker=false'));
+            assert.ok(finalUserReport.includes('Full suite: warned'));
+            assert.ok(finalUserReport.includes('Process warnings:'));
+            assert.ok(finalUserReport.includes('workflow-config.full\\_suite\\_validation.timeout\\_blocker=false'));
             assert.ok(finalMarkdown.includes('Full-suite timeout: status=WARNED'));
             assert.ok(summaryText.includes('Full-suite timeout: status=WARNED'));
         });

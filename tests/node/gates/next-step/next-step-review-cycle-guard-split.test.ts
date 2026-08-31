@@ -165,7 +165,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.equal(text.includes('Review cycle one-shot continuation active'), false);
         assert.ok(text.includes('api'));
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
-        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`), false);
         assert.equal(result.review.next_review_type, 'api');
     });
 
@@ -210,7 +210,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.equal(text.includes('completed the required review phase'), false);
         assert.equal(text.includes('allow_one_more_cycle'), false);
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
-        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`), false);
     });
 
     it('expires one-shot continuation after a failed non-test review even with pending review lanes', () => {
@@ -331,7 +331,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes(`TASK.md marks "${TASK_ID}" as SPLIT_REQUIRED`));
         assert.ok(result.reason.includes('cannot continue through classify, compile, review, full-suite, completion, or final closeout gates'));
-        assert.ok(taskMd.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.ok(events.includes('"event_type":"REVIEW_CYCLE_SPLIT_DECISION_RECORDED"'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'));
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-split-decision.json`)), true);
@@ -389,7 +389,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.equal(result.status, 'DECOMPOSED', result.reason);
         assert.equal(result.next_gate, 'child-task');
         assert.ok(result.commands[0]?.command.includes(`next-step "${TASK_ID}-1"`));
-        assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | 🟪 DECOMPOSED |`));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
     });
 
@@ -493,7 +493,7 @@ describe('gates/next-step review cycle guard split', () => {
         const promptText = fs.readFileSync(promptPath, 'utf8');
         assert.ok(promptText.includes(`# Review Cycle Auto-Split Prompt for ${TASK_ID}`));
         assert.ok(promptText.includes('GuardReason: "Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
-        assert.equal(promptText.includes('failed_non_test_review_count=2>1'), false);
+        assert.equal(promptText.includes('failed_non_test_review_count=2>=1'), false);
         assert.ok(promptText.includes('summary="second code failure"'));
         assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-1\`, \`${TASK_ID}-2\`, \`${TASK_ID}-3\``));
         assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F1\``));
@@ -509,7 +509,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.ok(text.includes('AutoSplitPromptArtifact: path='));
         assert.ok(text.includes('follow AutoSplitPromptArtifact instructions'));
         assert.equal(text.includes('wait for operator choice'), false);
-        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
         assert.equal(fs.existsSync(latchPath), true);
         const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as Record<string, unknown>;

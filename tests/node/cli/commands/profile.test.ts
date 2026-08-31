@@ -21,6 +21,10 @@ import {
 import type { ProfileEntry } from '../../../../src/cli/commands/profile/profile-types';
 import { handleUiProfileRequest } from '../../../../src/reports/ui/actions/profile-actions';
 import { buildHelpText } from '../../../../src/cli/commands/cli-help-output';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    resolveReviewRemediationModePolicyFromProfile
+} from '../../../../src/policy/review-remediation-mode-policy';
 
 const PACKAGE_JSON = { name: 'test-pkg', version: '1.0.0' };
 
@@ -109,6 +113,47 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
     };
     fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify(data, null, 2), 'utf8');
     return bundleRoot;
+}
+
+function writeCustomReviewConfig(bundleRoot: string, capabilityEnabled: boolean): void {
+    const configDir = path.join(bundleRoot, 'live', 'config');
+    fs.writeFileSync(path.join(configDir, 'review-catalog.json'), JSON.stringify({
+        version: 1,
+        custom_review_types: [{
+            id: 'architecture-boundary',
+            display_label: 'Architecture boundary review',
+            enabled_by_default: false,
+            skill_id: 'code-review',
+            trigger: { mode: 'signals', signal_ids: ['paths.config'] },
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['boundaries'] }
+        }]
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), JSON.stringify({
+        code: true,
+        db: true,
+        security: true,
+        refactor: true,
+        api: true,
+        test: true,
+        performance: true,
+        infra: true,
+        dependency: true,
+        'architecture-boundary': capabilityEnabled
+    }, null, 2), 'utf8');
+}
+
+function addInvalidInactiveProfile(bundleRoot: string): void {
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.invalid_inactive = {
+        ...data.built_in_profiles.balanced,
+        review_policy: {
+            ...data.built_in_profiles.balanced.review_policy,
+            ghost: 'auto'
+        }
+    };
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
 }
 
 function captureConsole(fn: () => unknown): { lines: string[]; result: unknown } {
@@ -216,6 +261,29 @@ test('profile list shows all profiles with active marker', () => {
     assert.ok(output.includes('fast'));
     assert.ok(output.includes('strict'));
     assert.ok(output.includes('docs-only'));
+    assert.match(output, /strict\s+depth=3 decomposition=true provenance=legacy_strict_compatibility/u);
+    assert.match(output, /balanced\s+depth=2 decomposition=true provenance=legacy_balanced_default/u);
+    assert.ok(output.includes('Review Catalog Lanes'));
+});
+
+test('profile list explains a new custom catalog lane as inactive until the profile enables it', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const { lines } = captureConsole(() => handleProfile(['list', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.match(output, /architecture-boundary\(disabled:profile_disabled\)/u);
+});
+
+test('profile list reports invalid inactive profile policy without blocking recovery', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    addInvalidInactiveProfile(bundleRoot);
+
+    const parsed = captureJsonProfileCommand(['list', '--bundle-root', bundleRoot, '--json']);
+    const policies = parsed.profile_review_catalog_policies as Record<string, Record<string, unknown>>;
+    assert.equal(policies.balanced.validation_issues, undefined);
+    assert.deepEqual(policies.invalid_inactive.validation_issues, [
+        "Profile 'invalid_inactive' review_policy contains unknown catalog review id 'ghost'."
+    ]);
 });
 
 test('profile command without subcommand shows current profile', () => {
@@ -270,6 +338,10 @@ test('profile list --json returns valid JSON', () => {
     assert.equal(parsed.active_profile, 'balanced');
     assert.ok(Array.isArray(parsed.built_in_profiles));
     assert.ok(parsed.built_in_profiles.includes('balanced'));
+    assert.equal(
+        (parsed.profile_task_decomposition_policies as Record<string, { enabled: boolean }>).strict.enabled,
+        true
+    );
 });
 
 test('profile current shows active profile details', () => {
@@ -279,6 +351,7 @@ test('profile current shows active profile details', () => {
     assert.ok(output.includes('ActiveProfile: balanced'));
     assert.ok(output.includes('Type: built-in'));
     assert.ok(output.includes('Depth: 2'));
+    assert.ok(output.includes('TaskDecomposition: enabled=true, configured=false, provenance=legacy_balanced_default'));
     assert.ok(output.includes('ReviewFindingPolicy: policy_id=balanced'));
     assert.ok(output.includes('critical=fix_now'));
     assert.ok(output.includes('residual_risk=create_follow_up'));
@@ -296,6 +369,52 @@ test('profile current --json returns valid JSON', () => {
     assert.equal(parsed.review_trigger_policy.schema_version, 1);
     assert.equal(parsed.review_trigger_policy.test_refactor_changed_lines_threshold, 20);
     assert.ok(parsed.review_trigger_policy.refactor_path_regexes.length > 0);
+});
+
+test('profile current ignores invalid inactive profile catalog policy', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    addInvalidInactiveProfile(bundleRoot);
+
+    const { lines } = captureConsole(() => handleProfile([
+        'current',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ], PACKAGE_JSON));
+    const parsed = JSON.parse(lines.join('\n'));
+    assert.equal(parsed.active_profile, 'balanced');
+    assert.equal(parsed.review_catalog_policy.profile_name, 'balanced');
+});
+
+test('profile current exposes catalog lane states and activation reasons', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const parsed = captureJsonProfileCommand(['current', '--bundle-root', bundleRoot, '--json']);
+    const catalogPolicy = parsed.review_catalog_policy as {
+        activity_basis: string;
+        task_effective_selection: string;
+        catalog_sha256: string;
+        policy_sha256: string;
+        lanes: Array<Record<string, unknown>>;
+    };
+    const customLane = catalogPolicy.lanes.find((lane) => lane.id === 'architecture-boundary');
+    assert.ok(customLane);
+    assert.equal(customLane.state, 'disabled');
+    assert.equal(customLane.active, false);
+    assert.equal(customLane.inactive_reason, 'profile_disabled');
+    assert.equal(catalogPolicy.activity_basis, 'profile_policy_and_capability');
+    assert.equal(catalogPolicy.task_effective_selection, 'resolved_during_preflight');
+    assert.match(catalogPolicy.catalog_sha256, /^[a-f0-9]{64}$/u);
+    assert.match(catalogPolicy.policy_sha256, /^[a-f0-9]{64}$/u);
+});
+
+test('profile current rejects conflating profile eligibility with task-effective review selection', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const { lines } = captureConsole(() => handleProfile(['current', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.match(output, /activity_basis=profile_policy_and_capability/u);
+    assert.match(output, /task_effective_selection=resolved_during_preflight/u);
+    assert.match(output, /profile_inactive=/u);
 });
 
 test('profile use switches the active profile', () => {
@@ -389,6 +508,12 @@ test('profile create with --copy-from preserves legacy missing review finding po
     assert.equal(updated.user_profiles['legacy-copy'].description, 'Legacy clone');
     assert.equal(updated.user_profiles['legacy-copy'].review_policy.code, true);
     assert.equal(Object.hasOwn(updated.user_profiles['legacy-copy'], 'review_finding_policy'), false);
+    assert.equal(Object.hasOwn(updated.user_profiles['legacy-copy'], 'review_remediation_mode_policy'), false);
+    const remediationPolicy = resolveReviewRemediationModePolicyFromProfile(
+        updated.user_profiles['legacy-copy'].review_remediation_mode_policy,
+        'legacy-copy'
+    );
+    assert.equal(remediationPolicy.legacy_fallback, true);
 });
 
 test('profile create rejects name conflicting with built-in', () => {
@@ -631,6 +756,56 @@ test('profile validate passes for legacy missing review finding policy', () => {
     const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
     assert.ok(result && typeof result === 'object');
     assert.equal((result as { passed: boolean }).passed, true);
+});
+
+test('profile validate rejects review ids that are absent from the catalog', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.built_in_profiles.balanced.review_policy.ghost = 'auto';
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+
+    const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const validation = result as { passed: boolean; issues: string[] };
+    assert.equal(validation.passed, false);
+    assert.match(validation.issues.join('\n'), /unknown catalog review id 'ghost'/u);
+});
+
+test('profile validate accepts registered remediation lanes and rejects unregistered remediation lanes', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.built_in_profiles.balanced.review_remediation_mode_policy = buildDefaultReviewRemediationModePolicy();
+    const policy = data.built_in_profiles.balanced.review_remediation_mode_policy;
+    policy.delta_eligible_review_types.push('architecture-boundary');
+    policy.delta_eligible_review_types.sort();
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+
+    const accepted = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    assert.equal((accepted.result as { passed: boolean }).passed, true);
+
+    policy.delta_eligible_review_types.push('ghost');
+    policy.delta_eligible_review_types.sort();
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+    const rejected = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const validation = rejected.result as { passed: boolean; issues: string[] };
+    assert.equal(validation.passed, false);
+    assert.match(validation.issues.join('\n'), /absent from the review catalog: ghost/iu);
+});
+
+test('profile validate rejects a required custom lane whose capability is disabled', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, false);
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.built_in_profiles.balanced.review_policy['architecture-boundary'] = true;
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+
+    const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const validation = result as { passed: boolean; issues: string[] };
+    assert.equal(validation.passed, false);
+    assert.match(validation.issues.join('\n'), /architecture-boundary.*required.*capability.*disabled/iu);
 });
 
 test('ProfileEntry critical finding action type is fixed to fix_now', () => {
@@ -2376,6 +2551,7 @@ test('buildProfileListOutput formats text correctly', () => {
     } as any;
     const output = buildProfileListOutput(data, '/bundle', false);
     assert.ok(output.includes('GARDA_PROFILES'));
+    assert.ok(output.includes('remediation=FULL-only'));
     assert.ok(output.includes('balanced'));
     assert.ok(output.includes('custom'));
     assert.ok(output.includes('User Profiles'));
@@ -2394,6 +2570,7 @@ test('buildProfileCurrentOutput text includes all fields', () => {
     assert.ok(output.includes('ActiveProfile: fast'));
     assert.ok(output.includes('Type: built-in'));
     assert.ok(output.includes('Depth: 1'));
+    assert.ok(output.includes('ReviewRemediationModePolicy: configured=false, legacy_full_only=true'));
     assert.ok(output.includes('Why: Active profile settings are used by default.'));
     assert.ok(output.includes('Tip: run "profile list" to inspect all available profiles.'));
 });
@@ -2430,6 +2607,28 @@ test('profile create accepts valid kebab-case names', () => {
     ], PACKAGE_JSON));
     const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
     assert.ok(data.user_profiles['my-profile-2']);
+    assert.equal(
+        data.user_profiles['my-profile-2'].review_remediation_mode_policy.policy_id,
+        'conservative_review_remediation_mode_v1'
+    );
+    assert.deepEqual(
+        data.user_profiles['my-profile-2'].review_remediation_mode_policy.delta_eligible_review_types,
+        ['api', 'code', 'db', 'dependency', 'infra', 'performance', 'refactor', 'security', 'test']
+    );
+});
+
+test('profile create defaults every registered catalog lane to DELTA eligibility', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    captureConsole(() => handleProfile([
+        'create', 'catalog-defaults',
+        '--bundle-root', bundleRoot,
+        '--description', 'Catalog defaults'
+    ], PACKAGE_JSON));
+
+    const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
+    assert.ok(data.user_profiles['catalog-defaults'].review_remediation_mode_policy
+        .delta_eligible_review_types.includes('architecture-boundary'));
 });
 
 test('profile create accepts localized lowercase profile names', () => {

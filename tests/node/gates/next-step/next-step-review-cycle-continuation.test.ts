@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
@@ -61,7 +62,7 @@ describe('gates/next-step review cycle continuation', () => {
 
         const splitResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.equal(splitResult.status, 'SPLIT_REQUIRED', splitResult.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
 
         writeReviewCycleContinuation(repoRoot, TASK_ID, {
             baselineTotalNonTestReviewCount: 3,
@@ -72,7 +73,7 @@ describe('gates/next-step review cycle continuation', () => {
         const continuedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const continuedText = formatNextStepText(continuedResult);
         assert.notEqual(continuedResult.status, 'SPLIT_REQUIRED', continuedResult.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟧 IN_REVIEW |`));
         assert.ok(
             continuedText.includes('Review cycle one-shot continuation active'),
             continuedText
@@ -81,7 +82,7 @@ describe('gates/next-step review cycle continuation', () => {
 
         const repeatedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.notEqual(repeatedResult.status, 'SPLIT_REQUIRED', repeatedResult.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟧 IN_REVIEW |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_RESTORED'), 0);
     });
@@ -116,14 +117,14 @@ describe('gates/next-step review cycle continuation', () => {
             maxTotalNonTestReviews: 2
         });
         assert.notEqual(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟧 IN_REVIEW |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
 
         setTaskStatus(repoRoot, 'IN_PROGRESS');
         const tamperedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(tamperedResult.status, 'SPLIT_REQUIRED', tamperedResult.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_RESTORED'), 1);
     });
@@ -141,7 +142,7 @@ describe('gates/next-step review cycle continuation', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.notEqual(result.status, 'SPLIT_REQUIRED', result.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_PROGRESS |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟨 IN_PROGRESS |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
     });
 
@@ -177,7 +178,7 @@ describe('gates/next-step review cycle continuation', () => {
 
             assert.equal(result.status, 'BLOCKED', result.reason);
             assert.ok(result.reason.includes('rollback=updated'), result.reason);
-            assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+            assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
             assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
         } finally {
             mutableFs.appendFileSync = originalAppendFileSync;
@@ -221,12 +222,12 @@ describe('gates/next-step review cycle continuation', () => {
 
         assert.ok(failedResult);
         assert.equal(failedResult.status, 'BLOCKED', failedResult.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟧 IN_REVIEW |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
 
         const retriedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.notEqual(retriedResult.status, 'SPLIT_REQUIRED', retriedResult.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟧 IN_REVIEW |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_RESTORED'), 0);
     });
 
@@ -243,7 +244,7 @@ describe('gates/next-step review cycle continuation', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
     });
 
@@ -256,14 +257,19 @@ describe('gates/next-step review cycle continuation', () => {
             baselineFailedNonTestReviewCount: 1,
             maxTotalNonTestReviews: 2
         });
+        const stalePreflight = JSON.parse(fs.readFileSync(
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            'utf8'
+        )) as Record<string, unknown>;
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`))
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            effective_review_snapshot: stalePreflight.effective_review_snapshot
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
     });
 
@@ -357,7 +363,7 @@ describe('gates/next-step review cycle continuation', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
-        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟫 SPLIT_REQUIRED |`));
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
     });
 
@@ -376,7 +382,7 @@ describe('gates/next-step review cycle continuation', () => {
 
         assert.notEqual(result.status, 'SPLIT_REQUIRED');
         assert.ok(
-            readTaskMd(repoRoot).includes(`| ${TASK_ID} | DECOMPOSED |`),
+            readTaskMd(repoRoot).includes(`| ${TASK_ID} | 🟪 DECOMPOSED |`),
             `${result.status}: ${result.reason}\n${readTaskMd(repoRoot)}`
         );
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
@@ -451,9 +457,14 @@ describe('gates/next-step review cycle continuation', () => {
             baselineFailedNonTestReviewCount: 1,
             maxTotalNonTestReviews: 2
         });
+        const refreshedPreflight = JSON.parse(fs.readFileSync(
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            'utf8'
+        )) as Record<string, unknown>;
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
             output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
-            reason: 'scope changed after one-shot continuation approval'
+            reason: 'scope changed after one-shot continuation approval',
+            effective_review_snapshot: refreshedPreflight.effective_review_snapshot
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -609,6 +620,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     initGitRepo(repoRoot, {
         gitignoreContent: [
             'TASK.md',

@@ -27,7 +27,16 @@ import {
 } from '../../../cli/commands/profile/profile-finding-policy';
 import type { ProfileEntry, ProfilesData } from '../../../cli/commands/profile/profile-types';
 import { joinOrchestratorPath } from '../../../gates/shared/helpers';
-import { REVIEW_FINDING_POLICY_PRESETS } from '../../../policy/profile-resolver';
+import {
+    REVIEW_FINDING_POLICY_PRESETS,
+    resolveReviewFollowUpPolicy,
+    type ReviewFollowUpPolicy
+} from '../../../policy/profile-resolver';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    validateReviewRemediationModePolicy,
+    type ReviewRemediationModePolicy
+} from '../../../policy/review-remediation-mode-policy';
 import { buildProfilesTab } from '../../report-data-contract';
 import { appendUiActionAudit, resolveBundleRoot } from './action-common';
 import {
@@ -50,7 +59,10 @@ interface UiProfileRequest {
     copy_from?: unknown;
     description?: unknown;
     depth?: unknown;
+    task_decomposition?: unknown;
     review_policy?: unknown;
+    review_follow_up_policy?: unknown;
+    review_remediation_mode_policy?: unknown;
     policy_preset?: unknown;
     policy_copy_from?: unknown;
     policy_reset?: unknown;
@@ -112,6 +124,26 @@ function normalizeDepth(value: unknown, fallback: number): number {
     return parseStrictDepth(String(value));
 }
 
+function normalizeTaskDecomposition(
+    value: unknown,
+    fallback: ProfileEntry['task_decomposition']
+): ProfileEntry['task_decomposition'] {
+    if (value === undefined) {
+        return fallback ? { ...fallback } : undefined;
+    }
+    if (
+        !value
+        || typeof value !== 'object'
+        || Array.isArray(value)
+        || Object.keys(value).length !== 1
+        || !Object.hasOwn(value, 'enabled')
+        || typeof (value as Record<string, unknown>).enabled !== 'boolean'
+    ) {
+        throw new Error('task_decomposition must be exactly { "enabled": boolean }.');
+    }
+    return { enabled: (value as Record<string, unknown>).enabled as boolean };
+}
+
 function normalizeReviewPolicy(value: unknown, fallback: Record<string, boolean | 'auto'>): Record<string, boolean | 'auto'> {
     const raw = value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -134,6 +166,70 @@ function normalizeReviewPolicy(value: unknown, fallback: Record<string, boolean 
         throw new Error(`review_policy.${reviewType} must be required, auto, or disabled.`);
     }
     return normalized;
+}
+
+function normalizeReviewFollowUpPolicy(value: unknown, fallback: ReviewFollowUpPolicy): ReviewFollowUpPolicy {
+    if (value === undefined) {
+        return {
+            ...fallback,
+            task_profile: { ...fallback.task_profile }
+        };
+    }
+    const resolved = resolveReviewFollowUpPolicy(value, 'local-ui-profile-edit');
+    if (resolved.diagnostics.some((diagnostic) => /invalid|malformed/u.test(diagnostic))) {
+        throw new Error(resolved.diagnostics.join(' '));
+    }
+    return {
+        ...resolved.policy,
+        task_profile: { ...resolved.policy.task_profile }
+    };
+}
+
+function normalizeReviewRemediationModePolicy(
+    value: unknown,
+    fallback: ProfileEntry['review_remediation_mode_policy']
+): ReviewRemediationModePolicy | undefined {
+    if (value === undefined) {
+        return fallback
+            ? validateReviewRemediationModePolicy(fallback, { allowedReviewTypeIds: KNOWN_REVIEW_TYPES })
+            : undefined;
+    }
+    if (
+        !value
+        || typeof value !== 'object'
+        || Array.isArray(value)
+        || Object.keys(value).length !== 1
+        || !Object.hasOwn(value, 'delta_eligible_review_types')
+    ) {
+        throw new Error(
+            'review_remediation_mode_policy must be exactly { "delta_eligible_review_types": string[] }.'
+        );
+    }
+    const rawEligibleReviewTypes = (value as Record<string, unknown>).delta_eligible_review_types;
+    if (!Array.isArray(rawEligibleReviewTypes) || rawEligibleReviewTypes.some((entry) => typeof entry !== 'string')) {
+        throw new Error('review_remediation_mode_policy.delta_eligible_review_types must be a string array.');
+    }
+    const eligibleReviewTypes = rawEligibleReviewTypes.map((entry) => entry.trim().toLowerCase());
+    if (eligibleReviewTypes.some((entry) => !entry)) {
+        throw new Error('review_remediation_mode_policy.delta_eligible_review_types cannot contain empty values.');
+    }
+    const unsupportedReviewTypes = [...new Set(eligibleReviewTypes)]
+        .filter((entry) => !KNOWN_REVIEW_TYPES.includes(entry))
+        .sort();
+    if (unsupportedReviewTypes.length > 0) {
+        throw new Error(
+            'review_remediation_mode_policy.delta_eligible_review_types contains unsupported review lanes: ' +
+            `${unsupportedReviewTypes.join(', ')}.`
+        );
+    }
+    const basePolicy = fallback
+        ? validateReviewRemediationModePolicy(fallback, { allowedReviewTypeIds: KNOWN_REVIEW_TYPES })
+        : buildDefaultReviewRemediationModePolicy({ allowedReviewTypeIds: KNOWN_REVIEW_TYPES });
+    return validateReviewRemediationModePolicy({
+        ...basePolicy,
+        schema_version: 2,
+        delta_eligible_review_types: [...new Set(eligibleReviewTypes)].sort()
+    }, { allowedReviewTypeIds: KNOWN_REVIEW_TYPES });
 }
 
 function loadShippedProfiles(repoRoot: string): ProfilesData | null {
@@ -228,11 +324,27 @@ function buildProfileEntryFromPayload(
     fallbackDescription: string
 ): ProfileEntry {
     const prepared = buildPromptReadyProfileEntry(cloneProfileEntry(sourceEntry));
+    const taskDecomposition = normalizeTaskDecomposition(
+        payload.task_decomposition,
+        prepared.task_decomposition
+    );
+    const reviewRemediationModePolicy = normalizeReviewRemediationModePolicy(
+        payload.review_remediation_mode_policy,
+        prepared.review_remediation_mode_policy
+    );
     return {
         ...prepared,
         description: normalizeDescription(payload.description, fallbackDescription || prepared.description),
         depth: normalizeDepth(payload.depth, prepared.depth),
-        review_policy: normalizeReviewPolicy(payload.review_policy, prepared.review_policy)
+        ...(taskDecomposition ? { task_decomposition: taskDecomposition } : {}),
+        review_policy: normalizeReviewPolicy(payload.review_policy, prepared.review_policy),
+        review_follow_up_policy: normalizeReviewFollowUpPolicy(
+            payload.review_follow_up_policy,
+            prepared.review_follow_up_policy || resolveReviewFollowUpPolicy(undefined, 'local-ui-profile-edit').policy
+        ),
+        ...(reviewRemediationModePolicy
+            ? { review_remediation_mode_policy: reviewRemediationModePolicy }
+            : {})
     };
 }
 

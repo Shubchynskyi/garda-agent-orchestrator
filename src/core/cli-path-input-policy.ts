@@ -62,6 +62,7 @@ export const CLI_PATH_INPUT_POLICIES: Readonly<Record<string, CliPathInputPolicy
     '--commands-path': workspaceContained('Reads repository-owned command policy.'),
     '--compile-evidence-path': workspaceContained('Reads task-owned compile evidence.'),
     '--compile-output-path': workspaceContained('Writes task-owned compile output.'),
+    '--correction-artifact-path': workspaceContained('Reads task-owned review-output correction evidence.'),
     '--disposition-artifact-path': workspaceContained('Reads or writes task-owned findings disposition evidence.'),
     '--doc-impact-path': workspaceContained('Reads task-owned documentation impact evidence.'),
     '--events-root': workspaceContained('Reads repository-owned task timelines.'),
@@ -108,6 +109,7 @@ export const CLI_PATH_INPUT_POLICIES: Readonly<Record<string, CliPathInputPolicy
     ),
     '--preflight-output-path': workspaceContained('Writes task-owned preflight evidence.'),
     '--preflight-path': workspaceContained('Reads task-owned preflight evidence.'),
+    '--profile': nonFilesystem('Profile id, not a filesystem path.'),
     '--receipt-path': workspaceContained('Reads task-owned review receipt evidence.'),
     '--repo-root': {
         classification: 'root-anchor',

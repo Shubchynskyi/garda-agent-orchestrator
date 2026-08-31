@@ -34,6 +34,31 @@ function seedNodeFoundationFocusedWrapperFixture(repoRoot: string): void {
     );
 }
 
+function seedExpectedRedPreflight(repoRoot: string, taskId: string): string {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    fs.writeFileSync(
+        taskPath,
+        fs.readFileSync(taskPath, 'utf8').replace('| fixture |', '| Test-first: expected-red. |'),
+        'utf8'
+    );
+    const preflightPath = path.join(
+        getOrchestratorRoot(repoRoot),
+        'runtime',
+        'reviews',
+        `${taskId}-preflight.json`
+    );
+    fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+    fs.writeFileSync(preflightPath, `${JSON.stringify({
+        task_id: taskId,
+        scope_category: 'test-only',
+        changed_files: ['tests/node/gates/focused-command.test.ts'],
+        metrics: {
+            scope_content_sha256: 'a'.repeat(64)
+        }
+    }, null, 2)}\n`, 'utf8');
+    return preflightPath;
+}
+
 describe('cli/commands/gates intermediate command wrapper', () => {
     it('runs intermediate commands with compact audited output telemetry', async () => {
         const repoRoot = createTempRepo();
@@ -129,6 +154,244 @@ describe('cli/commands/gates intermediate command wrapper', () => {
             assert.equal((event.details as Record<string, unknown>)?.command_source, 'targeted-test');
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('records a bounded nonzero focused test as explicit expected-red evidence', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-EXPECTED-RED';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+            const preflightPath = seedExpectedRedPreflight(repoRoot, taskId);
+            fs.appendFileSync(
+                path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs'),
+                'process.exitCode = 1;\n',
+                'utf8'
+            );
+
+            const result = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId,
+                commandSource: 'targeted-test',
+                command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                preflightPath,
+                expectFailure: true,
+                timeoutMs: 60_000
+            });
+
+            assert.equal(result.exitCode, 0);
+            assert.match(result.outputLines.join('\n'), /TEST_FIRST_EXPECTED_FAILURE_RECORDED/u);
+            const event = readTaskTimelineEvents(repoRoot, taskId)
+                .find((candidate) => candidate.event_type === 'TEST_FIRST_EXPECTED_FAILURE_RECORDED');
+            assert.ok(event);
+            assert.equal(event.outcome, 'PASS');
+            const details = event.details as Record<string, unknown>;
+            assert.equal(details.expected_failure, true);
+            assert.equal(details.recorded_status, 'EXPECTED_FAILURE');
+            assert.equal(details.exit_code, 1);
+            assert.equal(details.test_scope_sha256, 'a'.repeat(64));
+            const artifact = JSON.parse(fs.readFileSync(String(details.artifact_path), 'utf8')) as Record<string, unknown>;
+            assert.equal(artifact.status, 'EXPECTED_FAILURE');
+            assert.equal(artifact.exit_code, 1);
+            assert.equal(artifact.timed_out, false);
+            assert.equal(artifact.cancelled, false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails closed when an expected-red focused test unexpectedly passes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-EXPECTED-PASS';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+            const preflightPath = seedExpectedRedPreflight(repoRoot, taskId);
+
+            const result = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId,
+                commandSource: 'targeted-test',
+                command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                preflightPath,
+                expectFailure: true,
+                timeoutMs: 60_000
+            });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.outputLines.join('\n'), /TEST_FIRST_EXPECTED_FAILURE_NOT_REPRODUCED/u);
+            const event = readTaskTimelineEvents(repoRoot, taskId)
+                .find((candidate) => candidate.event_type === 'TEST_FIRST_EXPECTED_FAILURE_RECORDED');
+            assert.ok(event);
+            assert.equal(event.outcome, 'FAIL');
+            assert.equal((event.details as Record<string, unknown>).recorded_status, 'UNEXPECTED_PASS');
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects expected-red mode without the exact task declaration', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-UNDECLARED-RED';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace('| fixture |', '| TEST-FIRST : EXPECTED-RED. |'),
+                'utf8'
+            );
+            const preflightPath = path.join(
+                getOrchestratorRoot(repoRoot),
+                'runtime',
+                'reviews',
+                `${taskId}-preflight.json`
+            );
+            fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+            fs.writeFileSync(preflightPath, `${JSON.stringify({
+                task_id: taskId,
+                scope_category: 'test-only',
+                changed_files: ['tests/node/gates/focused-command.test.ts'],
+                metrics: { scope_content_sha256: 'a'.repeat(64) }
+            })}\n`, 'utf8');
+
+            await assert.rejects(
+                () => runIntermediateCommandCommand({
+                    repoRoot,
+                    taskId,
+                    commandSource: 'targeted-test',
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                    preflightPath,
+                    expectFailure: true,
+                    timeoutMs: 60_000
+                }),
+                /exact TASK\.md Notes marker/u
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects foreign, non-test-only, stale, and unrelated expected-red bindings before execution', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INVALID-RED-BINDING';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+            const preflightPath = seedExpectedRedPreflight(repoRoot, taskId);
+            const basePreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            const command = 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts';
+            const invoke = (overrides: Record<string, unknown> = {}) => runIntermediateCommandCommand({
+                repoRoot,
+                taskId,
+                commandSource: 'targeted-test',
+                command,
+                preflightPath,
+                expectFailure: true,
+                timeoutMs: 60_000,
+                ...overrides
+            });
+            const writePreflight = (overrides: Record<string, unknown>) => {
+                fs.writeFileSync(
+                    preflightPath,
+                    `${JSON.stringify({ ...basePreflight, ...overrides }, null, 2)}\n`,
+                    'utf8'
+                );
+            };
+
+            writePreflight({ task_id: 'T-FOREIGN' });
+            await assert.rejects(invoke, /preflight task_id must match/u);
+
+            writePreflight({ scope_category: 'mixed' });
+            await assert.rejects(invoke, /current test-only preflight scope/u);
+
+            writePreflight({});
+            await assert.rejects(
+                () => invoke({ preflightSha256: 'b'.repeat(64) }),
+                /preflight-sha256 does not match/u
+            );
+
+            fs.writeFileSync(
+                path.join(repoRoot, 'tests', 'node', 'gates', 'unrelated.test.ts'),
+                'export {};\n',
+                'utf8'
+            );
+            await assert.rejects(
+                () => invoke({
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/unrelated.test.ts'
+                }),
+                /concrete changed test/u
+            );
+
+            const timelinePath = path.join(
+                getOrchestratorRoot(repoRoot),
+                'runtime',
+                'task-events',
+                `${taskId}.jsonl`
+            );
+            const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
+            assert.equal(
+                events.some((candidate) => candidate.event_type === 'TEST_FIRST_EXPECTED_FAILURE_RECORDED'),
+                false
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails closed when an expected-red command times out or is cancelled', async () => {
+        for (const interruption of ['timeout', 'cancelled'] as const) {
+            const repoRoot = createTempRepo();
+            const taskId = interruption === 'timeout' ? 'T-RED-TIMEOUT' : 'T-RED-CANCELLED';
+            try {
+                seedTaskQueue(repoRoot, taskId);
+                seedInitAnswers(repoRoot);
+                seedNodeFoundationFocusedWrapperFixture(repoRoot);
+                const preflightPath = seedExpectedRedPreflight(repoRoot, taskId);
+                fs.writeFileSync(
+                    path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs'),
+                    'setInterval(() => {}, 1_000);\n',
+                    'utf8'
+                );
+                const abortController = new AbortController();
+                const abortTimer = interruption === 'cancelled'
+                    ? setTimeout(() => abortController.abort(), 100)
+                    : null;
+                let result: Awaited<ReturnType<typeof runIntermediateCommandCommand>>;
+                try {
+                    result = await runIntermediateCommandCommand({
+                        repoRoot,
+                        taskId,
+                        commandSource: 'targeted-test',
+                        command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                        preflightPath,
+                        expectFailure: true,
+                        timeoutMs: interruption === 'timeout' ? 100 : 10_000,
+                        signal: interruption === 'cancelled' ? abortController.signal : undefined
+                    });
+                } finally {
+                    if (abortTimer) clearTimeout(abortTimer);
+                }
+
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE, interruption);
+                assert.match(result.outputLines.join('\n'), /INTERMEDIATE_COMMAND_FAILED/u);
+                const event = readTaskTimelineEvents(repoRoot, taskId)
+                    .find((candidate) => candidate.event_type === 'TEST_FIRST_EXPECTED_FAILURE_RECORDED');
+                assert.ok(event);
+                assert.equal(event.outcome, 'FAIL');
+                const details = event.details as Record<string, unknown>;
+                assert.equal(details.recorded_status, 'FAILED');
+                assert.equal(details.timed_out, interruption === 'timeout');
+                assert.equal(details.cancelled, interruption === 'cancelled');
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
         }
     });
 

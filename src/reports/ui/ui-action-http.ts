@@ -14,6 +14,10 @@ import {
     handleUiProfileRequest
 } from './actions/profile-actions';
 import {
+    buildUiReviewCatalogPayload,
+    handleUiReviewCatalogRequest
+} from './actions/review-catalog-actions';
+import {
     handleUiCleanupRunRequest,
     handleUiCleanupSettingsRequest,
     handleUiCleanupTaskPurgeRequest
@@ -63,6 +67,14 @@ export function buildUiProfilePayload(repoRoot: string, actionsEnabled: boolean)
     return buildUiProfilesPayload(repoRoot, actionsEnabled);
 }
 
+export function buildUiReviewCatalogActionPayload(
+    repoRoot: string,
+    actionsEnabled: boolean,
+    profileName?: string | null
+): Record<string, unknown> {
+    return buildUiReviewCatalogPayload(repoRoot, actionsEnabled, profileName);
+}
+
 export async function handleUiActionRequest(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -98,6 +110,15 @@ export async function handleUiProfilesPostRequest(
     options: LocalUiServerRuntimeOptions
 ): Promise<void> {
     return handleUiProfileRequest(request, response, repoRoot, options);
+}
+
+export async function handleUiReviewCatalogPostRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    return handleUiReviewCatalogRequest(request, response, repoRoot, options);
 }
 
 export async function handleUiCleanupSettingsPostRequest(

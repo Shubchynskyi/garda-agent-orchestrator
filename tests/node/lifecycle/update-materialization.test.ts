@@ -314,7 +314,7 @@ describe('runUpdate', () => {
             assert.equal(result.optionalQualityChecksNotice, OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE);
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
@@ -791,7 +791,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=check review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=check review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: check read_strategy=index_first max_compact_summary_chars=9000 require_user_approval_for_writes=true');
 
@@ -842,7 +842,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
 
@@ -893,7 +893,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=false project_memory_maintenance.mode=off review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=false project_memory_maintenance.mode=off review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: disabled read_strategy=index_first max_compact_summary_chars=9000 require_user_approval_for_writes=true');
 
@@ -981,7 +981,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
@@ -1019,7 +1019,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied'
+                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
@@ -1040,7 +1040,7 @@ describe('runUpdate', () => {
             assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 2000);
             assert.equal(workflowConfig.scope_budget_guard.warn_changed_lines, 2000);
             assert.equal(workflowConfig.scope_budget_guard.block_changed_lines, 5000);
-            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 10);
             assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
             assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
         } finally {
@@ -1255,11 +1255,11 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=migrated_from_old_default'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=migrated_from_old_default'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
-            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 10);
             assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
             assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
         } finally {
@@ -1534,6 +1534,7 @@ describe('runUpdate', () => {
             const skillCatalogTemplateContent = fs.readFileSync(path.join(templateRuleDir, '90-skill-catalog.md'), 'utf8');
             const taskWorkflowIntegritySection = extractMarkdownSection(taskWorkflowContent, '## Integrity Priority Rules');
             const skillCatalogIntegritySection = extractMarkdownSection(skillCatalogContent, '## Integrity Priority Rules');
+            const reviewCatalogContextSection = extractMarkdownSection(taskWorkflowContent, '## Review Catalog Context Contract');
 
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'));
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack'));
@@ -1548,6 +1549,12 @@ describe('runUpdate', () => {
                 skillCatalogIntegritySection,
                 extractMarkdownSection(skillCatalogTemplateContent, '## Integrity Priority Rules')
             );
+            assert.equal(
+                reviewCatalogContextSection,
+                extractMarkdownSection(taskWorkflowTemplateContent, '## Review Catalog Context Contract')
+            );
+            assert.ok(reviewCatalogContextSection.includes('Custom review lanes are declarative and disabled by default'));
+            assert.ok(reviewCatalogContextSection.includes('Do not load `live/config/review-catalog.json` into normal task or reviewer context'));
             assert.ok(skillCatalogContent.includes('Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.'));
             assert.ok(skillCatalogContent.includes('Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'));
         } finally {

@@ -12,6 +12,7 @@ import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { computeProtectedSnapshotDigest, writeProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
 import { readPreflightWorkspaceReadiness } from '../../../../src/gates/next-step/next-step-preflight-workspace-readiness';
@@ -82,6 +83,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -665,6 +667,95 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(command.includes('--workflow-config-work'));
         assert.ok(command.includes(`--planned-changed-file "${sourceRelativePath}"`));
         assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));
+    });
+
+    it('preserves legacy explicit scope after protected classify rejection instead of adopting unrelated workspace dirt', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const protectedFile = 'src/gates/next-step.ts';
+        const taskTestFile = 'tests/node/gates/next-step/task-scope.test.ts';
+        const unrelatedFile = 'notes/user-work.txt';
+        fs.mkdirSync(path.dirname(path.join(repoRoot, protectedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, protectedFile), 'export const baseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.mkdirSync(path.dirname(path.join(repoRoot, unrelatedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, unrelatedFile), 'unrelated user work\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${protectedFile}. ` +
+                'Restart task mode as orchestrator work before preflight classification. Suggested command: ' +
+                `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --orchestrator-work ` +
+                `--planned-changed-file "${protectedFile}" --planned-changed-file "${taskTestFile}" --repo-root "."`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.reason, /authenticated failed-classification scope/);
+        assert.ok(command.includes(`--planned-changed-file "${protectedFile}"`), command);
+        assert.ok(command.includes(`--planned-changed-file "${taskTestFile}"`), command);
+        assert.ok(!command.includes(unrelatedFile), command);
+    });
+
+    it('preserves the suggested explicit scope after protected-manifest preflight drift', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const protectedFile = 'src/gates/next-step.ts';
+        const taskTestFile = 'tests/node/gates/next-step/task-scope.test.ts';
+        const unrelatedFile = 'notes/user-work.txt';
+        fs.mkdirSync(path.dirname(path.join(repoRoot, protectedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, protectedFile), 'export const baseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.mkdirSync(path.dirname(path.join(repoRoot, unrelatedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, unrelatedFile), 'unrelated user work\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                `Trusted protected control-plane manifest drift detected before preflight classification: ${protectedFile}. ` +
+                'Restart task mode with: ' +
+                `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --orchestrator-work ` +
+                `--planned-changed-file "${protectedFile}" --planned-changed-file "${taskTestFile}" --repo-root "."`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.reason, /authenticated failed-classification scope/);
+        assert.ok(command.includes(`--planned-changed-file "${protectedFile}"`), command);
+        assert.ok(command.includes(`--planned-changed-file "${taskTestFile}"`), command);
+        assert.ok(!command.includes(unrelatedFile), command);
+    });
+
+    it('rejects shell-tainted legacy protected scope hints even when the task id matches', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const protectedFile = 'src/gates/next-step.ts';
+        const hintedFile = 'tests/node/gates/next-step/tainted-scope.test.ts';
+        const unrelatedFile = 'notes/user-work.txt';
+        fs.mkdirSync(path.dirname(path.join(repoRoot, protectedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, protectedFile), 'export const baseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.mkdirSync(path.dirname(path.join(repoRoot, unrelatedFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, unrelatedFile), 'unrelated user work\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${protectedFile}. ` +
+                'Restart task mode as orchestrator work before preflight classification. Suggested command: ' +
+                `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --orchestrator-work ` +
+                `--planned-changed-file "${protectedFile}" --planned-changed-file "${hintedFile}" --repo-root "." && node injected.js`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(!command.includes(hintedFile), command);
+        assert.ok(!command.includes('injected.js'), command);
+        assert.ok(command.includes(unrelatedFile), command);
     });
 
     it('blocks app-workspace protected control-plane recovery when garda self-guard is on', () => {
@@ -1585,6 +1676,40 @@ describe('gates/next-step protected recovery', () => {
 
         assert.equal(readiness.ready, false);
         assert.ok((readiness.currentChangedFiles || []).includes(distRuntimeRelativePath));
+    });
+
+    it('accepts current explicit preflight when its authenticated dist runtime is Git-ignored', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        for (const relativePath of [sourceRelativePath, testRelativePath, distRuntimeRelativePath]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot, { gitignoreContent: 'node_modules/\ndist/\n' });
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated executable change\n', 'utf8');
+
+        const changedFiles = [sourceRelativePath, testRelativePath, distRuntimeRelativePath];
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflight.metrics as Record<string, unknown>;
+        metrics.actual_changed_files = snapshot.changed_files;
+        metrics.actual_changed_files_sha256 = snapshot.changed_files_sha256;
+        preflight.authorized_files = snapshot.authorized_files;
+        preflight.git_change_classification = snapshot.git_change_classification;
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            plannedChangedFiles: changedFiles
+        });
+
+        assert.deepEqual(snapshot.changed_files, changedFiles.sort());
+        assert.equal(readiness.ready, true, readiness.reason);
     });
 
     it('routes dirty protected workflow-config drift to operator maintenance before classify when self-guard denies entry', () => {

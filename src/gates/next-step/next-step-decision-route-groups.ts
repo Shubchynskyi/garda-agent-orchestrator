@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import {
     isTaskQueueActiveStatus,
     isTaskQueueDecomposedStatus,
@@ -65,6 +68,9 @@ import {
     type NextStepPreGuardRoutingOptions
 } from './next-step-pre-review-routing';
 import {
+    suspendStrictDecompositionWipIfRequired
+} from './next-step-strict-decomposition-wip';
+import {
     resolveCompletedCloseoutRouteFromState
 } from './next-step-closeout-routing';
 import type {
@@ -86,6 +92,24 @@ export interface NextStepDecisionRoutePayload {
     presentArtifacts?: NextStepArtifactState[];
     reviewCycleBlock?: NextStepReviewCycleBlock | null;
     finalReport?: NextStepFinalReportSummary | null;
+}
+
+function hasTerminalDiscardResetEvidence(options: {
+    reviewsRoot: string;
+    taskId: string;
+}): boolean {
+    const resetReportPath = path.join(options.reviewsRoot, `${options.taskId}-reset-report.json`);
+    try {
+        const report = JSON.parse(fs.readFileSync(resetReportPath, 'utf8')) as Record<string, unknown>;
+        return report.event_source === 'task-reset'
+            && report.task_id === options.taskId
+            && report.target_status === 'DONE'
+            && report.reset_by === 'operator'
+            && typeof report.timestamp_utc === 'string'
+            && Number.isFinite(Date.parse(report.timestamp_utc));
+    } catch {
+        return false;
+    }
 }
 
 export function resolveTaskIdCaseMismatchDecisionRoute(options: {
@@ -480,8 +504,15 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
             eventsRoot: options.eventsRoot,
             taskId: options.taskId
         });
-    const doneStatusHasGateOwnedCompletionEvidence = doneStatusHasCompletedClearedLatchEvidence
-        || doneStatusHasGateOwnedDecomposedParentCompletionEvidence;
+    const doneStatusHasTerminalDiscardEvidence =
+        isTaskQueueDoneStatus(taskQueueStatus)
+        && hasTerminalDiscardResetEvidence({
+            reviewsRoot: options.reviewsRoot,
+            taskId: options.taskId
+        });
+    const doneStatusHasAuthorizedTerminalEvidence = doneStatusHasCompletedClearedLatchEvidence
+        || doneStatusHasGateOwnedDecomposedParentCompletionEvidence
+        || doneStatusHasTerminalDiscardEvidence;
     const activeStatusHasClearedReviewCycleLatchEvidence =
         isTaskQueueActiveStatus(taskQueueStatus)
         && permanentSplitRequiredLatchEvidence?.valid === true
@@ -495,7 +526,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
     if (
         !splitRequiredStatusInTaskQueue
         && !decomposedStatusHasClearedLatchEvidence
-        && !doneStatusHasGateOwnedCompletionEvidence
+        && !doneStatusHasAuthorizedTerminalEvidence
         && !activeStatusHasClearedReviewCycleLatchEvidence
         && permanentSplitRequiredLatchEvidence?.valid
     ) {
@@ -672,7 +703,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
         const doneRoute = resolveDoneTaskQueueTerminalRoute({
             taskId: options.taskId,
             conflictBlockers: doneConflictBlockers,
-            allowCompletedClearedLatchEvidence: doneStatusHasGateOwnedCompletionEvidence,
+            allowAuthorizedTerminalEvidence: doneStatusHasAuthorizedTerminalEvidence,
             reopenPreviewCommand: buildCommand(
                 'Preview explicit operator reopen',
                 `${options.cliPrefix} gate task-reset --task-id "${options.taskId}" --reopen --dry-run --repo-root "."`
@@ -691,6 +722,27 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
     }
 
     if (!options.completionGatePassed && isDecomposedParentTask(options.taskEntry)) {
+        const strictDecompositionWip = suspendStrictDecompositionWipIfRequired({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId
+        });
+        if (strictDecompositionWip.status === 'BLOCKED') {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'strict-decomposition-wip-capture',
+                title: 'Suspend legacy strict-decomposition parent WIP before child execution.',
+                reason:
+                    'TASK.md already marks this strict split parent as decomposed, but its implemented parent scope is still present in the worktree and could not be captured safely. ' +
+                    `Capture violations: ${strictDecompositionWip.violations.map(formatNextStepInlineValue).join(', ') || 'unknown'}. ` +
+                    'Do not enter a child task until the parent WIP is suspended; repair the reported scope or repository condition and rerun next-step.',
+                commands: [],
+                missingArtifacts: strictDecompositionWip.manifest_path
+                    ? []
+                    : [{ key: 'strict-decomposition-wip', path: '<not-created>', exists: false }],
+                presentArtifacts: options.corePresentArtifacts,
+                finalReport: null
+            };
+        }
         const completionState = isTaskQueueDecomposedStatus(taskQueueStatus)
             ? resolveDecomposedParentCompletionState(
                 options.taskEntries,

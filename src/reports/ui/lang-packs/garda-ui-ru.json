@@ -93,6 +93,8 @@
     "profileName": "Имя профиля",
     "profileCopyFrom": "Копировать из",
     "profileDepth": "Глубина",
+    "profileTaskDecomposition": "Контролируемая декомпозиция задач",
+    "profileTaskDecompositionSource": "Фактический источник",
     "profilePolicyRequired": "Обязательно",
     "profilePolicyAuto": "По триггеру",
     "profilePolicyDisabled": "Отключено",
@@ -124,6 +126,13 @@
     "profileFindingMedium": "Средняя",
     "profileFindingLow": "Низкая",
     "profileFindingResidualRisk": "Остаточный риск",
+    "profileFollowUpTaskProfileTitle": "Профиль для F-задач",
+    "profileFollowUpTaskProfileHelp": "Выберите профиль для создаваемых F-задач. На уровень легче: строгий → сбалансированный → быстрый; быстрый остаётся быстрым. Пользовательские профили и профиль только для документации безопасно наследуют родителя.",
+    "profileFollowUpTaskProfileMode": "Режим выбора",
+    "profileFollowUpTaskProfileOneLevelLighter": "На уровень легче",
+    "profileFollowUpTaskProfileInheritParent": "Как у родителя",
+    "profileFollowUpTaskProfileFixed": "Фиксированный профиль",
+    "profileFollowUpTaskProfileFixedProfile": "Используемый профиль",
     "noWorkflowSettings": "Настройки рабочего процесса недоступны.",
     "initBlockTitle": "Инициализация",
     "agentInitBlockTitle": "Инициализация агента",
@@ -464,6 +473,19 @@
     "Garda switch": "Переключатель Garda",
     "Workspace": "Рабочая область",
     "Repair": "Восстановление"
+  },
+  "LOCAL_UI_TASK_CLOSURE_POLICY_TEXT": {
+    "title": "Политика закрытия F-задачи",
+    "help": "Эти настройки задачи сохраняются в TASK.md. Активный цикл продолжает использовать зафиксированные значения до следующего входа в режим задачи.",
+    "skipLowFindings": "Пропускать принятые находки низкой важности",
+    "forbidChildTasks": "Запретить создание дочерних задач",
+    "inapplicable": "Доступно только для созданных по итогам ревью F-задач с корректным происхождением.",
+    "completed": "Завершённые задачи нельзя изменять задним числом.",
+    "invalid": "Метаданные политики некорректны; настройки безопасно отключены.",
+    "pendingNextCycle": "Сохранённые значения отличаются от зафиксированной политики текущего цикла и применятся при следующем входе в режим задачи.",
+    "previewRequired": "Сначала выполните предпросмотр выбранных значений.",
+    "storedValues": "Сохранённые значения",
+    "effectiveValues": "Эффективные значения"
   },
   "LOCAL_UI_INSTRUCTION_TEXT": {
     "task-execution": {

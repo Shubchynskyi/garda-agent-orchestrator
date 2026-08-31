@@ -11,7 +11,7 @@ import { printUpdateAnnouncementSections } from '../../../../src/cli/commands/sh
 
 type UpdateCommandModule = typeof import('../../../../src/cli/commands/update-command');
 
-const WORKFLOW_CONFIG_MERGE_STATUS = 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied';
+const WORKFLOW_CONFIG_MERGE_STATUS = 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=10 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied';
 const UPDATE_WARNING_TEXT = 'Review bundled announcement warnings before rollout.';
 const QUALITY_GATE_ACTIONS_LINE = '    - After updating, run garda ui --actions and open the Quality Gate settings to review the default rules, adjust test-only exclusions, and add rules that match your project.';
 

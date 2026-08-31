@@ -17,6 +17,10 @@ import {
     buildReviewerLaunchBindingSha256
 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
 import {
+    resolveReviewContextExecutionEvidenceBindings,
+    type ReviewExecutionEvidenceBindings
+} from '../../../../../../src/gates/review/review-evidence-contract';
+import {
     applyReviewerRoutingMetadata
 } from '../../../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
@@ -50,6 +54,20 @@ const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:13.000Z';
 
 function fileSha256(pathToFile: string): string {
     return createHash('sha256').update(fs.readFileSync(pathToFile)).digest('hex');
+}
+
+function seedReviewSkillEntrypoints(repoRoot: string): void {
+    for (const skillId of ['code-review', 'test-review', 'testing-strategy']) {
+        const skillPath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'live',
+            'skills',
+            skillId,
+            'SKILL.md'
+        );
+        fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+        fs.writeFileSync(skillPath, `# ${skillId}\n\nFixture review skill entrypoint.\n`, 'utf8');
+    }
 }
 
 function buildFixtureLaunchInputEvidence(taskId: string, reviewType: string): {
@@ -87,6 +105,7 @@ function seedCompletedReviewerLaunchFixture(options: {
     reviewerIdentity: string;
     reviewContextSha256: string;
     routingEventSha256: string;
+    reviewExecutionBindings: ReviewExecutionEvidenceBindings;
 }): {
     launchArtifactPath: string;
     launchArtifactSha256: string;
@@ -135,7 +154,8 @@ function seedCompletedReviewerLaunchFixture(options: {
         output_template_sha256: launchInputEvidence.output_template_sha256,
         evidence_manifest_sha256: launchInputEvidence.evidence_manifest_sha256,
         launch_binding_sha256: launchBindingSha256,
-        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/')
+        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/'),
+        ...options.reviewExecutionBindings
     }, { passThru: true });
     const launchArtifactText = `${JSON.stringify({
         schema_version: 1,
@@ -157,6 +177,7 @@ function seedCompletedReviewerLaunchFixture(options: {
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         ...launchInputEvidence,
+        ...options.reviewExecutionBindings,
         fork_context: false
     }, null, 2)}\n`;
     fs.writeFileSync(launchArtifactPath, launchArtifactText, 'utf8');
@@ -265,6 +286,12 @@ function attestReviewerInvocationForTest(options: {
     const reviewContextSha256 = crypto.createHash('sha256')
         .update(fs.readFileSync(options.reviewContextPath))
         .digest('hex');
+    const reviewContext = JSON.parse(
+        fs.readFileSync(options.reviewContextPath, 'utf8')
+    ) as Record<string, unknown>;
+    const reviewExecutionEvidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
+    assert.ok(reviewExecutionEvidence.bindings, reviewExecutionEvidence.violations.join('\n'));
+    const reviewExecutionBindings = reviewExecutionEvidence.bindings;
     const reviewTreeStateSha256 = readReviewTreeStateSha256FromContextPath(options.reviewContextPath);
     const launchEvidence = seedCompletedReviewerLaunchFixture({
         repoRoot: options.repoRoot,
@@ -272,7 +299,8 @@ function attestReviewerInvocationForTest(options: {
         reviewType: options.reviewType,
         reviewerIdentity: options.reviewerIdentity,
         reviewContextSha256,
-        routingEventSha256: String(routedIntegrity.event_sha256).trim()
+        routingEventSha256: String(routedIntegrity.event_sha256).trim(),
+        reviewExecutionBindings
     });
     if (events.some((event) => (
         event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
@@ -306,7 +334,8 @@ function attestReviewerInvocationForTest(options: {
         launch_input_mode: launchEvidence.launchInputMode,
         launch_input_sha256: launchEvidence.launchInputSha256,
         copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
-        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
+        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC,
+        ...reviewExecutionBindings
     });
 }
 
@@ -322,6 +351,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeBalancedProfilesConfig(repoRoot);
+        seedReviewSkillEntrypoints(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId, {
             metrics: { changed_lines_total: 3 },
             required_reviews: {
@@ -535,6 +565,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeBalancedProfilesConfig(repoRoot);
+        seedReviewSkillEntrypoints(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId, {
             metrics: { changed_lines_total: 3 },
             required_reviews: {
@@ -700,6 +731,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeBalancedProfilesConfig(repoRoot);
+        seedReviewSkillEntrypoints(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId, {
             metrics: { changed_lines_total: 3 },
             required_reviews: {

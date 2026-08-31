@@ -77,6 +77,71 @@ test('resolveNextStepPreGuardRoute routes protected control-plane scope through 
     assert.match(route.reason, /protected Garda control-plane files/);
 });
 
+test('resolveNextStepPreGuardRoute blocks frozen deferred findings before ordinary workspace refresh', () => {
+    const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
+        postReviewSourceMutationGuard: {
+            blocked: true,
+            reason: 'accepted create_follow_up evidence freezes parent source remediation'
+        },
+        workspaceReadiness: {
+            ready: false,
+            reason: 'workspace source hash changed'
+        }
+    }));
+
+    assert.ok(route);
+    assert.equal(route.nextGate, 'post-review-source-mutation-guard');
+    assert.equal(route.title, 'Stop unauthorized post-review source mutation.');
+    assert.equal(route.commands.length, 0);
+    assert.match(route.reason, /freezes parent source remediation/);
+});
+
+test('resolveNextStepPreGuardRoute keeps authenticated failed-review remediation ahead of ordinary workspace refresh', () => {
+    const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
+        postReviewSourceMutationGuard: {
+            blocked: false,
+            reason: 'current fix_now transition is authenticated'
+        },
+        workspaceReadiness: {
+            ready: false,
+            reason: 'workspace source hash changed'
+        },
+        failedReviewRemediation: {
+            reviewType: 'test',
+            verdictToken: 'TEST REVIEW FAILED',
+            restartReviewCycleCommand: 'node bin/garda.js gate restart-review-cycle --task-id "T-1"'
+        }
+    }));
+
+    assert.ok(route);
+    assert.equal(route.nextGate, 'restart-review-cycle');
+    assert.match(route.reason, /failed 'test' review verdict/);
+});
+
+test('resolveNextStepPreGuardRoute uses coherent restart after a closed review boundary', () => {
+    const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
+        workspaceReadiness: {
+            ready: false,
+            reason: 'workspace source hash changed'
+        },
+        failedReviewRemediation: {
+            reviewType: 'code',
+            verdictToken: 'CODE REVIEW FAILED',
+            restartReviewCycleCommand: 'node bin/garda.js gate restart-review-cycle --task-id "T-1"',
+            closedCycleRestart: {
+                boundary: 'REVIEW_GATE_PASSED',
+                command: 'node bin/garda.js gate restart-coherent-cycle --task-id "T-1"'
+            }
+        }
+    }));
+
+    assert.ok(route);
+    assert.equal(route.nextGate, 'restart-coherent-cycle');
+    assert.match(route.reason, /already crossed REVIEW_GATE_PASSED/u);
+    assert.match(route.commands[0]?.command || '', /gate restart-coherent-cycle/u);
+    assert.doesNotMatch(route.commands[0]?.command || '', /gate restart-review-cycle/u);
+});
+
 test('resolveNextStepPreGuardRoute preserves POST_PREFLIGHT rebind route wording and command label', () => {
     const route = resolveNextStepPreGuardRoute(basePreGuardOptions({
         postPreflightRulePack: {
@@ -101,6 +166,7 @@ test('resolveNextStepCompileGateRoute returns preflight refresh for compile scop
         ready: false,
         reason: 'Compile gate failed because the preflight scope is stale.',
         recoveryGate: 'classify-change',
+        restartTaskModeCommand: 'node bin/garda.js gate enter-task-mode --orchestrator-work',
         refreshPreflightCommand: 'node bin/garda.js gate classify-change --changed-file src/gates/next-step/next-step.ts',
         compileCommand: 'node bin/garda.js gate compile-gate --task-id "T-1"'
     });
@@ -116,6 +182,7 @@ test('resolveNextStepCompileGateRoute returns null only when compile gate passed
         compileGatePassed: true,
         ready: true,
         reason: 'ready',
+        restartTaskModeCommand: 'restart',
         refreshPreflightCommand: 'refresh',
         compileCommand: 'compile'
     }), null);

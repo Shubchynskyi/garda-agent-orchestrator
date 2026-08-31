@@ -44,7 +44,7 @@
   "review_cycle_guard": {
     "enabled": true,
     "action": "BLOCK_FOR_OPERATOR_DECISION",
-    "max_failed_non_test_reviews": 15,
+    "max_failed_non_test_reviews": 10,
     "max_total_non_test_reviews": 30,
     "excluded_review_types": [
       "test"

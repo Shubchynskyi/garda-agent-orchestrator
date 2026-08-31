@@ -19,12 +19,18 @@ import {
     normalizeProjectMemoryMaintenanceForDisplay
 } from '../../core/project-memory-rollout';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../core/constants';
+import { normalizeReviewCatalog } from '../../core/review-catalog';
 import { validateCompileGateCommand } from '../../gates/compile';
+import {
+    buildDefaultReviewRemediationModePolicy,
+    migrateReviewRemediationModePolicyLaneDefaults
+} from '../../policy/review-remediation-mode-policy';
 import { isSourceCheckoutRoot } from '../../validators/workspace-layout/source-runtime';
 import type { InitProjectDiscovery } from './init-contracts';
 
 export const MANAGED_CONFIG_NAMES = [
     'review-capabilities',
+    'review-catalog',
     'paths',
     'token-economy',
     'output-filters',
@@ -55,6 +61,73 @@ export interface InitConfigStageResult {
     materializedWorkflowConfig: Record<string, unknown>;
     projectMemoryMaintenanceSummaryLine: string;
     optionalQualityChecksNotice: string | null;
+}
+
+export function mergeProfilesConfigWithTemplate(
+    templateConfig: Record<string, unknown>,
+    existingConfig: Record<string, unknown> | null,
+    options: { allowedReviewTypeIds?: readonly string[] } = {}
+): Record<string, unknown> {
+    const merged = mergeConfig(templateConfig, existingConfig);
+    for (const groupName of ['built_in_profiles', 'user_profiles']) {
+        const existingGroupName = existingConfig && Object.keys(existingConfig)
+            .find((candidate) => candidate.toLowerCase() === groupName);
+        const existingGroupValue = existingGroupName
+            ? existingConfig?.[existingGroupName]
+            : undefined;
+        const existingGroup = isPlainObject(existingGroupValue)
+            ? existingGroupValue as Record<string, unknown>
+            : {};
+        const mergedGroup = isPlainObject(merged[groupName])
+            ? merged[groupName] as Record<string, unknown>
+            : {};
+        const existingNamesByLowercase = new Map<string, string>();
+        for (const candidate of Object.keys(existingGroup)) {
+            const normalizedName = candidate.toLowerCase();
+            if (!existingNamesByLowercase.has(normalizedName)) {
+                existingNamesByLowercase.set(normalizedName, candidate);
+            }
+        }
+        for (const [mergedName, mergedProfileValue] of Object.entries(mergedGroup)) {
+            if (!isPlainObject(mergedProfileValue)) {
+                continue;
+            }
+            const mergedProfile = mergedProfileValue as Record<string, unknown>;
+            const existingName = existingNamesByLowercase.get(mergedName.toLowerCase());
+            if (!existingName) {
+                if (Object.hasOwn(mergedProfile, 'review_remediation_mode_policy')) {
+                    const templatePolicy = mergedProfile.review_remediation_mode_policy;
+                    if (isPlainObject(templatePolicy) && templatePolicy.schema_version === 2) {
+                        const catalogDefault = buildDefaultReviewRemediationModePolicy(options);
+                        const configuredEligible = Array.isArray(templatePolicy.delta_eligible_review_types)
+                            ? templatePolicy.delta_eligible_review_types
+                            : [];
+                        mergedProfile.review_remediation_mode_policy = {
+                            ...templatePolicy,
+                            delta_eligible_review_types: [...new Set([
+                                ...configuredEligible,
+                                ...catalogDefault.delta_eligible_review_types
+                            ])].sort()
+                        };
+                    }
+                }
+                continue;
+            }
+            const existingProfile = existingGroup[existingName];
+            if (!isPlainObject(existingProfile)) {
+                continue;
+            }
+            if (!Object.hasOwn(existingProfile, 'review_remediation_mode_policy')) {
+                delete mergedProfile.review_remediation_mode_policy;
+                continue;
+            }
+            mergedProfile.review_remediation_mode_policy = migrateReviewRemediationModePolicyLaneDefaults(
+                existingProfile.review_remediation_mode_policy,
+                options
+            );
+        }
+    }
+    return merged;
 }
 
 export function getFullSuiteEnabledDiagnostic(config: Record<string, unknown>): string {
@@ -229,6 +302,7 @@ export function runInitConfigStage(
     );
     let materializedWorkflowConfig: Record<string, unknown> = buildDefaultWorkflowConfig();
     let optionalQualityChecksNotice: string | null = null;
+    let catalogReviewTypeIds: string[] | undefined;
 
     for (const configName of MANAGED_CONFIG_NAMES) {
         const templateConfigPath = path.join(templateRoot, `config/${configName}.json`);
@@ -283,7 +357,16 @@ export function runInitConfigStage(
                             preserveMovedProjectQualityRulesAsCustom: isSourceCheckoutRoot(targetRoot)
                         }
                     ), discovery, preservedCompileGateCommand)
-                    : mergeConfig(templateConfig, existingConfig);
+                    : configName === 'profiles'
+                        ? mergeProfilesConfigWithTemplate(templateConfig, existingConfig, {
+                            allowedReviewTypeIds: catalogReviewTypeIds
+                        })
+                        : mergeConfig(templateConfig, existingConfig);
+
+            if (configName === 'review-catalog') {
+                catalogReviewTypeIds = normalizeReviewCatalog(materializedConfig)
+                    .review_types.map(({ id }) => id);
+            }
 
             if (configName === 'token-economy') {
                 materializedConfig.enabled = tokenEconomyEnabled;

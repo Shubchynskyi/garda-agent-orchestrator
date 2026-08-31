@@ -248,6 +248,14 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             }
             return;
         }
+        case 'review-catalog': {
+            const { handleReviewCatalog } = await import('./review-catalog-command');
+            const result = handleReviewCatalog(commandArgv, packageJson);
+            if (isFailedValidationResult(result)) {
+                process.exitCode = EXIT_VALIDATION_FAILURE;
+            }
+            return;
+        }
         case 'templates': {
             const { handleTemplates } = await import('./templates-command');
             const result = handleTemplates(commandArgv, packageJson);

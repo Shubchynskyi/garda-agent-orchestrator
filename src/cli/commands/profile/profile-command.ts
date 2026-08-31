@@ -1,4 +1,7 @@
 import { PRIMARY_CLI_NAME } from '../../../core/constants';
+import { readReviewCapabilitiesConfigFile } from '../../../core/review-capabilities';
+import { readReviewCatalogConfigFile } from '../../../core/review-catalog';
+import { resolveConfigPaths } from '../../../policy/profile-resolver';
 import {
     buildGuardedCommandHelpText,
     parseOptions,
@@ -118,6 +121,9 @@ function handleUse(positionals: string[], options: ParsedOptionsRecord, bundleRo
 
 function handleCreate(positionals: string[], options: ParsedOptionsRecord, bundleRoot: string): MaybePromise<void> {
     const profilesPath = resolveProfilesPath(bundleRoot);
+    const reviewTypeIds = readReviewCatalogConfigFile(
+        resolveConfigPaths(bundleRoot).reviewCatalog
+    ).review_types.map(({ id }) => id);
     const name = String(positionals[0] || '').trim();
     if (!name) {
         if (options.json === true) {
@@ -132,7 +138,7 @@ function handleCreate(positionals: string[], options: ParsedOptionsRecord, bundl
         }
         const promptData = readProfilesData(profilesPath);
         return (async () => {
-            const interactiveInput = await resolveInteractiveCreateInput(promptData, options);
+            const interactiveInput = await resolveInteractiveCreateInput(promptData, options, reviewTypeIds);
             withProfilesDataLock(profilesPath, () => {
                 const currentData = readProfilesData(profilesPath);
                 recoverPendingProfileFindingPolicyAudits(bundleRoot, currentData);
@@ -192,7 +198,7 @@ function handleCreate(positionals: string[], options: ParsedOptionsRecord, bundl
             if (typeof options.depth === 'string') {
                 depth = parseStrictDepth(options.depth);
             }
-            entry = buildDefaultProfileEntry(description, depth);
+            entry = buildDefaultProfileEntry(description, depth, reviewTypeIds);
         }
 
         data.user_profiles[name] = entry;
@@ -238,7 +244,16 @@ function handleValidate(options: ParsedOptionsRecord, bundleRoot: string): Profi
         console.log(buildProfileValidateOutput(emptyData, issues, profilesPath, options.json === true));
         return { passed: false, issues };
     }
-    const issues = validateProfilesIntegrity(data);
+    const configPaths = resolveConfigPaths(bundleRoot);
+    let issues: string[];
+    try {
+        issues = validateProfilesIntegrity(data, {
+            reviewCatalog: readReviewCatalogConfigFile(configPaths.reviewCatalog),
+            reviewCapabilities: readReviewCapabilitiesConfigFile(configPaths.reviewCapabilities)
+        });
+    } catch (error: unknown) {
+        issues = [error instanceof Error ? error.message : String(error)];
+    }
     console.log(buildProfileValidateOutput(data, issues, profilesPath, options.json === true));
     return { passed: issues.length === 0, issues };
 }

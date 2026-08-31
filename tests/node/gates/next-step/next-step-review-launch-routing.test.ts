@@ -5,6 +5,15 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import type { EffectiveReviewExecutionPolicyMode } from '../../../../src/core/review-execution-policy';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
 import { getWorkspaceSnapshot } from './next-step-test-support';
@@ -102,6 +111,27 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                task_decomposition: { enabled: false },
+                review_policy: { code: 'auto', test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -240,8 +270,24 @@ function appendRestartBoundary(
     }, undefined, options.actor || 'orchestrator');
 }
 
-function seedStartedTask(repoRoot: string, taskId: string): void {
-    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
+function seedStartedTask(
+    repoRoot: string,
+    taskId: string,
+    reviewPolicyMode: EffectiveReviewExecutionPolicyMode = 'code_first_optional'
+): void {
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        'balanced',
+        {
+            reviewExecutionPolicyMode: reviewPolicyMode,
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    writeJson(taskModePath, buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
         requestedDepth: 2,
@@ -251,12 +297,28 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
         executionProviderSource: 'explicit_provider',
-        runtimeIdentityStatus: 'resolved'
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: 'balanced',
+        profileSelectionSource: 'task_queue',
+        activeProfile: 'balanced',
+        profileSource: 'built_in',
+        runtimeActiveProfile: 'balanced',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
     }));
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
-    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
-    seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
+    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    });
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 }
@@ -344,6 +406,36 @@ function writePreflight(
         })
         : null;
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+    const frozenProfileSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        frozenProfileSnapshot.source.effective_profile,
+        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+        frozenProfileSnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: frozenProfileSnapshot.snapshot_hash,
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: 'code',
+        taskIntent: 'Exercise next-step reviewer launch routing',
+        changedFiles,
+        taskTriggers: {},
+        reviewExecutionPolicyMode: reviewPolicyMode as EffectiveReviewExecutionPolicyMode,
+        reviewDependencyGraph: null,
+        fullSuiteValidation: {
+            enabled: false,
+            placement: 'after_compile_before_reviews'
+        },
+        includeDependencyGraph: true
+    });
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -358,16 +450,22 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
+        profile_policy_snapshot: {
+            snapshot_hash: frozenProfileSnapshot.snapshot_hash
+        },
         review_execution_policy: {
             mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
-        }
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     if (options.seedPostPreflight !== false) {
-        seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        seedPostPreflightRulePack(repoRoot, taskId, preflightPath, taskModePath);
     }
     return preflightPath;
 }
@@ -1153,7 +1251,7 @@ afterEach(() => {
 describe('gates/next-step', () => {
     it('exposes parallel_all launch batches without collapsing JSON or human output to one lane', () => {
         const repoRoot = makeTempRepo();
-        seedStartedTask(repoRoot, TASK_ID);
+        seedStartedTask(repoRoot, TASK_ID, 'parallel_all');
         writePreflight(
             repoRoot,
             TASK_ID,

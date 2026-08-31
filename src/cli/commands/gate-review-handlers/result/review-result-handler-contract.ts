@@ -124,10 +124,65 @@ export interface ReviewResultHandlersDependencies {
 
 export type RecordReviewResultHandler = (gateArgv: string[]) => Promise<void>;
 export type RecordReviewReceiptHandler = (gateArgv: string[]) => Promise<void>;
+export type RecordReviewOutputCorrectionInvocationHandler = (gateArgv: string[]) => Promise<void>;
+export type RecordReviewOutputCorrectionResponseHandler = (gateArgv: string[]) => Promise<void>;
+export type RecordReviewOutputCorrectionTransportHandler = (gateArgv: string[]) => Promise<void>;
 
 export interface ReviewResultHandlers {
     handleRecordReviewResult: RecordReviewResultHandler;
     handleRecordReviewReceipt: RecordReviewReceiptHandler;
+    handleRecordReviewOutputCorrectionInvocation: RecordReviewOutputCorrectionInvocationHandler;
+    handleRecordReviewOutputCorrectionResponse: RecordReviewOutputCorrectionResponseHandler;
+    handleRecordReviewOutputCorrectionTransport: RecordReviewOutputCorrectionTransportHandler;
+}
+
+export function recordReviewOutputCorrectionResponseOptionDefinitions(): Record<
+string,
+{ key: string; type: 'string' }
+> {
+    return {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--correction-artifact-path': { key: 'correctionArtifactPath', type: 'string' },
+        '--review-output-path': { key: 'reviewOutputPath', type: 'string' },
+        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+}
+
+export function recordReviewOutputCorrectionTransportOptionDefinitions(): Record<
+string,
+{ key: string; type: 'string' }
+> {
+    return {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--correction-artifact-path': { key: 'correctionArtifactPath', type: 'string' },
+        '--session-availability': { key: 'sessionAvailability', type: 'string' },
+        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+}
+
+export function recordReviewOutputCorrectionInvocationOptionDefinitions(): Record<
+string,
+{ key: string; type: 'string' | 'boolean' }
+> {
+    return {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--correction-artifact-path': { key: 'correctionArtifactPath', type: 'string' },
+        '--correction-producer-identity': { key: 'correctionProducerIdentity', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--launch-input-sha256': { key: 'launchInputSha256', type: 'string' },
+        '--fork-context': { key: 'forkContext', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
 }
 
 export function recordReviewResultOptionDefinitions(): Record<string, { key: string; type: 'string' | 'boolean' }> {
@@ -142,6 +197,15 @@ export function recordReviewResultOptionDefinitions(): Record<string, { key: str
         '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
         '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
         '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
+        '--correction-producer-identity': { key: 'correctionProducerIdentity', type: 'string' },
+        '--correction-provider-invocation-id': { key: 'correctionProviderInvocationId', type: 'string' },
+        '--correction-provider-invocation-event-sha256': {
+            key: 'correctionProviderInvocationEventSha256',
+            type: 'string'
+        },
+        '--correction-attestation-source': { key: 'correctionAttestationSource', type: 'string' },
+        '--correction-launch-input-sha256': { key: 'correctionLaunchInputSha256', type: 'string' },
+        '--correction-fork-context': { key: 'correctionForkContext', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
 }

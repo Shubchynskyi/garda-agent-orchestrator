@@ -192,6 +192,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - `garda-agent-orchestrator/live/config/token-economy.json` exists and its `enabled` flag matches `<token-economy-enabled>`.
 - if `<enforce-no-auto-commit>` is true: `.git/hooks/pre-commit` contains Garda managed commit guard block.
 - `garda-agent-orchestrator/live/config/review-capabilities.json` exists.
+- A fresh init materializes `garda-agent-orchestrator/live/config/review-catalog.json`; legacy deployments where it is absent remain compatible with built-in review lanes until explicit migration.
 - `garda-agent-orchestrator/live/config/paths.json` exists.
 - `garda-agent-orchestrator/live/config/skill-packs.json` exists.
 - `garda-agent-orchestrator/live/skills/skill-builder/SKILL.md` exists.
@@ -199,7 +200,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - `garda-agent-orchestrator/live/USAGE.md` exists with usage instructions in `<assistant-language>`.
 - Root `TASK.md` contains `Profile` column in active queue (`default` inherits the workspace active profile).
 - Provider-native bridge profiles exist and map back to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
-- Copilot bridge profiles include specialist skills added after initialization by re-reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`.
+- Copilot bridge profiles include specialist skills added after initialization by re-reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`, then consume the immutable task review snapshot instead of loading the full catalog during normal execution.
 - Task workflow supports per-task timeline logs at `garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Existing project docs and legacy agent files are not moved or deleted.
 
@@ -238,6 +239,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
   - using the current active profile through `garda-agent-orchestrator/live/config/profiles.json`, the `TASK.md` `Profile` column, and `node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."`;
   - inspecting repo-local workflow settings with `node garda-agent-orchestrator/bin/garda.js workflow show --target-root "."` and changing them only with audited `workflow set` commands;
   - inspecting optional review capabilities with `node garda-agent-orchestrator/bin/garda.js review-capabilities list --target-root "."`;
+  - inspecting optional review lanes with `node garda-agent-orchestrator/bin/garda.js review-catalog list|show|explain|validate ... --target-root "."`, while explaining that custom lanes are disabled by default and guarded mutations affect future task snapshots only;
   - explaining `workflow-config.json` review execution policy, full-suite validation, scope/review-cycle guards, project-memory maintenance, task reset, and `paths.json` `ordinary_doc_paths`;
   - if full-suite validation is disabled, state that full repository test validation after each task is disabled and the agent must not silently enable it; ask for explicit permission or show `node garda-agent-orchestrator/bin/garda.js workflow set --full-suite-enabled true --full-suite-command "<project test command>" --target-root "."`;
   - indexing note: recommend excluding `garda-agent-orchestrator/` from application-code, stack-detection, and IDE/AI semantic indexing where supported, while keeping explicit Garda rule/config/skill paths and `bin/garda.js` readable to agents.

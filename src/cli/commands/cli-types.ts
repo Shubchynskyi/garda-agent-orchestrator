@@ -63,6 +63,13 @@ export interface StatusSnapshot {
         remediation: string | null;
     };
     activeProfile: string | null;
+    reviewRemediationModePolicy?: {
+        configured: boolean;
+        legacyFullOnly: boolean;
+        policyId: string | null;
+        deltaEligibleReviewTypes: string[];
+        diagnostics: string[];
+    } | null;
     mandatoryFullSuiteEnabled: boolean | null;
     mandatoryFullSuiteCommand: string | null;
     mandatoryFullSuitePerformance: string | null;

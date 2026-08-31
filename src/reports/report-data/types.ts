@@ -22,8 +22,14 @@ import type {
     OptionalSkillSelectionPolicyMode
 } from '../../runtime/optional-skill-selection';
 import type { ScopeBudgetStatusSnapshot } from '../../core/scope-budget-status';
-import type { ReviewFindingPolicy, ReviewFollowUpPolicy } from '../../policy/profile-resolver';
+import type {
+    ReviewFindingPolicy,
+    ReviewFollowUpPolicy,
+    ReviewFollowUpTaskProfileAssignment
+} from '../../policy/profile-resolver';
 import type { ReviewTriggerPolicy } from '../../policy/review-trigger-policy';
+import type { ReviewRemediationModePolicySummary } from '../../policy/review-remediation-mode-policy';
+import type { ReviewFollowUpTaskClosurePolicySnapshot } from '../../core/review-follow-up-task-closure-policy';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -125,6 +131,17 @@ export interface ReportTaskDetail {
     stats: TaskStatsResult | null;
     latest_cycle_events: CompactLatestCycleTaskEventsSummary | null;
     full_suite_validation: ReportFullSuiteSummary;
+    review_follow_up_task_closure_policy: {
+        stored: ReviewFollowUpTaskClosurePolicySnapshot;
+        effective: ReviewFollowUpTaskClosurePolicySnapshot;
+        effective_source: 'task_metadata' | 'task_mode_profile_policy_snapshot';
+        state: 'editable' | 'inapplicable' | 'invalid' | 'completed' | 'pending_next_cycle';
+        editable: boolean;
+        editable_reason: string | null;
+        metadata_path: string;
+        drift_detected: boolean;
+        diagnostics: string[];
+    };
     audit: {
         status: TaskAuditSummaryResult['status'];
         gates: TaskAuditSummaryResult['gates'];
@@ -132,6 +149,7 @@ export interface ReportTaskDetail {
         required_reviews: TaskAuditSummaryResult['required_reviews'];
         changed_files: string[];
         review_attempt_summary: TaskAuditSummaryResult['review_attempt_summary'];
+        review_findings_audit: TaskAuditSummaryResult['review_findings_audit'];
         final_report_contract_status: TaskAuditSummaryResult['final_report_contract']['status'];
         final_closeout_artifact_state: TaskAuditSummaryResult['final_closeout']['artifact_state'];
     } | null;
@@ -332,6 +350,64 @@ export interface ReportProfileReviewType {
     label: string;
 }
 
+export type ReportReviewCatalogProfileState = 'disabled' | 'auto' | 'required';
+
+export interface ReportReviewCatalogLane {
+    id: string;
+    display_label: string;
+    source: 'built_in' | 'custom';
+    built_in: boolean;
+    enabled_by_default: boolean;
+    capability_enabled: boolean;
+    skill_ids: string[];
+    trigger: {
+        mode: 'compatibility' | 'manual' | 'signals';
+        signal_ids: string[];
+    };
+    coverage_category_ids: string[];
+    reviewer_role: {
+        role_id: string;
+        focus_tags: string[];
+    };
+    verdict_tokens: {
+        pass: string;
+        fail: string;
+    };
+    profile: {
+        name: string;
+        state: ReportReviewCatalogProfileState;
+        state_source: 'profile' | 'built_in_compatibility_default' | 'custom_disabled_default';
+        active: boolean;
+        inactive_reason: 'profile_disabled' | 'capability_disabled' | null;
+        dependencies: string[];
+        explanation: string[];
+    };
+}
+
+export interface ReportReviewCatalogTab {
+    status: 'present' | 'legacy_compatible' | 'invalid';
+    catalog_path: string;
+    capabilities_path: string;
+    profiles_path: string;
+    catalog_exists: boolean;
+    catalog_sha256: string | null;
+    state_sha256: string | null;
+    active_profile: string | null;
+    selected_profile: string | null;
+    profile_names: string[];
+    known_skill_ids: string[];
+    validation: {
+        status: 'PASS' | 'FAIL';
+        issues: string[];
+    };
+    migration: {
+        status: 'current' | 'legacy_compatible' | 'blocked_invalid';
+        required: boolean;
+        reason: string;
+    };
+    lanes: ReportReviewCatalogLane[];
+}
+
 export interface ReportProfileRow {
     name: string;
     source: ReportProfileSource;
@@ -339,6 +415,13 @@ export interface ReportProfileRow {
     protected: boolean;
     description: string;
     depth: number;
+    task_decomposition: {
+        enabled: boolean;
+        configured: boolean;
+        provenance: string;
+        diagnostics: string[];
+        valid: boolean;
+    };
     review_policy: Record<string, ReportProfileReviewPolicyValue>;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_sha256: string;
@@ -350,6 +433,8 @@ export interface ReportProfileRow {
     };
     review_follow_up_policy: ReviewFollowUpPolicy;
     review_follow_up_policy_diagnostics: string[];
+    review_follow_up_task_profile_assignment: ReviewFollowUpTaskProfileAssignment;
+    review_remediation_mode_policy: ReviewRemediationModePolicySummary;
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }
@@ -361,6 +446,7 @@ export interface ReportProfilesTab {
     active_profile: string | null;
     review_trigger_policy: ReviewTriggerPolicy | null;
     review_types: ReportProfileReviewType[];
+    review_catalog: ReportReviewCatalogTab;
     profiles: ReportProfileRow[];
     built_in_profile_names: string[];
     user_profile_names: string[];

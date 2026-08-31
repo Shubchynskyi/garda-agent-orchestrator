@@ -5,7 +5,7 @@ import {
 } from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
 import {
-    REVIEW_TRUST_COMPATIBILITY_TYPES,
+    collectEffectiveReviewTypeIds,
     normalizeKnownReviewType,
     normalizeSha256Text
 } from './task-audit-summary-review-common';
@@ -399,7 +399,9 @@ function summarizeReviewAttemptFromEvent(
     event: ReviewReuseTelemetryEventLike,
     artifactIndex: ReviewAttemptArtifactIndex,
     taskId: string,
-    currentPreflightFingerprints: DomainScopeFingerprints | null
+    currentPreflightFingerprints: DomainScopeFingerprints | null,
+    currentPreflight: Record<string, unknown> | null | undefined,
+    knownReviewTypes: ReadonlySet<string>
 ): {
     reviewType: string;
     verdict: 'PASS' | 'FAIL' | 'MISSING_OR_INVALID';
@@ -414,7 +416,11 @@ function summarizeReviewAttemptFromEvent(
         return null;
     }
     const details = isPlainRecord(event.details) ? event.details : {};
-    const reviewType = normalizeKnownReviewType(details.review_type ?? details.reviewType);
+    const reviewType = normalizeKnownReviewType(
+        details.review_type ?? details.reviewType,
+        currentPreflight,
+        knownReviewTypes
+    );
     if (!reviewType) {
         return null;
     }
@@ -597,6 +603,8 @@ export function buildReviewAttemptSummary(options: {
         const seenEvidenceKeysByType = new Map<string, Set<string>>();
         const diagnosticAttempts: ReviewAttemptDiagnosticInput[] = [];
         const currentPreflightFingerprints = readPreflightDomainScopeFingerprints(options.currentPreflight);
+        const effectiveReviewTypeIds = collectEffectiveReviewTypeIds(options.currentPreflight);
+        const knownReviewTypes = new Set(effectiveReviewTypeIds);
         const excludedReviewTypes = options.excludedReviewTypes ?? ['test'];
         let taskEventAttemptCount = 0;
         let fallbackAttemptCount = 0;
@@ -606,7 +614,9 @@ export function buildReviewAttemptSummary(options: {
                 event,
                 artifactIndex,
                 options.taskId,
-                currentPreflightFingerprints
+                currentPreflightFingerprints,
+                options.currentPreflight,
+                knownReviewTypes
             );
             if (!eventAttempt) {
                 continue;
@@ -651,7 +661,7 @@ export function buildReviewAttemptSummary(options: {
             taskEventAttemptCount += 1;
         }
 
-        for (const reviewType of REVIEW_TRUST_COMPATIBILITY_TYPES) {
+        for (const reviewType of effectiveReviewTypeIds) {
             for (const fallbackAttempt of summarizeReviewAttemptsFromSnapshotArtifacts(
                 artifactIndex,
                 options.taskId,

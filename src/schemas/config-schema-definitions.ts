@@ -12,6 +12,7 @@ import {
     COLLECTED_VIA_VALUES
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
+import { REVIEW_REMEDIATION_REVIEW_TYPE_ID_PATTERN } from '../policy/review-remediation-mode-policy';
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
@@ -188,7 +189,10 @@ export const reviewCapabilitiesSchema: Record<string, unknown> = Object.freeze({
         REVIEW_CAPABILITY_KEYS.map((key) => [key, { type: 'boolean', description: `Enable ${key} review.` }])
     ),
     required: [...REVIEW_CAPABILITY_KEYS],
-    additionalProperties: false
+    additionalProperties: {
+        type: 'boolean',
+        description: 'Catalog-backed custom review lanes remain disabled until explicitly set true.'
+    }
 });
 
 export const tokenEconomySchema: Record<string, unknown> = Object.freeze({
@@ -714,10 +718,11 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
 });
 
 const REVIEW_POLICY_VALUE = {
-    description: 'Review toggle: true = always, false = never, "auto" = trigger-based.',
+    description: 'Catalog review state: true = required, false = disabled, "auto" = optional and trigger-based.',
     oneOf: [
-        { type: 'boolean' },
-        { type: 'string', enum: ['auto'] }
+        { const: true, description: 'Required whenever the capability is enabled; built-in safety floors still apply.' },
+        { const: false, description: 'Disabled by profile unless a mandatory built-in safety floor applies.' },
+        { type: 'string', enum: ['auto'], description: 'Optional lane selected only by deterministic triggers.' }
     ]
 } as const;
 
@@ -806,15 +811,76 @@ const REVIEW_FINDING_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
+function reviewRemediationModePolicySchemaVariant(
+    schemaVersion: 1 | 2,
+    eligibleReviewTypes: readonly string[],
+    minEligibleReviewTypes: number
+): Record<string, unknown> {
+    return {
+        type: 'object',
+        properties: {
+            schema_version: { type: 'integer', const: schemaVersion },
+            policy_id: { type: 'string', const: 'conservative_review_remediation_mode_v1' },
+            initial_review_mode: { type: 'string', const: 'FULL' },
+            delta_eligible_review_types: {
+                type: 'array',
+                minItems: minEligibleReviewTypes,
+                uniqueItems: true,
+                items: schemaVersion === 1
+                    ? { type: 'string', enum: [...eligibleReviewTypes] }
+                    : { type: 'string', pattern: REVIEW_REMEDIATION_REVIEW_TYPE_ID_PATTERN }
+            },
+            force_full_categories: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 3,
+                uniqueItems: true,
+                items: { type: 'string', enum: ['ambiguous', 'generated_churn', 'global'] }
+            },
+            max_delta_changed_files: { type: 'integer', minimum: 1, maximum: 5 },
+            max_delta_changed_lines: { type: 'integer', minimum: 1, maximum: 400 },
+            max_consecutive_delta_reviews: { type: 'integer', minimum: 1, maximum: 3 }
+        },
+        required: [
+            'schema_version',
+            'policy_id',
+            'initial_review_mode',
+            'delta_eligible_review_types',
+            'force_full_categories',
+            'max_delta_changed_files',
+            'max_delta_changed_lines',
+            'max_consecutive_delta_reviews'
+        ],
+        additionalProperties: false
+    };
+}
+
+const REVIEW_REMEDIATION_MODE_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
+    description: 'Explicit conservative FULL/DELTA remediation policy. A missing policy preserves legacy FULL-only behavior.',
+    oneOf: [
+        reviewRemediationModePolicySchemaVariant(1, ['code', 'refactor', 'test'], 1),
+        reviewRemediationModePolicySchemaVariant(2, [...REVIEW_CAPABILITY_KEYS].sort(), 0)
+    ]
+});
+
 const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
     type: 'object',
     description: 'A single workspace profile defining policy overlays.',
     properties: {
         description: { type: 'string', minLength: 1, description: 'Human-readable profile description.' },
         depth: { type: 'integer', minimum: 1, maximum: 3, description: 'Default task depth (1–3).' },
+        task_decomposition: {
+            type: 'object',
+            description: 'Whether the task-start workflow asks for guarded decomposition before implementation.',
+            properties: {
+                enabled: { type: 'boolean' }
+            },
+            required: ['enabled'],
+            additionalProperties: false
+        },
         review_policy: {
             type: 'object',
-            description: 'Review type overrides.',
+            description: 'Catalog review states keyed by canonical review id. Unknown ids are rejected against review-catalog.json by profile validation.',
             properties: {
                 code:     REVIEW_POLICY_VALUE,
                 db:       REVIEW_POLICY_VALUE,
@@ -824,14 +890,72 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
             additionalProperties: REVIEW_POLICY_VALUE
         },
         review_finding_policy: REVIEW_FINDING_POLICY_SCHEMA,
+        review_remediation_mode_policy: REVIEW_REMEDIATION_MODE_POLICY_SCHEMA,
         review_follow_up_policy: {
             type: 'object',
-            description: 'Deferred finding task materialization mode.',
+            description: 'Deferred finding task materialization and child-profile policy.',
             properties: {
                 schema_version: { type: 'integer', const: 1 },
-                materialization_mode: { type: 'string', enum: ['per_finding', 'grouped_by_parent'] }
+                materialization_mode: { type: 'string', enum: ['per_finding', 'grouped_by_parent'] },
+                task_profile: {
+                    type: 'object',
+                    oneOf: [
+                        {
+                            type: 'object',
+                            properties: {
+                                mode: { const: 'one_level_lighter' },
+                                fixed_profile: { type: 'null' }
+                            },
+                            required: ['mode', 'fixed_profile'],
+                            additionalProperties: false
+                        },
+                        {
+                            type: 'object',
+                            properties: {
+                                mode: { const: 'inherit_parent' },
+                                fixed_profile: { type: 'null' }
+                            },
+                            required: ['mode', 'fixed_profile'],
+                            additionalProperties: false
+                        },
+                        {
+                            type: 'object',
+                            properties: {
+                                mode: { const: 'fixed_profile' },
+                                fixed_profile: { type: 'string', minLength: 1, maxLength: 64 }
+                            },
+                            required: ['mode', 'fixed_profile'],
+                            additionalProperties: false
+                        }
+                    ]
+                }
             },
             required: ['schema_version', 'materialization_mode'],
+            additionalProperties: false
+        },
+        review_dependency_graph: {
+            type: 'object',
+            description: 'Optional per-profile review dependency DAG. Every active catalog lane must appear once in preparation_order.',
+            properties: {
+                preparation_order: {
+                    type: 'array',
+                    maxItems: 64,
+                    uniqueItems: true,
+                    items: { type: 'string', pattern: '^(?!full-suite-validation$)[a-z][a-z0-9-]*$' }
+                },
+                dependencies: {
+                    type: 'object',
+                    maxProperties: 64,
+                    propertyNames: { pattern: '^(?!full-suite-validation$)[a-z][a-z0-9-]*$' },
+                    additionalProperties: {
+                        type: 'array',
+                        maxItems: 64,
+                        uniqueItems: true,
+                        items: { type: 'string', pattern: '^(?!full-suite-validation$)[a-z][a-z0-9-]*$' }
+                    }
+                }
+            },
+            required: ['preparation_order', 'dependencies'],
             additionalProperties: false
         },
         token_economy: {

@@ -19,6 +19,7 @@ import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { createNextStepResolutionContext } from '../../../../src/gates/next-step/next-step-resolution-context';
 import { resolveNextStepFromCliOptions } from '../../../../src/gates/next-step/next-step';
@@ -114,6 +115,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -560,6 +562,25 @@ describe('gates/next-step startup routing', () => {
         assert.ok(text.includes('AfterCommand: rerun'));
     });
 
+    it('blocks malformed task required-review metadata before printing classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/test | Validate task metadata | gpt-5.6-sol | 2026-08-20 | balanced | Required reviews: code, security, api, and test; Terra High only. |`,
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'task-metadata-validation');
+        assert.match(result.reason, /invalid TASK\.md required-review declaration/);
+        assert.match(result.reason, /Required reviews: lane, lane\./);
+        assert.equal(result.commands.length, 0);
+    });
+
     it('uses task profile depth for fresh task-mode command defaults', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -585,7 +606,8 @@ describe('gates/next-step startup routing', () => {
                         scoped_diffs: true,
                         compact_reviewer_output: true
                     },
-                    skills: { auto_suggest: true }
+                    skills: { auto_suggest: true },
+                    task_decomposition: { enabled: false }
                 },
                 strict: {
                     description: 'Strict',
@@ -598,7 +620,8 @@ describe('gates/next-step startup routing', () => {
                         scoped_diffs: true,
                         compact_reviewer_output: false
                     },
-                    skills: { auto_suggest: true }
+                    skills: { auto_suggest: true },
+                    task_decomposition: { enabled: false }
                 }
             },
             user_profiles: {}
@@ -857,8 +880,8 @@ describe('gates/next-step startup routing', () => {
             version: 1,
             active_profile: 'balanced',
             built_in_profiles: {
-                balanced: { description: 'Balanced', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true } },
-                strict: { description: 'Strict changed later', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true } }
+                balanced: { description: 'Balanced', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true }, task_decomposition: { enabled: false } },
+                strict: { description: 'Strict changed later', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true }, task_decomposition: { enabled: false } }
             },
             user_profiles: {}
         });
@@ -1209,6 +1232,45 @@ describe('gates/next-step startup routing', () => {
         assert.ok(result.commands[0].command.includes('gate record-review-routing'));
         assert.ok(!result.commands[0].command.includes('handshake-diagnostics'));
         assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
+    });
+
+    it('requires fresh startup diagnostics when late TASK_ENTRY recovers a failed post-preflight rule pack', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:code-reviewer';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOAD_FAILED', 'FAIL', {
+            stage: 'POST_PREFLIGHT'
+        });
+        const lateRulePackPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-recovery-task-entry-rule-pack.json`);
+        writeJson(lateRulePackPath, buildRulePackArtifact({
+            repoRoot,
+            taskId: TASK_ID,
+            stage: 'TASK_ENTRY',
+            taskModePath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`),
+            loadedRuleFiles: [
+                '00-core.md',
+                '15-project-memory.md',
+                '40-commands.md',
+                '80-task-workflow.md',
+                '90-skill-catalog.md'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOADED', 'PASS', {
+            stage: 'TASK_ENTRY',
+            artifact_path: normalizeForTimeline(lateRulePackPath)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'handshake-diagnostics');
+        assert.match(result.reason, /no HANDSHAKE_DIAGNOSTICS_RECORDED event exists after them/);
+        assert.ok(result.commands[0].command.includes('gate handshake-diagnostics'));
     });
 
     it('routes late TASK_ENTRY after review phase through startup recovery before stale preflight refresh', () => {

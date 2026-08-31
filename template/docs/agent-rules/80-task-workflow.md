@@ -47,6 +47,15 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - If `garda-agent-orchestrator/runtime/plans/<task-id>.md` exists for the selected task, read it as optional executor guidance. Missing Markdown working plans are normal: do not block, invent a waiver, pass them as `--plan-path`, or treat their absence as a reviewer/completion issue.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
+## Review Catalog Context Contract
+- Built-in review lanes and their canonical verdict tokens remain compatibility-owned even when `live/config/review-catalog.json` is absent.
+- Custom review lanes are declarative and disabled by default. They cannot replace built-in lanes or supply prompt bodies or verdict-token overrides.
+- Capability flags, profile lane states, triggers, and the validated review dependency graph determine which catalog lanes are active and their launch order.
+- Task entry and preflight bind the effective lanes and dependency graph into an immutable current-task catalog/policy snapshot. Guarded catalog or profile mutations affect future tasks only.
+- Normal task agents consume `TaskStartReviewCatalog` plus current preflight evidence; delegated reviewers consume only the generated launch input for their lane. Do not load `live/config/review-catalog.json` into normal task or reviewer context.
+- Use `review-catalog list|show|explain|validate` only for explicit inspection, management, migration, or troubleshooting work.
+- Catalog mutations use the guarded preview, operator-confirmation, and apply transaction. Preserve its active-task guard, hash bindings, audit trail, backup, and automatic rollback behavior.
+
 ## Project Memory Task Entry Protocol
 - `TASK_ENTRY` rule-pack includes `15-project-memory.md` as generated project-memory orientation.
 - After `TASK_ENTRY` rule loading, read source memory through the index-first protocol:
@@ -106,6 +115,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - explicit `BLOCKED` state explaining why no changes were produced.
 - Legacy update compatibility wording: After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...`. Current contract: After preflight decides `required_reviews.*`, run the exact POST_PREFLIGHT command printed by `next-step`: `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` when rule files must be read, or `bind-rule-pack-to-preflight` when current-cycle rule files and hashes are unchanged and only evidence must be rebound.
 - Treat `classify-change -> POST_PREFLIGHT rule-pack binding -> compile-gate` as one strict same-task chain. Do not parallelize these transitions; use `next-step` between them because a newer `PREFLIGHT_CLASSIFIED` invalidates older post-preflight rule-pack or compile attempts.
+- A task may enter the test-first expected-red lane only when its `TASK.md` Notes contain the exact marker `Test-first: expected-red` and the current preflight is test-only. Follow the guarded `run-intermediate-command --expect-failure` command printed by `next-step`; it must bind a concrete changed focused test, the current preflight and scope hashes, the non-zero test exit, and the bounded output artifact. An unexpected pass, timeout, cancellation, unrelated test, foreign task, stale preflight, or modified evidence remains blocking. Once expected-red evidence is authenticated, `next-step` exposes implementation; after production files change, normal refreshed preflight, compile, full-suite, required reviews, and completion remain mandatory. Ordinary test-only tasks without the exact marker remain fail-closed.
 - Compile gate command must pass before `IN_REVIEW`, but only run it when `next-step` reports `NextGate: compile-gate`:
   `node garda-agent-orchestrator/bin/garda.js gate compile-gate`.
 - Compile lifecycle telemetry must show `IMPLEMENTATION_STARTED` before `COMPILE_GATE_PASSED`.
@@ -144,6 +154,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Review-cycle `allow_one_more_cycle` uses `gate record-review-cycle-continuation` and is task-scoped one-shot runtime evidence. Do not implement it by changing `workflow-config.json`; permanent `raise_limits` choices must go through audited `garda workflow set`.
 - Full-suite placement modes are lifecycle routing controls: `after_compile_before_reviews` runs the suite after compile before any reviewer launch, `before_test_review` blocks only the `test` reviewer until current suite evidence exists, and `before_completion` leaves reviewer context neutral while completion still enforces full-suite evidence later.
 - Optional quality checks are advisory self-check rules controlled by `workflow-config.json` `optional_quality_checks`. They are default-enabled and routed by `next-step` after implementation changes exist, normally before compile/review/full-suite work, so agents can address simplification, style fit, hardcoding, duplication, unnecessary abstraction, growth, and verification-scope issues before expensive gates.
+- A newly materialized quality-checklist answers file is an editable scaffold, not runnable evidence. Complete every active answer and any rule-specific required fields, then rerun `next-step`; only execute the `quality-checklist` command after the navigator prints it for the validated answers file.
 - `quality-checklist` `ACTION_REQUIRED` means the implementation agent must return to the implementation/refactor step and address the listed follow-up before continuing to compile, review, or full-suite validation. `PASS` continues the normal lifecycle, and disabled mode skips only this advisory gate.
 - Optional quality checks never certify correctness and never replace compile-gate, full-suite validation, or delegated independent review. Operators may disable the gate or customize individual rules only through the audited workflow-setting path (`garda workflow set --optional-checks-enabled ...` or `--optional-check-rule-*`, including the guarded local UI).
 - When enabled, `completion-gate` requires a full-suite-validation artifact with status `PASSED` or `WARNED` (AUDIT_AND_WARN policy). Status `FAILED` blocks completion.
@@ -220,6 +231,16 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - `reviewer_identity`: provider-assigned reviewer id with `agent:` scope.
   - Historical `same_agent_fallback` receipts may be read for diagnostics only; they do not satisfy a fresh mandatory review cycle.
   - Gate diagnostics must explain whether each review has valid delegated fresh-context execution evidence.
+
+## Remediation Review Modes
+- `reviewer_execution_mode` remains `delegated_subagent`; `review_execution_mode` independently records review scope as `FULL` or `DELTA`.
+- The first accepted review for every effective lane is always `FULL`. `DELTA` is bounded repair verification chained to authenticated exhaustive coverage, never an initial or standalone review.
+- A workspace profile enables `DELTA` only by explicitly declaring a valid schema-2 `review_remediation_mode_policy`. Profiles without that field and schema-1 policies that have not passed through init migration, including legacy workspaces, resolve fail-closed to `FULL`-only behavior.
+- The immutable task profile snapshot owns the mode policy for the active lifecycle. Editing profile configuration never changes an already locked task snapshot.
+- Every built-in review lane is eligible for `DELTA` by default under schema 2. A profile may add custom review-catalog lanes by stable lowercase kebab-case ID or remove individual lanes from `delta_eligible_review_types`, including all lanes, to force only those lanes to `FULL`. Eligibility remains bounded by configured file/line/consecutive-review limits and requires unchanged task criteria, policy, catalog, dependency graph, full-scope membership, and authenticated baseline lineage.
+- Ambiguous or global impact, generated churn, protected control-plane/policy changes, API/auth/security/database/schema/dependency/infrastructure/secret/lockfile boundaries, unavailable impact, oversized changes, periodic-full thresholds, stale or tampered evidence, and dependency invalidation force `FULL`.
+- A `DELTA` context carries exact remediation targets plus complete prior-scope lineage. Findings outside the delta remain preserved until authenticated reconciliation resolves or disposition-locks them.
+- Status, profile output, stats, receipts, and task-audit reports expose the configured/legacy policy state and observed `FULL`/`DELTA` modes. These are diagnostics over gate-owned contracts, not alternate routing authority.
 - For new cycles, validated findings plus locked disposition state form the release gate; reviewer-authored verdicts are forbidden.
 - Historical verdict tokens remain readable for audit-only compatibility:
   - code: `REVIEW PASSED`

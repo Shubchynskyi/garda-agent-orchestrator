@@ -7,6 +7,10 @@ import * as path from 'node:path';
 import {
     validateReviewArtifactGateEligibility,
 } from '../../../../src/gates/required-reviews/required-reviews-check';
+import {
+    rewriteValidationExecutionBinding,
+    writeSchema4ReviewPackage
+} from '../review/review-execution-lineage-test-fixture';
 
 
 describe('gates/required-reviews-check', () => {
@@ -364,6 +368,94 @@ describe('gates/required-reviews-check', () => {
             });
 
             assert.ok(result.violations.some((violation) => violation.includes('inconsistent fallback reason')));
+        });
+
+        it('rejects stale schema-4 receipt and findings-validation execution lineage', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-execution-lineage-'));
+            const taskId = 'T-992-required-review-execution-lineage';
+            const reviewType = 'code';
+            const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+            const preflight: Record<string, unknown> = {
+                task_id: taskId,
+                detection_source: 'git_auto',
+                include_untracked: true,
+                scope_category: 'code',
+                changed_files: ['src/example.ts'],
+                required_reviews: { code: true },
+                metrics: {
+                    scope_sha256: 'd'.repeat(64),
+                    changed_files_sha256: 'e'.repeat(64),
+                    scope_content_sha256: 'f'.repeat(64)
+                }
+            };
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.writeFileSync(preflightPath, `${JSON.stringify(preflight, null, 2)}\n`, 'utf8');
+
+            try {
+                let reviewPackage = writeSchema4ReviewPackage({
+                    reviewsRoot,
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    preflightPath,
+                    preflight
+                });
+                const validateReceipt = (receipt: typeof reviewPackage.receipt) =>
+                    validateReviewArtifactGateEligibility({
+                        resolvedTaskId: taskId,
+                        reviewKey: reviewType,
+                        required: true,
+                        skippedByOverride: false,
+                        preflightPath,
+                        preflightSha256: String(reviewPackage.context.preflight_sha256),
+                        preflightPayload: preflight,
+                        reviewArtifact: {
+                            path: reviewPackage.artifactPath,
+                            content: fs.readFileSync(reviewPackage.artifactPath, 'utf8'),
+                            reviewContextPath: reviewPackage.contextPath,
+                            reviewContext: reviewPackage.context,
+                            reviewContextSha256: reviewPackage.contextSha256,
+                            artifactSha256: reviewPackage.artifactSha256,
+                            receipt
+                        },
+                        canonicalSourceOfTruth: 'Codex',
+                        executionProvider: 'Codex',
+                        executionProviderSource: 'explicit_provider',
+                        requireFindingsDispositionEvidence: false
+                    });
+                const exact = validateReceipt(reviewPackage.receipt);
+                assert.equal(exact.receiptValid, true, exact.violations.join('\n'));
+
+                const staleReceipt = JSON.parse(JSON.stringify(reviewPackage.receipt)) as typeof reviewPackage.receipt & Record<string, unknown>;
+                delete staleReceipt.review_execution_complete_scope_lineage_sha256;
+                const missingLineage = validateReceipt(staleReceipt);
+                assert.equal(missingLineage.receiptValid, false);
+                assert.ok(missingLineage.violations.some((violation) =>
+                    violation.includes('review receipt is missing valid review_execution_complete_scope_lineage_sha256')
+                ));
+
+                reviewPackage = writeSchema4ReviewPackage({
+                    reviewsRoot,
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    preflightPath,
+                    preflight
+                });
+                const staleValidationReceipt = rewriteValidationExecutionBinding({
+                    reviewPackage,
+                    field: 'review_execution_finding_reconciliation_sha256',
+                    value: '9'.repeat(64)
+                });
+                const staleValidation = validateReceipt(staleValidationReceipt);
+                assert.ok(staleValidation.violations.some((violation) =>
+                    violation.includes('review findings validation artifact execution binding')
+                    && violation.includes('review_execution_finding_reconciliation_sha256')
+                ));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
         });
     });
 

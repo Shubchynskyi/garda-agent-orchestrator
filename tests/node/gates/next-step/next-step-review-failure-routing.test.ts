@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -6,6 +6,15 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import type { EffectiveReviewExecutionPolicyMode } from '../../../../src/core/review-execution-policy';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 import { resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
@@ -55,10 +64,19 @@ import {
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse/review-reuse';
 import { resolveReviewCoverageChangedFiles } from '../../../../src/gates/review-context/review-coverage-scope';
+import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import {
+    buildReviewOutputCorrectionArtifact,
+    persistReviewOutputCorrection
+} from '../../../../src/gates/review/review-output-correction';
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 const nodeRequire = createRequire(__filename);
+const DEFAULT_APP_SOURCE = 'export const value = 1;\n';
+const PREFLIGHT_CHANGED_APP_SOURCE = 'export const value = 1;\n// Review routing fixture change.\n';
+const FOCUSED_COMMAND_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
 
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -73,11 +91,9 @@ const ALL_REVIEW_FLAGS = Object.freeze({
 });
 
 let tempRoots: string[] = [];
+let sharedRepoTemplateRoot: string | null = null;
 
-
-function makeTempRepo(): string {
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-'));
-    tempRoots.push(repoRoot);
+function populateTempRepo(repoRoot: string): void {
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
@@ -94,7 +110,7 @@ function makeTempRepo(): string {
         `| ${TASK_ID} | TODO | P1 | ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |`,
         ''
     ].join('\n'), 'utf8');
-    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), DEFAULT_APP_SOURCE, 'utf8');
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
         SourceOfTruth: 'Codex'
     });
@@ -122,6 +138,27 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                task_decomposition: { enabled: false },
+                review_policy: { code: 'auto', test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -145,6 +182,25 @@ function makeTempRepo(): string {
         ].join('\n'),
         'utf8'
     );
+}
+
+function getSharedRepoTemplateRoot(): string {
+    if (sharedRepoTemplateRoot) {
+        return sharedRepoTemplateRoot;
+    }
+    sharedRepoTemplateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-template-'));
+    populateTempRepo(sharedRepoTemplateRoot);
+    seedRunnableFocusedIntermediateCommand(sharedRepoTemplateRoot, { markTestChanged: false });
+    initGitRepo(sharedRepoTemplateRoot, {
+        gitignoreContent: 'TASK.md\ngarda-agent-orchestrator/runtime/\n'
+    });
+    return sharedRepoTemplateRoot;
+}
+
+function makeTempRepo(): string {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-'));
+    fs.cpSync(getSharedRepoTemplateRoot(), repoRoot, { recursive: true });
+    tempRoots.push(repoRoot);
     return repoRoot;
 }
 
@@ -238,7 +294,19 @@ function appendEvent(
 }
 
 function seedStartedTask(repoRoot: string, taskId: string): void {
-    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        'balanced',
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    writeJson(taskModePath, buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
         requestedDepth: 2,
@@ -248,14 +316,40 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
         executionProviderSource: 'explicit_provider',
-        runtimeIdentityStatus: 'resolved'
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: 'balanced',
+        profileSelectionSource: 'task_queue',
+        activeProfile: 'balanced',
+        profileSource: 'built_in',
+        runtimeActiveProfile: 'balanced',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
     }));
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
-    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
-    seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
+    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', buildTaskModeTimelineDetails(
+        taskModePath,
+        profilePolicySnapshot
+    ));
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function buildTaskModeTimelineDetails(
+    taskModePath: string,
+    profilePolicySnapshot: TaskProfilePolicySnapshot
+): Record<string, unknown> {
+    return {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    };
 }
 
 
@@ -324,7 +418,7 @@ function writePreflight(
     requiredReviews: Record<string, boolean>,
     options: {
         seedPostPreflight?: boolean;
-        reviewPolicyMode?: string;
+        reviewPolicyMode?: EffectiveReviewExecutionPolicyMode;
         reviewFindingPolicy?: {
             schema_version: 1;
             policy_id: 'soft' | 'balanced' | 'strict' | 'custom';
@@ -340,12 +434,31 @@ function writePreflight(
             schema_version: 1;
             materialization_mode: 'per_finding' | 'grouped_by_parent';
         };
+        reviewFollowUpTaskClosurePolicy?: {
+            schema_version: 1;
+            eligible: boolean;
+            configured: boolean;
+            valid: boolean;
+            provenance: 'per_finding' | 'grouped_by_parent' | null;
+            source_notes_sha256: string | null;
+            skip_low_findings: boolean;
+            forbid_child_tasks: boolean;
+            diagnostics: string[];
+        };
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
     } = {}
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const changedFiles = options.changedFiles || ['src/app.ts'];
+    const appPath = path.join(repoRoot, 'src', 'app.ts');
+    if (
+        changedFiles.includes('src/app.ts')
+        && fs.existsSync(appPath)
+        && fs.readFileSync(appPath, 'utf8') === DEFAULT_APP_SOURCE
+    ) {
+        fs.writeFileSync(appPath, PREFLIGHT_CHANGED_APP_SOURCE, 'utf8');
+    }
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
     const domainScopeFingerprints = options.includeDomainScopeFingerprints
         ? buildDomainScopeFingerprints({
@@ -356,6 +469,37 @@ function writePreflight(
         })
         : null;
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
+    const catalog = normalizeReviewCatalog(
+        { version: 1, custom_review_types: [] },
+        { knownSkillIds: [] }
+    );
+    const taskMode = JSON.parse(
+        fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8')
+    ) as Record<string, unknown>;
+    const frozenProfileSnapshot = taskMode.profile_policy_snapshot as TaskProfilePolicySnapshot;
+    const profilePolicy = resolveProfileReviewCatalogPolicy(
+        frozenProfileSnapshot.source.effective_profile,
+        frozenProfileSnapshot.review_lane_selection.profile_review_policy,
+        frozenProfileSnapshot.review_lane_selection.review_capabilities as ReviewCapabilitiesConfigMap,
+        catalog
+    );
+    const effectiveReviewSnapshot = buildEffectiveReviewSnapshot({
+        catalog,
+        profilePolicy,
+        profileSnapshotSha256: frozenProfileSnapshot.snapshot_hash,
+        legacyRequiredReviews: requiredReviews,
+        scopeCategory: 'code',
+        taskIntent: 'Exercise failed review routing',
+        changedFiles,
+        taskTriggers: {},
+        reviewExecutionPolicyMode: reviewPolicyMode,
+        reviewDependencyGraph: null,
+        fullSuiteValidation: {
+            enabled: false,
+            placement: 'after_compile_before_reviews'
+        },
+        includeDependencyGraph: true
+    });
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -370,28 +514,36 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
-        ...(options.reviewFindingPolicy || options.reviewFollowUpPolicy
-            ? {
-                profile_policy_snapshot: {
-                    ...(options.reviewFindingPolicy
-                        ? { review_finding_policy: options.reviewFindingPolicy }
-                        : {}),
-                    ...(options.reviewFollowUpPolicy
-                        ? { review_follow_up_policy: options.reviewFollowUpPolicy }
-                        : {})
-                }
-            }
-            : {}),
+        profile_policy_snapshot: {
+            snapshot_hash: frozenProfileSnapshot.snapshot_hash,
+            ...(options.reviewFindingPolicy
+                ? { review_finding_policy: options.reviewFindingPolicy }
+                : {}),
+            ...(options.reviewFollowUpPolicy
+                ? { review_follow_up_policy: options.reviewFollowUpPolicy }
+                : {}),
+            ...(options.reviewFollowUpTaskClosurePolicy
+                ? { review_follow_up_task_closure_policy: options.reviewFollowUpTaskClosurePolicy }
+                : {})
+        },
         review_execution_policy: {
             mode: reviewPolicyMode,
-            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
-        }
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`,
+            dependency_graph: effectiveReviewSnapshot.review_dependency_graph
+        },
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: effectiveReviewSnapshot
     });
     if (options.seedPostPreflight !== false) {
-        seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        seedPostPreflightRulePack(
+            repoRoot,
+            taskId,
+            preflightPath,
+            path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`)
+        );
     }
     return preflightPath;
 }
@@ -505,6 +657,12 @@ function writeReviewEvidence(
         reviewType,
         changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
     });
+    const reviewExecution = buildReviewRemediationReviewContract({
+        taskId,
+        reviewType,
+        preflightSha256: fileSha256(preflightPath),
+        fullReviewScope: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
+    });
     const reviewContext = {
         ...(options.contextSchemaVersion
             ? { schema_version: options.contextSchemaVersion }
@@ -515,6 +673,9 @@ function writeReviewEvidence(
         preflight_sha256: fileSha256(preflightPath),
         ...reviewContextScope,
         coverage_contract: coverageContract,
+        ...(Number(options.contextSchemaVersion || 0) >= 4
+            ? { review_execution: reviewExecution }
+            : {}),
         reviewer_routing: {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -695,6 +856,23 @@ function writeReviewEvidence(
     });
 }
 
+function resolveReviewExecutionFixture(reviewContext: Record<string, unknown>) {
+    const contract = reviewContext.review_execution as ReturnType<typeof buildReviewRemediationReviewContract>;
+    assert.ok(contract, 'Fixture review context must include review_execution.');
+    const evidence = resolveReviewContextExecutionEvidenceBindings(reviewContext);
+    assert.ok(evidence.bindings, evidence.violations.join('\n'));
+    return {
+        contract,
+        bindings: evidence.bindings,
+        declaration: {
+            mode: contract.mode,
+            contract_sha256: contract.contract_sha256,
+            covered_delta_targets: contract.delta?.required_delta_targets || [],
+            inspected_prior_finding_ids: contract.finding_reconciliation.resolvable_finding_ids
+        }
+    };
+}
+
 function writeJsonFocusedValidationReviewEvidence(
     repoRoot: string,
     taskId: string,
@@ -706,7 +884,7 @@ function writeJsonFocusedValidationReviewEvidence(
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'fail',
-        contextSchemaVersion: 3
+        contextSchemaVersion: 4
     });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
@@ -715,6 +893,7 @@ function writeJsonFocusedValidationReviewEvidence(
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveReviewExecutionFixture(reviewContext);
     assert.ok(coverageContract?.obligations?.length, 'fixture coverage contract must have obligations');
     const primaryObligation = coverageContract.obligations[0];
     const evidence = {
@@ -724,7 +903,7 @@ function writeJsonFocusedValidationReviewEvidence(
     const marker = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
     const markerField = options.markerField ?? 'title';
     const report = {
-        schema_version: 1,
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         review_context_sha256: fileSha256(reviewContextPath),
@@ -749,6 +928,7 @@ function writeJsonFocusedValidationReviewEvidence(
                 finding_ids: index === 0 ? ['F-000'] : []
             }))
         },
+        review_execution: reviewExecution.declaration,
         findings: {
             critical: [],
             high: [],
@@ -782,6 +962,7 @@ function writeJsonFocusedValidationReviewEvidence(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256,
         coverageContract,
+        expectedReviewExecutionContract: reviewExecution.contract,
         repoRoot
     });
     assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
@@ -818,6 +999,7 @@ function writeJsonFocusedValidationReviewEvidence(
     receipt.review_output_schema_version = findingsValidation.report?.schema_version ?? null;
     receipt.review_findings_report_sha256 = findingsValidation.report ? sha256Json(findingsValidation.report) : null;
     receipt.review_findings_report = findingsValidation.report;
+    Object.assign(receipt, reviewExecution.bindings);
     receipt.scope_sha256 = scopeSha256;
     receipt.review_scope_sha256 = reviewScopeSha256;
     receipt.code_scope_sha256 = codeScopeSha256;
@@ -841,6 +1023,7 @@ function writeJsonFocusedValidationReviewEvidence(
         review_artifact_sha256: artifactSha256,
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
+        ...reviewExecution.bindings,
         coverage_contract_sha256: coverageContract.contract_sha256,
         reviewer_identity: `agent:${reviewType}-reviewer`,
         reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
@@ -851,11 +1034,15 @@ function writeJsonFocusedValidationReviewEvidence(
 function writeRejectedFindingsValidationReviewEvidence(
     repoRoot: string,
     taskId: string,
-    reviewType: string
+    reviewType: string,
+    options: {
+        preserveStaleReceipt?: boolean;
+        apiCorrectionProviderInvocationId?: string;
+    } = {}
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
-        contextSchemaVersion: 3
+        contextSchemaVersion: 4
     });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
@@ -864,12 +1051,13 @@ function writeRejectedFindingsValidationReviewEvidence(
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveReviewExecutionFixture(reviewContext);
     const reviewContextSha256 = fileSha256(reviewContextPath);
     const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
     const metrics = preflight.metrics as Record<string, unknown> | undefined;
     const scopeSha256 = String(metrics?.scope_sha256 || metrics?.changed_files_sha256 || '').trim().toLowerCase() || null;
     const artifactText = `${JSON.stringify({
-        schema_version: 1,
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         review_context_sha256: reviewContextSha256,
@@ -886,6 +1074,7 @@ function writeRejectedFindingsValidationReviewEvidence(
                 finding_ids: []
             }]
         },
+        review_execution: reviewExecution.declaration,
         findings: { critical: [], high: [], medium: [], low: [] },
         residual_risks: [],
         reviewer_notes: []
@@ -898,6 +1087,7 @@ function writeRejectedFindingsValidationReviewEvidence(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256,
         coverageContract,
+        expectedReviewExecutionContract: reviewExecution.contract,
         repoRoot
     });
     assert.equal(validation.valid, false);
@@ -920,18 +1110,72 @@ function writeRejectedFindingsValidationReviewEvidence(
         coverageContract
     });
     writeJson(validationArtifactPath, validationArtifact);
-    fs.rmSync(receiptPath, { force: true });
+    const launchArtifactPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'tmp',
+        'reviews',
+        taskId,
+        reviewType,
+        'reviewer-launch.json'
+    );
+    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const reviewerInvocationEventSha256 = String(
+        (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 || ''
+    ).trim().toLowerCase();
+    assert.match(reviewerInvocationEventSha256, /^[0-9a-f]{64}$/u);
+    const correctionArtifact = buildReviewOutputCorrectionArtifact({
+        taskId,
+        reviewType,
+        rejectedOutputPath: artifactPath,
+        rejectedOutputSha256: fileSha256(artifactPath),
+        reviewContextPath,
+        reviewContextSha256,
+        reviewTreeStateSha256,
+        reviewerIdentity: String(launchArtifact.reviewer_identity || 'agent:code-reviewer'),
+        reviewerAttemptId: String(
+            launchArtifact.reviewer_launch_attempt_id
+            || launchArtifact.provider_invocation_id
+            || 'fixture-correction-attempt'
+        ),
+        reviewerInvocationEventSha256,
+        validationArtifactPath,
+        validationArtifactSha256: fileSha256(validationArtifactPath),
+        violations: validation.violations,
+        capabilities: {
+            live_reviewer_continuation: !options.apiCorrectionProviderInvocationId,
+            api_conversation_continuation: Boolean(options.apiCorrectionProviderInvocationId),
+            correction_only_invocation: true
+        },
+        providerId: options.apiCorrectionProviderInvocationId ? 'Codex' : null,
+        providerInvocationId: options.apiCorrectionProviderInvocationId || null,
+        sessionAvailability: options.apiCorrectionProviderInvocationId ? 'pending' : undefined
+    });
+    persistReviewOutputCorrection({
+        repoRoot,
+        reviewArtifactPath: artifactPath,
+        rawOutput: artifactText,
+        artifact: correctionArtifact
+    });
+    if (!options.preserveStaleReceipt) {
+        fs.rmSync(receiptPath, { force: true });
+    }
 }
 
 function writeAcceptedFindingsDispositionReviewEvidence(
     repoRoot: string,
     taskId: string,
     reviewType: string,
-    options: { followUpFindingCount?: number } = {}
+    options: {
+        findingSeverity?: 'medium' | 'low';
+        followUpFindingCount?: number;
+    } = {}
 ): void {
     writeReviewEvidence(repoRoot, taskId, reviewType, {
         verdict: 'pass',
-        contextSchemaVersion: 3
+        contextSchemaVersion: 4
     });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
@@ -940,6 +1184,8 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewExecution = resolveReviewExecutionFixture(reviewContext);
+    const findingSeverity = options.findingSeverity ?? 'medium';
     const followUpFindingCount = options.followUpFindingCount ?? 1;
     const followUpFindingIds = Array.from({ length: followUpFindingCount }, (_, index) => `F-${String(index + 1).padStart(3, '0')}`);
     const followUpFindings = followUpFindingIds.map((findingId, index) => {
@@ -958,7 +1204,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     const reviewContextSha256 = fileSha256(reviewContextPath);
     const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
     const artifactText = `${JSON.stringify({
-        schema_version: 1,
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         review_context_sha256: reviewContextSha256,
@@ -983,11 +1229,12 @@ function writeAcceptedFindingsDispositionReviewEvidence(
                 finding_ids: followUpFindingIds[index] ? [followUpFindingIds[index]] : []
             }))
         },
+        review_execution: reviewExecution.declaration,
         findings: {
             critical: [],
             high: [],
-            medium: followUpFindings,
-            low: []
+            medium: findingSeverity === 'medium' ? followUpFindings : [],
+            low: findingSeverity === 'low' ? followUpFindings : []
         },
         residual_risks: [],
         reviewer_notes: []
@@ -1005,6 +1252,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256,
         coverageContract,
+        expectedReviewExecutionContract: reviewExecution.contract,
         repoRoot
     });
     assert.equal(validation.valid, true, validation.violations.join('\n'));
@@ -1058,6 +1306,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
     receipt.review_output_schema_version = validation.report?.schema_version ?? null;
     receipt.review_findings_report_sha256 = validation.report ? sha256Json(validation.report) : null;
     receipt.review_findings_report = validation.report;
+    Object.assign(receipt, reviewExecution.bindings);
     receipt.scope_sha256 = scopeSha256;
     receipt.review_scope_sha256 = reviewScopeSha256;
     receipt.code_scope_sha256 = codeScopeSha256;
@@ -1098,6 +1347,7 @@ function writeAcceptedFindingsDispositionReviewEvidence(
         review_artifact_sha256: artifactSha256,
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
+        ...reviewExecution.bindings,
         coverage_contract_sha256: coverageContract.contract_sha256,
         reviewer_identity: `agent:${reviewType}-reviewer`,
         reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
@@ -1180,13 +1430,22 @@ function writeFocusedIntermediateEvidence(
     }
 }
 
-function seedRunnableFocusedIntermediateCommand(repoRoot: string): void {
+function seedRunnableFocusedIntermediateCommand(
+    repoRoot: string,
+    options: { markTestChanged?: boolean } = {}
+): void {
     const scriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
     const npmTestScriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'npm-focused-test.cjs');
     const testPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-evidence.test.ts');
     fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
     fs.mkdirSync(path.dirname(testPath), { recursive: true });
-    fs.writeFileSync(testPath, 'export {};\n', 'utf8');
+    fs.writeFileSync(
+        testPath,
+        options.markTestChanged === false
+            ? 'export {};\n'
+            : 'export {};\n// Focused evidence fixture change.\n',
+        'utf8'
+    );
     fs.writeFileSync(
         scriptPath,
         [
@@ -1235,15 +1494,19 @@ function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<
 
 
 
-afterEach(() => {
+after(() => {
     for (const tempRoot of tempRoots) {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
     tempRoots = [];
+    if (sharedRepoTemplateRoot) {
+        fs.rmSync(sharedRepoTemplateRoot, { recursive: true, force: true });
+        sharedRepoTemplateRoot = null;
+    }
 });
 
 
-describe('gates/next-step', () => {
+describe('gates/next-step', { concurrency: 2 }, () => {
     it('routes back to failed code remediation instead of independent review lanes after a current failed code review', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -1287,14 +1550,103 @@ describe('gates/next-step', () => {
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
-        assert.match(result.title, /Correct rejected 'code' review findings report/);
-        assert.match(result.reason, /System validation rejected/);
-        assert.match(result.reason, /not an implementation defect/);
+        assert.match(result.title, /Execute the bound 'code' correction handoff/);
+        assert.match(result.reason, /provider tools before running the command/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
         assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.ok(result.commands[0].command.includes('--correction-provider-invocation-id'));
+        assert.ok(result.commands[0].command.includes('--correction-provider-invocation-event-sha256'));
+        assert.ok(result.commands[0].command.includes('--correction-attestation-source'));
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.ok(!result.commands[0].command.includes('compile-gate'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('routes current rejected validation to correction when an older receipt still exists', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code', {
+            preserveStaleReceipt: true
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.match(result.title, /Execute the bound 'code' correction handoff/);
+        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
+    });
+
+    it('rejects a correction transport provider invocation that is not bound to the authenticated reviewer event', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code', {
+            apiCorrectionProviderInvocationId: 'forged-provider-invocation'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restart-review-cycle');
+        assert.match(result.reason, /cannot safely continue|provenance or semantic binding is unavailable/u);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(result.commands[0].command.includes('--review-evidence-only'));
+        assert.equal(result.commands[0].command.includes('--changed-file'), false);
+        assert.equal(result.commands[0].command.includes('forged-provider-invocation'), false);
+        assert.equal(result.commands[0].command.includes('record-review-output-correction-transport'), false);
+    });
+
+    it('routes an authenticated correction transport through the bound reviewer invocation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code', {
+            apiCorrectionProviderInvocationId: 'test-code-invocation'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-output-correction-transport');
+        assert.match(result.commands[0].command, /record-review-output-correction-transport/u);
+        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.ok(result.commands[0].command.includes('--provider-invocation-id "test-code-invocation"'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
+    });
+
+    it('preserves passed upstream reviews while correcting a rejected downstream report', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code', {
+            followUpFindingCount: 0
+        });
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'security', {
+            followUpFindingCount: 0
+        });
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'refactor');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.review.next_review_type, 'refactor');
+        assert.match(result.title, /Execute the bound 'refactor' correction handoff/);
+        assert.ok(result.commands[0].command.includes('--review-type "refactor"'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
+        assert.equal(result.commands[0].command.includes('build-review-context'), false);
     });
 
     it('routes terminalized findings validation failure back to correction when the completed attempt is authenticated', () => {
@@ -1394,9 +1746,9 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-review-result');
-        assert.match(result.title, /Correct rejected 'code' review findings report/);
-        assert.match(result.reason, /not an implementation defect/);
+        assert.match(result.title, /Execute the bound 'code' correction handoff/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
+        assert.equal(result.commands[0].command.includes('--correction-attestation-source'), true);
         assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.match(failureIntegrity.event_sha256, /^[0-9a-f]{64}$/);
@@ -1411,7 +1763,7 @@ describe('gates/next-step', () => {
 
         fs.writeFileSync(validationArtifactPath, validationArtifactContent);
         const restoredValidationResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.match(restoredValidationResult.title, /Correct rejected 'code' review findings report/);
+        assert.match(restoredValidationResult.title, /Execute the bound 'code' correction handoff/);
 
         const timelineLines = fs.readFileSync(timelinePath, 'utf8').trim().split(/\r?\n/);
         const lastEvent = JSON.parse(timelineLines[timelineLines.length - 1]) as Record<string, unknown>;
@@ -1555,6 +1907,112 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
     });
 
+    it('routes forbid-child closure findings to current-task remediation instead of descendant materialization', () => {
+        const taskId = `${TASK_ID}-F1`;
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, taskId);
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            reviewFollowUpTaskClosurePolicy: {
+                schema_version: 1,
+                eligible: true,
+                configured: true,
+                valid: true,
+                provenance: 'per_finding',
+                source_notes_sha256: 'a'.repeat(64),
+                skip_low_findings: false,
+                forbid_child_tasks: true,
+                diagnostics: ['Frozen from explicit per_finding task metadata.']
+            }
+        });
+        seedCompilePass(repoRoot, taskId);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, taskId, 'code');
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            taskId,
+            'code',
+            preflightPath,
+            fileSha256(preflightPath),
+            JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.fix_now, 1);
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 0);
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.match(result.title, /Fix failed 'code' review findings/u);
+        assert.doesNotMatch(result.title, /follow-up tasks/iu);
+    });
+
+    it('routes skip-low closure findings as explicitly ignored without blockers or follow-ups', () => {
+        const taskId = `${TASK_ID}-F1`;
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, taskId);
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            reviewFollowUpTaskClosurePolicy: {
+                schema_version: 1,
+                eligible: true,
+                configured: true,
+                valid: true,
+                provenance: 'per_finding',
+                source_notes_sha256: 'b'.repeat(64),
+                skip_low_findings: true,
+                forbid_child_tasks: true,
+                diagnostics: ['Frozen from explicit per_finding task metadata.']
+            }
+        });
+        seedCompilePass(repoRoot, taskId);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, taskId, 'code', {
+            findingSeverity: 'low'
+        });
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            taskId,
+            'code',
+            preflightPath,
+            fileSha256(preflightPath),
+            JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.ignore, 1);
+        assert.equal(state.reviewFindingsDisposition?.blocking_count, 0);
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 0);
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.notEqual(result.next_gate, 'implementation');
+        assert.notEqual(result.next_gate, 'materialize-review-follow-up-tasks');
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'security');
+    });
+
     it('routes accepted create_follow_up dispositions to follow-up task materialization before downstream reviews', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -1604,6 +2062,37 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--receipt-path'));
         assert.ok(result.commands[0].command.includes('--artifact-path'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('blocks accepted deferred receipt source drift before ordinary classify-change recovery', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-review-source-mutation-guard', result.reason);
+        assert.match(result.title, /Stop unauthorized post-review source mutation/);
+        assert.match(result.reason, /domain\(s\) implementation/);
+        assert.match(result.reason, /Do not normalize these changes through classify-change/);
+        assert.deepEqual(result.commands, []);
     });
 
     it('defers grouped follow-up materialization until every required review lane is satisfied', () => {
@@ -2325,6 +2814,7 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /Do not add task-scoped runtime\/manual-validation files to preflight --changed-file scope/);
         assert.equal(result.commands[0].label, 'Restart review cycle after manual-validation evidence refresh');
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('runtime/manual-validation'));
         assert.ok(!result.commands[0].command.includes('--changed-file'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));
@@ -2362,7 +2852,7 @@ describe('gates/next-step', () => {
                 command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
                 preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
                 coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-                timeoutMs: 60_000
+                timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
             });
             assert.equal(commandResult.exitCode, 0);
 
@@ -2382,7 +2872,7 @@ describe('gates/next-step', () => {
         const requiredTestPath = 'tests/node/gates/focused-evidence.test.ts';
         const focusedFinding = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
         seedStartedTask(repoRoot, TASK_ID);
-        seedRunnableFocusedIntermediateCommand(repoRoot);
+        seedRunnableFocusedIntermediateCommand(repoRoot, { markTestChanged: false });
         fs.writeFileSync(path.join(repoRoot, 'src', 'focused-remediation.ts'), 'export const focusedRemediation = true;\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/focused-remediation.ts']
@@ -2406,7 +2896,7 @@ describe('gates/next-step', () => {
             command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
             preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
             coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-            timeoutMs: 60_000
+            timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
         });
         assert.equal(commandResult.exitCode, 0);
 
@@ -2436,7 +2926,7 @@ describe('gates/next-step', () => {
                 command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
                 preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
                 coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-                timeoutMs: 60_000
+                timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
             });
             assert.equal(commandResult.exitCode, 0, markerField);
 
@@ -2481,7 +2971,7 @@ describe('gates/next-step', () => {
                 command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
                 preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
                 coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-                timeoutMs: 60_000
+                timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
             });
             assert.equal(commandResult.exitCode, 0);
 
@@ -2519,7 +3009,7 @@ describe('gates/next-step', () => {
             command: 'npm test -- tests/node/gates/focused-evidence.test.ts',
             preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
             coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-            timeoutMs: 60_000
+            timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
         });
         assert.equal(commandResult.exitCode, 0);
 
@@ -2560,7 +3050,7 @@ describe('gates/next-step', () => {
             outputPath: path.join(customEvidenceRoot, 'focused-command.log'),
             preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
             coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
-            timeoutMs: 60_000
+            timeoutMs: FOCUSED_COMMAND_TIMEOUT_MS
         });
         assert.equal(commandResult.exitCode, 0);
 
@@ -2729,7 +3219,7 @@ describe('gates/next-step', () => {
         seedStartedTask(repoRoot, TASK_ID);
         const focusedTestPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-evidence.test.ts');
         fs.mkdirSync(path.dirname(focusedTestPath), { recursive: true });
-        fs.writeFileSync(focusedTestPath, 'export {};\n', 'utf8');
+        fs.writeFileSync(focusedTestPath, 'export {};\n// Focused evidence fixture change.\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['tests/node/gates/focused-evidence.test.ts']
         });
@@ -3174,6 +3664,7 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /cheapest valid recovery path/);
         assert.match(result.reason, /before refreshing preflight/);
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(result.commands[0].command.includes(`--preflight-path "garda-agent-orchestrator/runtime/reviews/${TASK_ID}-preflight.json"`));
         assert.ok(result.commands[0].command.includes('--impact-analysis'));
         assert.ok(!result.commands[0].command.includes('gate classify-change'));

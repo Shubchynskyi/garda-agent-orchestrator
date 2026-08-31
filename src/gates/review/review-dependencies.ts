@@ -9,11 +9,18 @@ import {
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
+import {
+    resolveCompiledReviewDependencyGraphFromPreflight,
+    type CompiledReviewDependencyGraph
+} from '../../core/review-dependency-graph';
 import * as gateHelpers from '../shared/helpers';
 import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from '../required-reviews/required-reviews-check';
 import { resolveCanonicalReviewContextPath } from '../review-context/review-context-paths';
 import {
+    jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation,
+    jsonReviewFindingsArtifactHasActiveFindings,
+    parseJsonReviewFindingsArtifact,
     reviewContextRequiresFindingsOnlyArtifact,
     resolveReviewFindingsArtifactVerdictToken
 } from './review-findings-artifact-verdict';
@@ -67,26 +74,44 @@ export function normalizeRequiredReviewRecord(value: unknown): Record<string, bo
 export function getReviewDependencyTypes(
     reviewType: string,
     requiredReviewRecord: Record<string, boolean>,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
-    return getReviewExecutionDependencies(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
+    return getReviewExecutionDependencies(
+        reviewType,
+        requiredReviewRecord,
+        reviewExecutionPolicyMode,
+        dependencyGraph
+    );
 }
 
 export function getRequiredUpstreamReviewsFromRecord(
     reviewType: string,
     requiredReviewRecord: Record<string, boolean>,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
-    return getReviewDependencyTypes(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
+    return getReviewDependencyTypes(
+        reviewType,
+        requiredReviewRecord,
+        reviewExecutionPolicyMode,
+        dependencyGraph
+    );
 }
 
 export function getRequiredUpstreamReviews(
     reviewType: string,
     requiredReviews: unknown,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
     const requiredReviewRecord = normalizeRequiredReviewRecord(requiredReviews);
-    return getRequiredUpstreamReviewsFromRecord(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
+    return getRequiredUpstreamReviewsFromRecord(
+        reviewType,
+        requiredReviewRecord,
+        reviewExecutionPolicyMode,
+        dependencyGraph
+    );
 }
 
 function findLatestTimelineSequence(
@@ -310,7 +335,32 @@ export function assessUpstreamReviewDependencyStatus(options: {
     const failToken = resolveReviewFailToken(options.upstreamReviewType);
     const reviewContextSha256 = String(gateHelpers.fileSha256(reviewContextPath) || '').trim().toLowerCase() || null;
     const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
-    if (!requiresFindingsOnlyArtifact) {
+    if (requiresFindingsOnlyArtifact) {
+        const findingsReport = parseJsonReviewFindingsArtifact(
+            artifactContent,
+            undefined,
+            reviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+        );
+        if (!findingsReport) {
+            return blockedDependencyStatus(
+                options.upstreamReviewType,
+                'missing_upstream_pass',
+                `review artifact verdict is 'missing' instead of '${passToken || 'unknown'}'`
+            );
+        }
+        if (
+            failToken
+            && jsonReviewFindingsArtifactHasActiveFindings(findingsReport)
+            && !jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation(findingsReport)
+        ) {
+            return blockedDependencyStatus(
+                options.upstreamReviewType,
+                'missing_upstream_pass',
+                `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
+                `'${options.upstreamReviewType}' review before launching dependent reviews`
+            );
+        }
+    } else {
         const reviewVerdict = resolveReviewFindingsArtifactVerdictToken({
             content: artifactContent,
             passToken,
@@ -415,10 +465,15 @@ export function buildReviewDependencyDiagnostics(options: {
     runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
 }): ReviewDependencyDiagnostics {
     const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(options.preflightPayload);
+    const dependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+        options.preflightPayload,
+        reviewExecutionPolicyMode
+    );
     const upstreamReviewTypes = getRequiredUpstreamReviews(
         options.reviewType,
         options.preflightPayload.required_reviews,
-        reviewExecutionPolicyMode
+        reviewExecutionPolicyMode,
+        dependencyGraph
     );
     if (upstreamReviewTypes.length === 0) {
         return {

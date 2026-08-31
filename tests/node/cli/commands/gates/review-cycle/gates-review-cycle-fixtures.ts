@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
+import { buildBuiltInReviewTypeDefinitions } from '../../../../../../src/core/review-catalog';
 import { readTimelineEventsSummary, runBuildReviewContextCommand } from '../../../../../../src/cli/commands/gate-build-handlers';
 import {
     runCompileGateCommand,
@@ -210,7 +211,8 @@ function writeProfilesConfig(repoRoot: string): string {
                     materialization_mode: 'grouped_by_parent'
                 },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
-                skills: { auto_suggest: true }
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
             },
             strict: {
                 depth: 3,
@@ -231,7 +233,8 @@ function writeProfilesConfig(repoRoot: string): string {
                     materialization_mode: 'per_finding'
                 },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
-                skills: { auto_suggest: true }
+                skills: { auto_suggest: true },
+                task_decomposition: { enabled: false }
             }
         },
         user_profiles: {}
@@ -370,6 +373,11 @@ function seedRemediationRepoBase(repoRoot: string): void {
     );
     fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+    for (const skillId of new Set(buildBuiltInReviewTypeDefinitions().flatMap((definition) => definition.skill_ids))) {
+        const skillRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'skills', skillId);
+        fs.mkdirSync(skillRoot, { recursive: true });
+        fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), `# ${skillId}\n\nReview fixture entrypoint.\n`, 'utf8');
+    }
     fs.writeFileSync(
         path.join(repoRoot, TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH),
         "test('rejects replaced trust-boundary evidence', () => { assert.equal(true, true); });\n",

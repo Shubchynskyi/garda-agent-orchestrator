@@ -30,6 +30,7 @@ export interface NextStepReadinessArtifactPaths {
     docImpactPath: string;
     fullSuiteValidationPath: string;
     completionGatePath: string;
+    semanticCycleRebindPath: string;
     finalCloseoutJsonPath: string;
     finalCloseoutMarkdownPath: string;
 }
@@ -61,6 +62,7 @@ export function readNextStepReadinessArtifacts(params: {
         docImpactPath: path.join(params.reviewsRoot, `${params.taskId}-doc-impact.json`),
         fullSuiteValidationPath: path.join(params.reviewsRoot, `${params.taskId}-full-suite-validation.json`),
         completionGatePath: path.join(params.reviewsRoot, `${params.taskId}-completion-gate.json`),
+        semanticCycleRebindPath: path.join(params.reviewsRoot, `${params.taskId}-semantic-cycle-rebind.json`),
         finalCloseoutJsonPath: path.join(params.reviewsRoot, `${params.taskId}-final-closeout.json`),
         finalCloseoutMarkdownPath: path.join(params.reviewsRoot, `${params.taskId}-final-closeout.md`)
     };

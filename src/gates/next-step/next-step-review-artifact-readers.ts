@@ -21,6 +21,10 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../review-remediation/review-remediation-execution-authority';
 import {
     getReviewContextFullSuiteValidationViolations
 } from '../review-context/review-context-validation-evidence';
@@ -72,6 +76,12 @@ import {
 } from './next-step-review-artifact-failure-detection';
 import { isPlainRecord } from '../../core/records';
 import type { ReviewFollowUpMaterializationMode } from '../../policy/profile-resolver';
+import {
+    getReviewOutputCorrectionArtifactPath,
+    getReviewOutputCorrectionLaunchArtifactPath,
+    readReviewOutputCorrectionArtifact
+} from '../review/review-output-correction';
+import { readTaskTimelineEventLikes } from './next-step-review-timeline-evidence';
 
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
 const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(
@@ -92,6 +102,7 @@ export interface ReviewArtifactState {
     contextCurrent: boolean;
     artifactExists: boolean;
     receiptExists: boolean;
+    receiptContractCurrent?: boolean;
     passToken: string;
     failToken: string;
     verdictToken: string | null;
@@ -102,12 +113,26 @@ export interface ReviewArtifactState {
         | 'missing-validation-evidence'
         | 'stale-validation-evidence'
         | 'review-validation-rejected'
+        | 'review-correction-transport-selection-required'
+        | 'review-correction-full-review-required'
         | null;
     failureReason: string | null;
     reviewFindingsValidationAccepted: boolean | null;
+    frozenReviewFindingsValidationAccepted?: boolean | null;
     reviewFindingsValidationRejected: boolean;
     reviewFindingsValidationArtifactPath: string | null;
+    reviewOutputCorrectionArtifactPath?: string | null;
+    reviewOutputCorrectionState?: string | null;
+    reviewOutputCorrectionLaunchState?: string | null;
+    reviewOutputCorrectionProducerIdentity?: string | null;
+    reviewOutputCorrectionProviderInvocationId?: string | null;
+    reviewOutputCorrectionAttestationSource?: string | null;
+    reviewOutputCorrectionSessionAvailability?: string | null;
+    reviewOutputCorrectionOriginalProviderInvocationId?: string | null;
+    reviewOutputCorrectionReviewerIdentity?: string | null;
+    reviewOutputCorrectionHandoff?: ReviewOutputCorrectionHandoffEvidence | null;
     reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null;
+    frozenReviewFindingsDisposition?: ReviewFindingsDispositionEvaluation | null;
     reviewFindingsDispositionArtifactPath: string | null;
     reviewFindingsDispositionArtifactSha256: string | null;
     reviewFindingsFollowUpArtifactPath: string | null;
@@ -153,6 +178,20 @@ export interface ReviewArtifactState {
     reviewResultRecordedAtUtc: string | null;
     recordedAtUtc: string | null;
     reviewOutputSourceMtimeUtc: string | null;
+}
+
+export interface ReviewOutputCorrectionHandoffEvidence {
+    providerAction: string | null;
+    providerResponseOutputPath?: string | null;
+    launchState: string | null;
+    targetReviewerIdentity: string | null;
+    launchInputSha256: string | null;
+    reviewerInvocationEventSha256: string | null;
+    correctionProducerInvocationEventSha256: string | null;
+    correctionProducerIdentity: string | null;
+    correctionProviderInvocationId: string | null;
+    originalProviderInvocationId: string | null;
+    correctionAttestationSource: string | null;
 }
 
 function fileExists(filePath: string): boolean {
@@ -611,6 +650,8 @@ export function readReviewArtifactState(
     const receiptExists = fileExists(receiptPath);
     let context: Record<string, unknown> | null = null;
     let receipt: Record<string, unknown> | null = null;
+    let receiptCurrent = false;
+    let receiptContractCurrent = false;
     let reviewerIdentity: string | null = null;
     let contextReviewerIdentity: string | null = null;
     let contextReviewTreeStateSha256: string | null = null;
@@ -633,9 +674,21 @@ export function readReviewArtifactState(
     let failureKind: ReviewArtifactState['failureKind'] = null;
     let failureReason: string | null = null;
     let reviewFindingsValidationAccepted: boolean | null = null;
+    let frozenReviewFindingsValidationAccepted: boolean | null = null;
     let reviewFindingsValidationRejected = false;
     let reviewFindingsValidationArtifactPath: string | null = null;
+    let reviewOutputCorrectionArtifactPath: string | null = null;
+    let reviewOutputCorrectionState: string | null = null;
+    let reviewOutputCorrectionLaunchState: string | null = null;
+    let reviewOutputCorrectionProducerIdentity: string | null = null;
+    let reviewOutputCorrectionProviderInvocationId: string | null = null;
+    let reviewOutputCorrectionAttestationSource: string | null = null;
+    let reviewOutputCorrectionSessionAvailability: string | null = null;
+    let reviewOutputCorrectionOriginalProviderInvocationId: string | null = null;
+    let reviewOutputCorrectionReviewerIdentity: string | null = null;
+    let reviewOutputCorrectionHandoff: ReviewOutputCorrectionHandoffEvidence | null = null;
     let reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
+    let frozenReviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     let reviewFindingsDispositionArtifactPath: string | null = null;
     let reviewFindingsDispositionArtifactSha256: string | null = null;
     let reviewFindingsFollowUpArtifactPath: string | null = null;
@@ -683,6 +736,23 @@ export function readReviewArtifactState(
                 && contextPreflightPath.toLowerCase() === expectedPreflightPath.toLowerCase()
                 && contextPreflightHash === expectedPreflightHash
             ) {
+                const preflightDiffExpectations = buildReviewContextPreflightDiffExpectations(
+                    preflightPayload,
+                    reviewType
+                );
+                const reviewExecution = isPlainRecord(context.review_execution)
+                    ? context.review_execution as unknown as ReviewRemediationReviewContract
+                    : null;
+                const reviewExecutionValidationAuthority = reviewExecution && repoRoot
+                    ? resolvePersistedRemediationReviewExecutionAuthority({
+                        reviewsRoot,
+                        taskId,
+                        reviewType,
+                        preflightSha256: expectedPreflightHash,
+                        fullReviewScope: preflightDiffExpectations.expectedChangedFiles,
+                        reviewExecution
+                    })
+                    : null;
                 const contractViolations = getReviewContextContractViolations({
                     contextPath,
                     reviewContext: context,
@@ -696,7 +766,8 @@ export function readReviewArtifactState(
                     requirePreflightSha256: true,
                     expectedPreflightPayload: preflightPayload,
                     repoRoot: repoRoot || null,
-                    ...buildReviewContextPreflightDiffExpectations(preflightPayload, reviewType)
+                    expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
+                    ...preflightDiffExpectations
                 });
                 const fullSuiteBindingViolations = repoRoot
                     ? getReviewContextFullSuiteValidationViolations({
@@ -834,10 +905,12 @@ export function readReviewArtifactState(
             contextSha256: contextHash || null,
             contextReviewTreeStateSha256,
             contextExecutionMode: contextExecutionMode || null,
-            contextReviewerIdentity: contextReviewerSessionId || null
+            contextReviewerIdentity: contextReviewerSessionId || null,
+            reviewContext: context
         });
         const evidenceFields = evidenceContract.fields;
         violations.push(...evidenceContract.violations);
+        receiptContractCurrent = contextCurrent && evidenceContract.violations.length === 0;
         reviewerIdentity = evidenceFields.reviewerIdentity;
         reusedExistingReview = evidenceFields.reusedExistingReview;
         reusedFromReceiptPath = evidenceFields.reusedFromReceiptPath;
@@ -912,11 +985,59 @@ export function readReviewArtifactState(
                 expectedCoverageContractSha256: reusedExistingReview
                     ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
                     : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null,
+                expectedReviewContext: context,
                 requireAccepted: true
             });
             reviewFindingsValidationArtifactPath = validationArtifact.reference?.artifact_path || null;
             reviewFindingsValidationAccepted = validationArtifact.accepted;
             violations.push(...validationArtifact.violations);
+            receiptCurrent = receiptContractCurrent
+                && validationArtifact.valid
+                && validationArtifact.accepted;
+            if (!validationArtifact.valid) {
+                const frozenValidationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                    receipt,
+                    reviewArtifactPath: artifactPath,
+                    expectedTaskId: taskId,
+                    expectedReviewType: reviewType,
+                    expectedReviewOutputSha256: typeof receipt.review_output_sha256 === 'string'
+                        ? receipt.review_output_sha256
+                        : null,
+                    expectedReviewArtifactSha256: artifactHash || null,
+                    expectedReviewContextPath: reusedExistingReview ? null : contextPath,
+                    expectedReviewContextSha256: reusedExistingReview
+                        ? reusedFromReviewContextSha256
+                        : contextHash || null,
+                    expectedPreflightPath: reusedExistingReview ? null : preflightPath,
+                    expectedPreflightSha256: reusedExistingReview ? null : preflightSha256,
+                    expectedScopeSha256: reusedExistingReview
+                        ? null
+                        : normalizeReviewEvidenceSha256(receipt.scope_sha256),
+                    expectedReviewScopeSha256: reusedExistingReview
+                        ? reusedFromReviewScopeSha256
+                        : receiptReviewScopeSha256,
+                    expectedCodeScopeSha256: reusedExistingReview
+                        ? reusedFromCodeScopeSha256
+                        : receiptCodeScopeSha256,
+                    expectedReviewTreeStateSha256: reusedExistingReview
+                        ? reusedFromReviewTreeStateSha256
+                        : contextReviewTreeStateSha256,
+                    expectedCoverageContractSha256: reusedExistingReview
+                        ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
+                        : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null,
+                    expectedReviewContext: context,
+                    requireAccepted: true
+                });
+                frozenReviewFindingsValidationAccepted = frozenValidationArtifact.accepted;
+                if (frozenValidationArtifact.valid && frozenValidationArtifact.accepted) {
+                    frozenReviewFindingsDisposition = evaluateReviewFindingsValidationArtifactDispositions(
+                        frozenValidationArtifact.artifact,
+                        reusedExistingReview
+                            ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)
+                            : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
+                    );
+                }
+            }
             if (validationArtifact.valid) {
                 if (reviewFindingsValidationArtifactHasBlockingFindings(
                     validationArtifact.artifact,
@@ -988,6 +1109,8 @@ export function readReviewArtifactState(
                     verdictToken = passToken || null;
                 }
             }
+        } else {
+            receiptCurrent = receiptContractCurrent;
         }
         reviewerProvenance = evidenceFields.reviewerProvenance
             ? {
@@ -1012,7 +1135,7 @@ export function readReviewArtifactState(
             }
             : null;
     }
-    if (requiresFindingsOnlyArtifact && !receipt && fileExists(getReviewFindingsValidationArtifactPath(artifactPath))) {
+    if (requiresFindingsOnlyArtifact && !receiptCurrent && fileExists(getReviewFindingsValidationArtifactPath(artifactPath))) {
         const contextHash = contextExists ? fileSha256(contextPath) : null;
         const rejectedValidationArtifact = validateReviewFindingsValidationArtifact({
             artifactPath: getReviewFindingsValidationArtifactPath(artifactPath),
@@ -1028,6 +1151,7 @@ export function readReviewArtifactState(
             expectedCoverageContractSha256: isPlainRecord(context?.coverage_contract)
                 ? String((context.coverage_contract as Record<string, unknown>).contract_sha256 || '').trim().toLowerCase() || null
                 : null,
+            expectedReviewContext: context,
             requireAccepted: false
         });
         if (!rejectedValidationArtifact.valid) {
@@ -1040,6 +1164,195 @@ export function readReviewArtifactState(
             failed = true;
             failureKind = 'review-validation-rejected';
             failureReason = rejectedValidationArtifact.artifact?.validation_result.violations.join(' ') || 'review findings validation rejected';
+            const correctionPath = getReviewOutputCorrectionArtifactPath(artifactPath);
+            if (fileExists(correctionPath)) {
+                reviewOutputCorrectionArtifactPath = correctionPath;
+                const correction = readReviewOutputCorrectionArtifact(correctionPath);
+                reviewOutputCorrectionState = correction.artifact?.state || null;
+                if (correction.violations.length > 0 || !correction.artifact) {
+                    failureKind = 'review-correction-full-review-required';
+                    failureReason = correction.violations.join(' ')
+                        || 'review output correction evidence is unavailable';
+                } else if (correction.artifact.state === 'FULL_REVIEW_REQUIRED') {
+                    failureKind = 'review-correction-full-review-required';
+                    failureReason = correction.artifact.recovery.reason;
+                } else if (correction.artifact.state === 'REVIEW_OUTPUT_CORRECTION_REQUIRED') {
+                    const handoff = correction.artifact.recovery.handoff;
+                    const transportBinding = correction.artifact.transport_binding;
+                    const originalProviderInvocationId = String(
+                        transportBinding?.provider_invocation_id || ''
+                    ).trim() || null;
+                    reviewOutputCorrectionSessionAvailability =
+                        transportBinding?.session_availability || null;
+                    reviewOutputCorrectionOriginalProviderInvocationId =
+                        originalProviderInvocationId;
+                    reviewOutputCorrectionReviewerIdentity =
+                        correction.artifact.binding.reviewer_identity || null;
+                    if (
+                        (
+                            correction.artifact.recovery.selected_transport === 'api_conversation_continuation'
+                            || correction.artifact.recovery.selected_transport === 'correction_only_invocation'
+                        )
+                        && transportBinding?.session_availability === 'pending'
+                    ) {
+                        failureKind = originalProviderInvocationId
+                            ? 'review-correction-transport-selection-required'
+                            : 'review-correction-full-review-required';
+                        if (!originalProviderInvocationId) {
+                            failureReason = [
+                                failureReason,
+                                'Review output correction transport is not bound to an authenticated original provider invocation; ' +
+                                'a controller-only invocation cannot attest provider session availability.'
+                            ].filter(Boolean).join(' ');
+                        }
+                    }
+                    const correctionInputSha256 = fileSha256(correctionPath);
+                    const correctionLaunchPath = getReviewOutputCorrectionLaunchArtifactPath(artifactPath);
+                    const correctionLaunch = fileExists(correctionLaunchPath)
+                        ? safeReadJson(correctionLaunchPath)
+                        : null;
+                    if (isPlainRecord(correctionLaunch)) {
+                        reviewOutputCorrectionLaunchState = String(correctionLaunch.state || '').trim() || null;
+                        reviewOutputCorrectionProducerIdentity = String(
+                            correctionLaunch.correction_producer_identity || ''
+                        ).trim() || null;
+                        reviewOutputCorrectionProviderInvocationId = String(
+                            correctionLaunch.provider_invocation_id || ''
+                        ).trim() || null;
+                        reviewOutputCorrectionAttestationSource = String(
+                            correctionLaunch.attestation_source || ''
+                        ).trim() || null;
+                    }
+                    const reviewerInvocationEventSha256 = String(
+                        correction.artifact.binding.reviewer_invocation_event_sha256 || ''
+                    ).trim().toLowerCase();
+                    const timelineEvents = readTaskTimelineEventLikes(
+                        path.join(path.dirname(reviewsRoot), 'task-events'),
+                        taskId
+                    );
+                    const originalInvocation = timelineEvents.find((event) => {
+                        const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+                        return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                            && String(integrity?.event_sha256 || '').trim().toLowerCase()
+                                === reviewerInvocationEventSha256;
+                    });
+                    const originalInvocationDetails = originalInvocation
+                        && isPlainRecord(originalInvocation.details)
+                        ? originalInvocation.details
+                        : null;
+                    const originalInvocationProviderInvocationId = String(
+                        originalInvocationDetails?.provider_invocation_id || ''
+                    ).trim();
+                    const originalInvocationReviewerIdentity = String(
+                        originalInvocationDetails?.reviewer_identity
+                        || originalInvocationDetails?.reviewer_session_id
+                        || ''
+                    ).trim();
+                    const originalInvocationBindingValid = Boolean(
+                        originalProviderInvocationId
+                        && originalInvocationProviderInvocationId === originalProviderInvocationId
+                        && originalInvocationReviewerIdentity === correction.artifact.binding.reviewer_identity
+                    );
+                    const authenticatedOriginalProviderInvocationId = originalInvocationBindingValid
+                        ? originalProviderInvocationId
+                        : null;
+                    reviewOutputCorrectionOriginalProviderInvocationId =
+                        authenticatedOriginalProviderInvocationId;
+                    const correctionProducerInvocation = correction.artifact.recovery.selected_transport
+                        === 'correction_only_invocation'
+                        ? [...timelineEvents].reverse().find((event) => {
+                            const details = isPlainRecord(event.details) ? event.details : null;
+                            return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                                && String(details?.invocation_role || '').trim() === 'review_output_correction'
+                                && String(details?.correction_artifact_sha256 || '').trim().toLowerCase()
+                                    === correctionInputSha256;
+                        })
+                        : originalInvocation;
+                    const correctionProducerDetails = correctionProducerInvocation
+                        && isPlainRecord(correctionProducerInvocation.details)
+                        ? correctionProducerInvocation.details
+                        : null;
+                    const correctionProducerIntegrity = correctionProducerInvocation
+                        && isPlainRecord(correctionProducerInvocation.integrity)
+                        ? correctionProducerInvocation.integrity
+                        : null;
+                    const correctionProducerInvocationEventSha256 = String(
+                        correctionProducerIntegrity?.event_sha256 || ''
+                    ).trim().toLowerCase();
+                    const correctionProducerIdentity = String(
+                        correctionProducerDetails?.reviewer_identity
+                        || correctionProducerDetails?.reviewer_session_id
+                        || ''
+                    ).trim();
+                    const correctionProviderInvocationId = String(
+                        correctionProducerDetails?.provider_invocation_id || ''
+                    ).trim();
+                    const correctionAttestationSource = String(
+                        correctionProducerDetails?.reviewer_launch_attestation_source
+                        || correctionProducerDetails?.attestation_source
+                        || ''
+                    ).trim();
+                    if (
+                        !handoff
+                        || !transportBinding
+                        || !correctionInputSha256
+                        || !/^[0-9a-f]{64}$/u.test(reviewerInvocationEventSha256)
+                        || !originalInvocation
+                        || (
+                            failureKind === 'review-correction-transport-selection-required'
+                            && !originalInvocationBindingValid
+                        )
+                    ) {
+                        failureKind = 'review-correction-full-review-required';
+                    }
+                    reviewOutputCorrectionHandoff = {
+                        providerAction: String(handoff?.provider_action || '').trim() || null,
+                        providerResponseOutputPath: String(
+                            handoff?.provider_response_output_path || ''
+                        ).trim() || null,
+                        launchState: reviewOutputCorrectionLaunchState,
+                        targetReviewerIdentity: String(handoff?.target_reviewer_identity || '').trim() || null,
+                        launchInputSha256: correctionInputSha256 || null,
+                        reviewerInvocationEventSha256: reviewerInvocationEventSha256 || null,
+                        correctionProducerInvocationEventSha256:
+                            correctionProducerInvocationEventSha256 || null,
+                        correctionProducerIdentity: correctionProducerIdentity || null,
+                        correctionProviderInvocationId: correctionProviderInvocationId || null,
+                        originalProviderInvocationId: authenticatedOriginalProviderInvocationId,
+                        correctionAttestationSource: correctionAttestationSource || null
+                    };
+                    failureReason = [
+                        failureReason,
+                        `Correction package: ${normalizePath(correctionPath)}.`,
+                        `Selected transport: ${correction.artifact.recovery.selected_transport}.`,
+                        handoff
+                            ? [
+                                `ReviewerCorrectionHandoff: provider_action=${handoff.provider_action};`,
+                                `ReviewerCorrectionInputArtifactPath=${handoff.launch_input_artifact_path || normalizePath(correctionPath)};`,
+                                `ReviewerCorrectionInputArtifactSha256=${correctionInputSha256 || 'unavailable'};`,
+                                `ReviewerInvocationEventSha256=${reviewerInvocationEventSha256 || 'unavailable'};`,
+                                `CorrectionProducerInvocationEventSha256=${correctionProducerInvocationEventSha256 || 'unavailable'};`,
+                                `CorrectionLaunchState=${reviewOutputCorrectionLaunchState || 'prepared'};`,
+                                `CorrectionProducerIdentity=${correctionProducerIdentity || 'unavailable'};`,
+                                `CorrectionProviderInvocationId=${correctionProviderInvocationId || 'unavailable'};`,
+                                `CorrectionAttestationSource=${correctionAttestationSource || 'unavailable'};`,
+                                `CorrectionSessionAvailability=${transportBinding?.session_availability || 'unavailable'};`,
+                                `OriginalProviderInvocationId=${authenticatedOriginalProviderInvocationId || 'unavailable'};`,
+                                `ProviderCapabilitiesSha256=${transportBinding?.provider_capabilities_sha256 || 'unavailable'};`,
+                                `target_reviewer_identity=${handoff.target_reviewer_identity || 'new_correction_only_reviewer'};`,
+                                `fork_context=${handoff.fork_context === false ? 'false' : 'preserve_current_conversation'}.`,
+                                handoff.instruction
+                            ].join(' ')
+                            : 'ReviewerCorrectionHandoff is missing; correction recovery cannot be executed safely.'
+                    ].filter(Boolean).join(' ');
+                }
+            } else {
+                failureKind = 'review-correction-full-review-required';
+                failureReason = [
+                    failureReason,
+                    `Review output correction package is missing: ${normalizePath(correctionPath)}.`
+                ].filter(Boolean).join(' ');
+            }
             violations.push(
                 `review findings validation artifact is rejected: ` +
                 failureReason
@@ -1060,6 +1373,7 @@ export function readReviewArtifactState(
         contextCurrent,
         artifactExists,
         receiptExists,
+        receiptContractCurrent,
         passToken,
         failToken,
         verdictToken,
@@ -1067,9 +1381,21 @@ export function readReviewArtifactState(
         failureKind,
         failureReason,
         reviewFindingsValidationAccepted,
+        frozenReviewFindingsValidationAccepted,
         reviewFindingsValidationRejected,
         reviewFindingsValidationArtifactPath,
+        reviewOutputCorrectionArtifactPath,
+        reviewOutputCorrectionState,
+        reviewOutputCorrectionLaunchState,
+        reviewOutputCorrectionProducerIdentity,
+        reviewOutputCorrectionProviderInvocationId,
+        reviewOutputCorrectionAttestationSource,
+        reviewOutputCorrectionSessionAvailability,
+        reviewOutputCorrectionOriginalProviderInvocationId,
+        reviewOutputCorrectionReviewerIdentity,
+        reviewOutputCorrectionHandoff,
         reviewFindingsDisposition,
+        frozenReviewFindingsDisposition,
         reviewFindingsDispositionArtifactPath,
         reviewFindingsDispositionArtifactSha256,
         reviewFindingsFollowUpArtifactPath,

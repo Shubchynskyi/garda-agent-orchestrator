@@ -6,10 +6,21 @@ import {
     getReviewCoverageContractViolations,
     getReviewCoverageValidationSummaryContractViolations
 } from '../review/review-coverage-ledger';
-import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
+import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
+import { buildReviewContextPreflightDiffExpectations } from '../review-context/review-context-contract';
+import { getReviewReceiptExecutionEvidenceContractViolations } from '../review/review-evidence-contract';
+import { validateReviewFindingsValidationArtifactForReceipt } from '../review/review-findings-validation-artifact';
+import { resolvePersistedRemediationReviewExecutionAuthority } from '../review-remediation/review-remediation-execution-authority';
+import {
+    getReviewRemediationReviewContractViolations,
+    type ReviewRemediationReviewContract,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../review-remediation/review-remediation-review-contract';
 
 export interface ReviewCoverageAuditEntry {
     review_type: string;
+    review_execution_mode: 'FULL' | 'DELTA' | null;
+    review_execution_source: string | null;
     status: 'COMPLETE' | 'INCOMPLETE' | 'LEGACY_NOT_REQUIRED';
     contract_sha256: string | null;
     obligation_count: number;
@@ -26,6 +37,11 @@ export interface ReviewCoverageAuditSummary {
     status: 'COMPLETE' | 'INCOMPLETE' | 'NOT_REQUIRED';
     entries: ReviewCoverageAuditEntry[];
     omitted_obligation_ids: string[];
+    review_execution_modes: {
+        full_count: number;
+        delta_count: number;
+        legacy_unknown_count: number;
+    };
     visible_summary_line: string;
 }
 
@@ -57,6 +73,34 @@ function stringArray(value: unknown): string[] {
         : [];
 }
 
+function stringValue(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function nestedStringValue(value: unknown, key: string): string | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? stringValue((value as Record<string, unknown>)[key])
+        : null;
+}
+
+function resolveReviewExecutionTelemetry(
+    context: Record<string, unknown> | null,
+    receipt: Record<string, unknown> | null
+): { mode: 'FULL' | 'DELTA' | null; source: string | null } {
+    const reviewExecution = context?.review_execution
+        && typeof context.review_execution === 'object'
+        && !Array.isArray(context.review_execution)
+        ? context.review_execution as Record<string, unknown>
+        : null;
+    const contextMode = String(reviewExecution?.mode || '').trim().toUpperCase();
+    const receiptMode = String(receipt?.review_execution_mode || '').trim().toUpperCase();
+    const modeValue = contextMode === 'FULL' || contextMode === 'DELTA' ? contextMode : receiptMode;
+    return {
+        mode: modeValue === 'FULL' || modeValue === 'DELTA' ? modeValue : null,
+        source: stringValue(reviewExecution?.source)
+    };
+}
+
 export function buildReviewCoverageAuditSummary(options: {
     reviewsRoot: string;
     taskId: string;
@@ -73,6 +117,7 @@ export function buildReviewCoverageAuditSummary(options: {
         const receiptPath = path.join(options.reviewsRoot, `${options.taskId}-${reviewType}-receipt.json`);
         const context = readJson(contextPath);
         const receipt = readJson(receiptPath);
+        const reviewExecutionTelemetry = resolveReviewExecutionTelemetry(context, receipt);
         const contextSchemaVersion = Number(context?.schema_version);
         if (Number.isInteger(contextSchemaVersion) && contextSchemaVersion > 0 && contextSchemaVersion < 3) {
             const contextSha256 = sha256File(contextPath);
@@ -94,6 +139,8 @@ export function buildReviewCoverageAuditSummary(options: {
                 && recordedEventMatches) {
                 entries.push({
                     review_type: reviewType,
+                    review_execution_mode: reviewExecutionTelemetry.mode,
+                    review_execution_source: reviewExecutionTelemetry.source,
                     status: 'LEGACY_NOT_REQUIRED',
                     contract_sha256: null,
                     obligation_count: 0,
@@ -111,12 +158,13 @@ export function buildReviewCoverageAuditSummary(options: {
         const contract = context?.coverage_contract && typeof context.coverage_contract === 'object' && !Array.isArray(context.coverage_contract)
             ? context.coverage_contract as Record<string, unknown>
             : null;
-        const authoritativeCoverageChangedFiles = preflight
-            ? resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
-            : [];
-        const authoritativeContract = buildReviewCoverageContract({
+        const authoritativeCoverage = preflight
+            ? buildAuthoritativeReviewCoverageContract({ reviewType, preflight, repoRoot })
+            : null;
+        const authoritativeCoverageChangedFiles = authoritativeCoverage?.changedFiles || [];
+        const authoritativeContract = authoritativeCoverage?.contract || buildReviewCoverageContract({
             reviewType,
-            changedFiles: authoritativeCoverageChangedFiles
+            changedFiles: []
         });
         const coverage = receipt?.review_coverage && typeof receipt.review_coverage === 'object' && !Array.isArray(receipt.review_coverage)
             ? receipt.review_coverage as Record<string, unknown>
@@ -134,12 +182,90 @@ export function buildReviewCoverageAuditSummary(options: {
         const duplicateObligationIds = stringArray(coverage?.duplicate_obligation_ids);
         const unknownObligationIds = stringArray(coverage?.unknown_obligation_ids);
         const violations: string[] = [];
+        if (context && preflight && preflightSha256 && contextSchemaVersion >= 4) {
+            const reviewExecution = context.review_execution
+                && typeof context.review_execution === 'object'
+                && !Array.isArray(context.review_execution)
+                ? context.review_execution as unknown as ReviewRemediationReviewContract
+                : null;
+            if (!reviewExecution) {
+                violations.push('review context is missing the required schema-4 review_execution contract');
+            } else {
+                const fullReviewScope = reviewExecution.source === 'initial_full'
+                    ? authoritativeCoverageChangedFiles
+                    : buildReviewContextPreflightDiffExpectations(preflight, reviewType).expectedChangedFiles;
+                const initialAuthority: ReviewRemediationReviewContractValidationAuthority = {
+                    taskId: options.taskId,
+                    reviewType,
+                    preflightSha256,
+                    mode: reviewExecution.mode,
+                    fullReviewScope,
+                    persistedDecisionSha256: null,
+                    authoritativeDecisionSha256: null,
+                    authoritativeClassificationSha256: null,
+                    authoritativeDecision: null,
+                    authoritativeClassification: null
+                };
+                const authority = reviewExecution.source === 'initial_full'
+                    ? initialAuthority
+                    : resolvePersistedRemediationReviewExecutionAuthority({
+                        reviewsRoot: options.reviewsRoot,
+                        taskId: options.taskId,
+                        reviewType,
+                        preflightSha256,
+                        fullReviewScope,
+                        reviewExecution
+                    });
+                if (!authority) {
+                    violations.push('review context remediation review_execution authority is unavailable');
+                } else {
+                    violations.push(...getReviewRemediationReviewContractViolations(reviewExecution, authority)
+                        .map((violation) => `review context execution authority: ${violation}`));
+                }
+            }
+        }
+        violations.push(...getReviewReceiptExecutionEvidenceContractViolations({
+            reviewContext: context,
+            receipt
+        }));
+        if (context && receipt && contextSchemaVersion >= 4) {
+            const reviewArtifactPath = path.join(options.reviewsRoot, `${options.taskId}-${reviewType}.md`);
+            const reusedExistingReview = receipt.reused_existing_review === true;
+            const treeState = context.tree_state && typeof context.tree_state === 'object' && !Array.isArray(context.tree_state)
+                ? context.tree_state as Record<string, unknown>
+                : null;
+            const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                receipt,
+                reviewArtifactPath,
+                expectedTaskId: options.taskId,
+                expectedReviewType: reviewType,
+                expectedReviewOutputSha256: stringValue(receipt.review_output_sha256),
+                expectedReviewArtifactSha256: sha256File(reviewArtifactPath),
+                expectedReviewContextPath: reusedExistingReview ? null : contextPath,
+                expectedReviewContextSha256: reusedExistingReview
+                    ? stringValue(receipt.reused_from_review_context_sha256)
+                    : sha256File(contextPath),
+                expectedPreflightPath: reusedExistingReview ? null : preflightPath,
+                expectedPreflightSha256: reusedExistingReview ? null : preflightSha256,
+                expectedReviewTreeStateSha256: reusedExistingReview
+                    ? stringValue(receipt.reused_from_review_tree_state_sha256)
+                    : stringValue(treeState?.tree_state_sha256),
+                expectedCoverageContractSha256: reusedExistingReview
+                    ? nestedStringValue(receipt.review_output_contract, 'coverage_contract_sha256')
+                    : stringValue(contract?.contract_sha256),
+                expectedReviewContext: context,
+                requireAccepted: true,
+                preferSnapshot: true
+            });
+            violations.push(...validationArtifact.violations.map((violation) => `findings validation: ${violation}`));
+        }
         if (!preflight) {
             violations.push('current preflight is missing or unreadable for authoritative coverage reconstruction');
         } else {
             violations.push(...getReviewCoverageContractViolations(contract, {
                 reviewType,
-                changedFiles: authoritativeCoverageChangedFiles
+                changedFiles: authoritativeCoverageChangedFiles,
+                categoryIds: authoritativeCoverage?.categoryIds
             }));
         }
         if (!context || !Number.isInteger(contextSchemaVersion) || contextSchemaVersion < 3) {
@@ -154,6 +280,8 @@ export function buildReviewCoverageAuditSummary(options: {
         const complete = violations.length === 0;
         entries.push({
             review_type: reviewType,
+            review_execution_mode: reviewExecutionTelemetry.mode,
+            review_execution_source: reviewExecutionTelemetry.source,
             status: complete ? 'COMPLETE' : 'INCOMPLETE',
             contract_sha256: receiptHash || null,
             obligation_count: obligationCount,
@@ -177,12 +305,20 @@ export function buildReviewCoverageAuditSummary(options: {
         completed: acc.completed + entry.completed_obligation_count,
         required: acc.required + entry.obligation_count
     }), { completed: 0, required: 0 });
+    const executionModes = entries.reduce((acc, entry) => {
+        if (entry.review_execution_mode === 'FULL') acc.full_count += 1;
+        else if (entry.review_execution_mode === 'DELTA') acc.delta_count += 1;
+        else acc.legacy_unknown_count += 1;
+        return acc;
+    }, { full_count: 0, delta_count: 0, legacy_unknown_count: 0 });
     return {
         status,
         entries,
         omitted_obligation_ids: omitted,
+        review_execution_modes: executionModes,
         visible_summary_line:
             `Review coverage: status=${status}; obligations=${totals.completed}/${totals.required}; ` +
+            `modes=FULL:${executionModes.full_count},DELTA:${executionModes.delta_count},legacy_unknown:${executionModes.legacy_unknown_count}; ` +
             `incomplete_reviews=${incomplete.map((entry) => entry.review_type).join(',') || 'none'}; ` +
             `omitted=${omitted.join(',') || 'none'}`
     };

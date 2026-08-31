@@ -72,6 +72,120 @@ export async function emitReviewRecordedEventAsync(repoRoot: string, taskId: str
     return emitLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_RECORDED, 'PASS', `Review recorded: ${reviewType}.`, details, options);
 }
 
+export async function emitReviewOutputCorrectionRequiredEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_REQUIRED,
+        'INFO',
+        `Review output correction required: ${reviewType}.`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitReviewOutputCorrectionTransportEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    transport: 'live_reviewer_continuation' | 'api_conversation_continuation' | 'correction_only_invocation',
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    const eventType = {
+        live_reviewer_continuation: LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION,
+        api_conversation_continuation: LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_API_CONTINUATION,
+        correction_only_invocation: LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION
+    }[transport];
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        eventType,
+        'INFO',
+        `Review output correction transport selected: ${reviewType} (${transport}).`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitReviewOutputCorrectionNormalizedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_NORMALIZED,
+        'INFO',
+        `Review output normalized mechanically: ${reviewType}.`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitReviewOutputCorrectionAcceptedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_ACCEPTED,
+        'PASS',
+        `Review output correction accepted: ${reviewType}.`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitReviewOutputCorrectionInvocationAttestedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED,
+        'INFO',
+        `Review output correction invocation attested: ${reviewType}.`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitReviewOutputCorrectionFullReviewRequiredEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED,
+        'FAIL',
+        `Review output correction requires a full reviewer relaunch: ${reviewType}.`,
+        details,
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
 export function emitMandatoryReviewPhaseStartedEvent(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
     return emitMandatoryLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options);
 }

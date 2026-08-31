@@ -50,7 +50,11 @@ function seedBundleIdentity(bundlePath: string, packageName: string, cliEntrypoi
     writeStatusFixtureFile(path.join(bundlePath, cliEntrypoint), '// cli\n');
 }
 
-function writeProfilesConfig(bundlePath: string, profileConfig: { active_profile: string; depth: number }) {
+function writeProfilesConfig(bundlePath: string, profileConfig: {
+    active_profile: string;
+    depth: number;
+    review_remediation_mode_policy?: Record<string, unknown>;
+}) {
     const profilesConfigPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
     fs.mkdirSync(path.dirname(profilesConfigPath), { recursive: true });
     writeStatusFixtureFile(
@@ -64,6 +68,9 @@ function writeProfilesConfig(bundlePath: string, profileConfig: { active_profile
                         description: `${profileConfig.active_profile} profile`,
                         depth: profileConfig.depth,
                         review_policy: {},
+                        ...(profileConfig.review_remediation_mode_policy ? {
+                            review_remediation_mode_policy: profileConfig.review_remediation_mode_policy
+                        } : {}),
                         token_economy: {
                             enabled: true,
                             strip_examples: true,
@@ -1140,6 +1147,48 @@ test('getStatusSnapshot recommends profile depth in next command when profile is
 
         const snapshot = getStatusSnapshot(tmpDir);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+        assert.equal(snapshot.reviewRemediationModePolicy?.legacyFullOnly, true);
+        assert.match(formatStatusSnapshot(snapshot), /ReviewRemediationModePolicy: configured=false, mode=FULL-only/u);
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('status exposes explicit FULL/DELTA profile policy readiness', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-status-remediation-mode-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'INTERACTIVE', {
+            agentInitState: {
+                AssistantLanguage: 'English',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeProfilesConfig(bundlePath, {
+            active_profile: 'balanced',
+            depth: 2,
+            review_remediation_mode_policy: {
+                schema_version: 2,
+                policy_id: 'conservative_review_remediation_mode_v1',
+                initial_review_mode: 'FULL',
+                delta_eligible_review_types: ['code', 'refactor', 'test'],
+                force_full_categories: ['ambiguous', 'generated_churn', 'global'],
+                max_delta_changed_files: 4,
+                max_delta_changed_lines: 240,
+                max_consecutive_delta_reviews: 3
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.reviewRemediationModePolicy?.legacyFullOnly, false);
+        assert.deepEqual(snapshot.reviewRemediationModePolicy?.deltaEligibleReviewTypes, ['code', 'refactor', 'test']);
+        assert.match(formatStatusSnapshot(snapshot), /mode=FULL\/DELTA/u);
     } finally {
         cleanupStatusTempDir(tmpDir);
     }
@@ -1268,6 +1317,65 @@ test('getTaskCycleStatusSnapshot preserves routing fields and skips toxin traver
         );
     } finally {
         fsModule.readdirSync = originalReaddirSync;
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('getTaskCycleStatusSnapshot does not authorize historical handshake artifacts', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-cycle-status-'));
+    const fsModule = require('node:fs');
+    const originalLstatSync = fsModule.lstatSync;
+    const originalRealpathSync = fsModule.realpathSync;
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-ACTIVE | 🟨 IN_PROGRESS | P1 | runtime | Current task | codex | 2026-08-02 | balanced | partial lifecycle |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        writeStatusFixtureFile(path.join(reviewsDir, 'T-HISTORICAL-handshake.json'), JSON.stringify({
+            status: 'FAILED',
+            provider: 'Codex',
+            violations: ['Historical failure.']
+        }));
+        writeStatusFixtureFile(path.join(reviewsDir, 'T-ACTIVE-handshake.json'), JSON.stringify({
+            status: 'FAILED',
+            provider: 'Codex',
+            violations: ['Active failure.']
+        }));
+
+        let historicalAuthorizationCount = 0;
+        const isHistoricalReviewArtifact = (candidate: fs.PathLike): boolean => (
+            path.dirname(path.resolve(String(candidate))) === path.resolve(reviewsDir)
+            && path.basename(String(candidate)).startsWith('T-HISTORICAL-')
+        );
+        fsModule.lstatSync = ((candidate: fs.PathLike, options?: unknown) => {
+            if (isHistoricalReviewArtifact(candidate)) historicalAuthorizationCount += 1;
+            return originalLstatSync(candidate, options as never);
+        }) as typeof fsModule.lstatSync;
+        fsModule.realpathSync = ((candidate: fs.PathLike, options?: unknown) => {
+            if (isHistoricalReviewArtifact(candidate)) historicalAuthorizationCount += 1;
+            return originalRealpathSync(candidate, options as never);
+        }) as typeof fsModule.realpathSync;
+
+        const snapshot = getTaskCycleStatusSnapshot(tmpDir, 'T-ACTIVE');
+        assert.equal(snapshot.readyForTasks, true, 'Task-cycle status keeps handshake failures informational');
+        assert.equal(historicalAuthorizationCount, 0);
+    } finally {
+        fsModule.lstatSync = originalLstatSync;
+        fsModule.realpathSync = originalRealpathSync;
         cleanupStatusTempDir(tmpDir);
     }
 });

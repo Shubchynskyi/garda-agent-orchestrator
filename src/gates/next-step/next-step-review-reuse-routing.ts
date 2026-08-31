@@ -1,10 +1,14 @@
 import { buildBundleRelativePath } from '../../core/constants';
+import { quoteCommandValue } from '../../core/command-quoting';
 import type {
     ReviewerResultRecoveryIdentityResolution
 } from '../review/security/reviewer-result-recovery-identity';
 import type {
     DelegatedReviewLaunchArtifactState
 } from './next-step-review-readiness-routing';
+import type {
+    ReviewOutputCorrectionHandoffEvidence
+} from './next-step-review-artifact-readers';
 
 export interface ReviewReuseRoutingCommand {
     label: string;
@@ -30,6 +34,28 @@ export interface FocusedIntermediateReviewEvidence {
 }
 
 export type ReviewReuseCandidateHint = 'current-context-candidate' | 'validation-required';
+
+export function isReviewSatisfiedBySemanticCycleResume(options: {
+    reviewType: string;
+    ordinarySatisfied: boolean;
+    semanticResumeReusable: boolean;
+    acceptedReviewTypes: readonly string[];
+}): boolean {
+    return options.ordinarySatisfied || (
+        options.semanticResumeReusable
+        && options.acceptedReviewTypes.includes(options.reviewType)
+    );
+}
+
+export function isFullSuiteSatisfiedBySemanticCycleResume(options: {
+    semanticResumeReusable: boolean;
+    acceptedFullSuite: boolean;
+    currentConfigMatches: boolean;
+}): boolean {
+    return options.semanticResumeReusable
+        && options.acceptedFullSuite
+        && options.currentConfigMatches;
+}
 
 export interface StrictSequentialUpstreamReuseRouteOptions {
     reviewPolicyMode: string;
@@ -103,19 +129,145 @@ export interface FailedReviewRemediationRouteOptions {
     downstreamReviewTypes: readonly string[];
     reviewerResultRecoveryIdentity: ReviewerResultRecoveryIdentityResolution | null;
     launchArtifactState: DelegatedReviewLaunchArtifactState;
+    correctionHandoff?: ReviewOutputCorrectionHandoffEvidence | null;
     commands: {
         restartReviewCycle: ReviewReuseRoutingCommand;
         rerunNavigator: ReviewReuseRoutingCommand;
         compileGate: ReviewReuseRoutingCommand;
         buildScopedDiff: ReviewReuseRoutingCommand;
         buildReviewContext: ReviewReuseRoutingCommand;
+        recordCorrectionTransport?: ReviewReuseRoutingCommand;
+        recordCorrectionInvocation?: ReviewReuseRoutingCommand;
         recordResult: ReviewReuseRoutingCommand;
     };
+}
+
+function buildAttestedCorrectionRecordResultCommand(options: FailedReviewRemediationRouteOptions): ReviewReuseRoutingCommand {
+    const handoff = options.correctionHandoff;
+    const providerAction = handoff?.providerAction || null;
+    const providerResponseOutputPath = handoff?.providerResponseOutputPath || null;
+    const targetIdentity = handoff?.targetReviewerIdentity || null;
+    const launchInputSha256 = handoff?.launchInputSha256 || null;
+    const providerInvocationEventSha256 = providerAction === 'launch_correction_only_reviewer'
+        ? handoff?.correctionProducerInvocationEventSha256 || null
+        : handoff?.reviewerInvocationEventSha256 || null;
+    const attestedProducerIdentity = handoff?.correctionProducerIdentity || null;
+    const attestedProviderInvocationId = providerAction === 'continue_api_conversation'
+        ? handoff?.originalProviderInvocationId || null
+        : handoff?.correctionProviderInvocationId || null;
+    const attestedSource = handoff?.correctionAttestationSource || null;
+    const correctionProducerIdentity = targetIdentity && targetIdentity !== 'new_correction_only_reviewer'
+        ? targetIdentity
+        : attestedProducerIdentity || '<agent:resolved-provider-correction-reviewer-id>';
+    const forkContext = providerAction === 'launch_correction_only_reviewer'
+        ? ' --correction-fork-context false'
+        : '';
+    const recordResultCommand = providerAction === 'launch_correction_only_reviewer' && providerResponseOutputPath
+        ? bindRecordResultOutputPath(options.commands.recordResult.command, providerResponseOutputPath)
+        : options.commands.recordResult.command;
+    return {
+        ...options.commands.recordResult,
+        label: 'After the bound reviewer correction returns, record its attested corrected review result',
+        command:
+            `${recordResultCommand} ` +
+            `--correction-producer-identity ${quoteCommandValue(correctionProducerIdentity)} ` +
+            `--correction-provider-invocation-id ${quoteCommandValue(
+                attestedProviderInvocationId || '<provider-owned correction invocation id>'
+            )} ` +
+            `--correction-provider-invocation-event-sha256 ${quoteCommandValue(
+                providerInvocationEventSha256 || '<provider-owned correction invocation event sha256>'
+            )} ` +
+            `--correction-attestation-source ${quoteCommandValue(
+                attestedSource || '<provider-owned correction attestation source>'
+            )} ` +
+            `--correction-launch-input-sha256 ${quoteCommandValue(
+                launchInputSha256 || '<persisted correction input sha256>'
+            )}` +
+            forkContext
+    };
+}
+
+function bindRecordResultOutputPath(command: string, reviewOutputPath: string): string {
+    const pipedInputPrefix = "'<paste exact delegated reviewer output here>' | ";
+    const unpipedCommand = command.startsWith(pipedInputPrefix)
+        ? command.slice(pipedInputPrefix.length)
+        : command;
+    const outputPathArgument = `--review-output-path ${quoteCommandValue(reviewOutputPath)}`;
+    if (unpipedCommand.includes('--review-output-stdin')) {
+        return unpipedCommand.replace('--review-output-stdin', outputPathArgument);
+    }
+    if (unpipedCommand.includes('--review-output-path')) {
+        return unpipedCommand;
+    }
+    return `${unpipedCommand} ${outputPathArgument}`;
 }
 
 export function resolveFailedReviewRemediationRoute(
     options: FailedReviewRemediationRouteOptions
 ): ReviewReuseRoutingRoute | null {
+    if (options.failureKind === 'review-correction-full-review-required') {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'restart-review-cycle',
+            title: `Launch a fresh full '${options.reviewType}' reviewer after correction fallback.`,
+            reason:
+                `The bound '${options.reviewType}' review-output correction cannot safely continue ` +
+                `(${options.failureReason || 'correction provenance or semantic binding is unavailable'}). ` +
+                'The rejected raw output and typed diagnostics remain audit evidence. Restart only this review cycle, ' +
+                'then build a fresh context and launch a full reviewer; do not edit evidence or treat this as an implementation defect.',
+            commands: [options.commands.restartReviewCycle]
+        };
+    }
+    if (options.failureKind === 'review-correction-transport-selection-required') {
+        if (!options.correctionHandoff?.originalProviderInvocationId) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Launch a fresh full '${options.reviewType}' reviewer after correction transport fallback.`,
+                reason:
+                    `The '${options.reviewType}' correction package has no authenticated original provider invocation ` +
+                    'binding, so provider session availability cannot be attested safely. Preserve the rejected output ' +
+                    'and restart only this review cycle instead of executing a transport command with placeholder provenance.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
+        if (!options.commands.recordCorrectionTransport) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover '${options.reviewType}' correction transport routing.`,
+                reason:
+                    `The '${options.reviewType}' correction package requires provider-controller session evidence, but ` +
+                    'the navigator did not materialize its transport-selection command. Restart only this review cycle ' +
+                    'instead of accepting an unattested correction.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
+        if (!options.reviewerResultRecoveryIdentity?.ready) {
+            const identityReason = options.reviewerResultRecoveryIdentity?.reason || 'resolved_identity_missing';
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover '${options.reviewType}' reviewer identity before transport selection.`,
+                reason:
+                    `The '${options.reviewType}' correction package requires a provider-controller session probe, but the ` +
+                    `current reviewer attempt is not authenticated (${identityReason}). Preserve the rejected output and ` +
+                    'restart only this review cycle so a fresh delegated launch re-establishes identity and provenance.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
+        return {
+            status: 'BLOCKED',
+            nextGate: 'record-review-output-correction-transport',
+            title: `Record authenticated '${options.reviewType}' correction transport.`,
+            reason:
+                `The '${options.reviewType}' correction package cannot use an authenticated live continuation response. ` +
+                'Record `closed`/`stateless` with canonical fail-closed evidence so Garda can choose the API or ' +
+                'correction-only fallback. A caller-provided source string can never authorize live continuation; live ' +
+                'selection is frozen only when record-review-result accepts a corrected response bound to the original invocation.',
+            commands: [options.commands.recordCorrectionTransport]
+        };
+    }
     if (options.failureKind === 'review-validation-rejected') {
         if (!options.reviewerResultRecoveryIdentity?.ready) {
             const identityReason = options.reviewerResultRecoveryIdentity?.reason || 'resolved_identity_missing';
@@ -131,15 +283,46 @@ export function resolveFailedReviewRemediationRoute(
                 commands: [options.commands.restartReviewCycle]
             };
         }
+        const providerAction = options.correctionHandoff?.providerAction || null;
+        const correctionProducerInvocationEventSha256 =
+            options.correctionHandoff?.correctionProducerInvocationEventSha256 || null;
+        const correctionLaunchState = options.correctionHandoff?.launchState || null;
+        if (
+            providerAction === 'launch_correction_only_reviewer'
+            && !/^[0-9a-f]{64}$/u.test(correctionProducerInvocationEventSha256 || '')
+        ) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'record-review-output-correction-invocation',
+                title: correctionLaunchState === 'delegation_started'
+                    ? `Complete the correction-only '${options.reviewType}' reviewer invocation after it returns.`
+                    : `Launch and record one correction-only '${options.reviewType}' reviewer delegation.`,
+                reason: correctionLaunchState === 'delegation_started'
+                    ? `System validation rejected the '${options.reviewType}' review findings report ` +
+                        `(${options.failureReason || 'review findings validation rejected'}). ` +
+                        'The provider-backed delegation start is already frozen. Wait for that exact correction reviewer to return, ' +
+                        'then run the command below; it can only complete the persisted identity and invocation attempt.'
+                    : `System validation rejected the '${options.reviewType}' review findings report ` +
+                        `(${options.failureReason || 'review findings validation rejected'}). ` +
+                        'Launch exactly one clean-context correction-only reviewer with the persisted correction package, then run the ' +
+                        'command below immediately to freeze only the provider-backed delegation start. Rerun next-step and wait for ' +
+                        'that reviewer before completing invocation attestation.',
+                commands: [options.commands.recordCorrectionInvocation || options.commands.recordResult]
+            };
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'record-review-result',
-            title: `Correct rejected '${options.reviewType}' review findings report.`,
+            title: `Execute the bound '${options.reviewType}' correction handoff, then record its result.`,
             reason:
                 `System validation rejected the '${options.reviewType}' review findings report ` +
                 `(${options.failureReason || 'review findings validation rejected'}). ` +
-                'This is review/report correction work, not an implementation defect. Preserve the rejected validation artifact as audit evidence, correct the delegated reviewer output or rerun the reviewer with complete evidence, then record-review-result again before remediation or downstream reviews.',
-            commands: [options.commands.recordResult]
+                'This is review/report correction work, not an implementation defect. Execute exactly the persisted ' +
+                'ReviewerCorrectionHandoff through provider tools before running the command below. The handoff selects continuation ' +
+                'of the original reviewer, API conversation continuation, or one clean-context correction-only reviewer and binds its input. ' +
+                'Then pipe the returned corrected JSON to record-review-result before remediation or downstream reviews; ' +
+                'do not author findings in the main-agent session.',
+            commands: [buildAttestedCorrectionRecordResultCommand(options)]
         };
     }
 

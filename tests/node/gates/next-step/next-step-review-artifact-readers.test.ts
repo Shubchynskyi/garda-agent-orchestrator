@@ -25,6 +25,10 @@ import {
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse';
 import type { ReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
+import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import { REVIEW_FINDINGS_SCHEMA_VERSION } from '../../../../src/gates/review/review-findings-schema';
+import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
 
 const TREE_STATE_SHA256 = 'b'.repeat(64);
 const COVERAGE_CONTRACT_SHA256 = 'c'.repeat(64);
@@ -156,8 +160,18 @@ function writeFindingsReviewPackage(options: {
         preflightPayload,
         process.cwd()
     ).code_scope_sha256;
+    const reviewExecution = buildReviewRemediationReviewContract({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: 'a'.repeat(64),
+        fullReviewScope: [CHANGED_FILE]
+    });
+    const reviewExecutionBindings = resolveReviewContextExecutionEvidenceBindings({
+        schema_version: 4,
+        review_execution: reviewExecution
+    }).bindings!;
     writeJson(contextPath, {
-        schema_version: 3,
+        schema_version: 4,
         task_id: options.taskId,
         review_type: options.reviewType,
         preflight_path: options.preflightPath,
@@ -165,13 +179,21 @@ function writeFindingsReviewPackage(options: {
         tree_state: {
             tree_state_sha256: TREE_STATE_SHA256
         },
-        coverage_contract: coverageContract
+        coverage_contract: coverageContract,
+        review_execution: reviewExecution
     });
     const contextSha256 = sha256File(contextPath);
     const report = {
         ...options.report,
+        schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
         review_context_sha256: contextSha256,
         tree_state_sha256: TREE_STATE_SHA256,
+        review_execution: {
+            mode: reviewExecution.mode,
+            contract_sha256: reviewExecution.contract_sha256,
+            covered_delta_targets: [],
+            inspected_prior_finding_ids: []
+        },
         coverage_ledger: {
             coverage_contract_sha256: COVERAGE_CONTRACT_SHA256,
             ...(options.report.coverage_ledger as Record<string, unknown>)
@@ -185,7 +207,8 @@ function writeFindingsReviewPackage(options: {
         expectedReviewType: options.reviewType,
         expectedReviewContextSha256: contextSha256,
         expectedTreeStateSha256: TREE_STATE_SHA256,
-        coverageContract
+        coverageContract,
+        expectedReviewExecutionContract: reviewExecution
     });
     assert.equal(validation.valid, true, validation.violations.join(' '));
     const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
@@ -217,6 +240,13 @@ function writeFindingsReviewPackage(options: {
         codeScopeSha256,
         reviewContextSha256: contextSha256,
         reviewTreeStateSha256: TREE_STATE_SHA256,
+        reviewExecutionMode: reviewExecutionBindings.review_execution_mode,
+        reviewExecutionContractSha256: reviewExecutionBindings.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: reviewExecutionBindings.review_execution_full_scope_sha256,
+        reviewExecutionCompleteScopeLineageSha256:
+            reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+        reviewExecutionFindingReconciliationSha256:
+            reviewExecutionBindings.review_execution_finding_reconciliation_sha256,
         reviewArtifactSha256: artifactSha256,
         reviewerExecutionMode: 'delegated_subagent',
         reviewerIdentity: `agent:${options.taskId}-${options.reviewType}`,
@@ -245,13 +275,72 @@ function writeFindingsReviewPackage(options: {
         review_context_sha256: contextSha256,
         review_tree_state_sha256: TREE_STATE_SHA256,
         coverage_contract_sha256: COVERAGE_CONTRACT_SHA256,
+        ...reviewExecutionBindings,
         reviewer_identity: `agent:${options.taskId}-${options.reviewType}`,
         reviewer_provenance_event_sha256: null
     };
+    const reusedExecutionBindings = options.receiptOverrides?.reused_existing_review === true
+        ? {
+            reused_from_review_execution_mode: reviewExecutionBindings.review_execution_mode,
+            reused_from_review_execution_contract_sha256:
+                reviewExecutionBindings.review_execution_contract_sha256,
+            reused_from_review_execution_full_scope_sha256:
+                reviewExecutionBindings.review_execution_full_scope_sha256,
+            reused_from_review_execution_complete_scope_lineage_sha256:
+                reviewExecutionBindings.review_execution_complete_scope_lineage_sha256,
+            reused_from_review_execution_finding_reconciliation_sha256:
+                reviewExecutionBindings.review_execution_finding_reconciliation_sha256
+        }
+        : {};
     writeJson(path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}-receipt.json`), {
         ...receipt,
+        ...reusedExecutionBindings,
         ...(options.receiptOverrides || {})
     });
+}
+
+function promoteFindingsReviewPackageToSchema4(options: {
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+}): ReturnType<typeof resolveReviewContextExecutionEvidenceBindings>['bindings'] {
+    const contextPath = path.join(
+        options.reviewsRoot,
+        `${options.taskId}-${options.reviewType}-review-context.json`
+    );
+    const context = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    return resolveReviewContextExecutionEvidenceBindings(context).bindings;
+}
+
+function rewriteValidationArtifactExecutionBinding(options: {
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    field: string;
+    value: unknown;
+}): void {
+    const prefix = path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}`);
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(`${prefix}.md`);
+    const receiptPath = `${prefix}-receipt.json`;
+    const validationArtifact = JSON.parse(
+        fs.readFileSync(validationArtifactPath, 'utf8')
+    ) as Record<string, unknown>;
+    const validationResult = validationArtifact.validation_result as Record<string, unknown>;
+    const validationBindings = validationResult.bindings as Record<string, unknown>;
+    (validationBindings.execution as Record<string, unknown>)[options.field] = options.value;
+    validationArtifact.validation_result_sha256 = sha256RedactedJsonPayload(validationResult);
+    writeJson(validationArtifactPath, validationArtifact);
+    const validationArtifactSha256 = sha256File(validationArtifactPath);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    Object.assign(receipt.review_output_contract as Record<string, unknown>, {
+        validation_artifact_sha256: validationArtifactSha256,
+        validation_result_sha256: validationArtifact.validation_result_sha256
+    });
+    Object.assign(receipt.review_findings_validation as Record<string, unknown>, {
+        artifact_sha256: validationArtifactSha256,
+        validation_result_sha256: validationArtifact.validation_result_sha256
+    });
+    writeJson(receiptPath, receipt);
 }
 
 test('readReviewArtifactState reports missing review artifacts without route decisions', () => {
@@ -328,6 +417,126 @@ test('readReviewArtifactState derives pass state from findings JSON artifacts wi
     assert.equal(state.verdictToken, 'REVIEW PASSED');
     assert.equal(state.failed, false);
     assert.ok(!state.violations.some((violation) => violation.includes('accepted pass token')));
+});
+
+test('readReviewArtifactState requires exact schema-4 receipt execution lineage', () => {
+    const reviewsRoot = tempRoot('garda-next-step-schema4-receipt-');
+    const taskId = 'T-100';
+    const reviewType = 'code';
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    writeFindingsReviewPackage({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        report: {
+            schema_version: 1,
+            task_id: taskId,
+            review_type: reviewType,
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'execution lineage',
+                note: 'Inspected schema-4 downstream trust bindings.',
+                evidence: [{ location: `${CHANGED_FILE}:855`, observation: 'Receipt lineage is checked.' }]
+            }],
+            coverage_ledger: {
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{ location: `${CHANGED_FILE}:855`, observation: 'Receipt lineage is checked.' }],
+                    finding_ids: []
+                }]
+            },
+            findings: { critical: [], high: [], medium: [], low: [] },
+            residual_risks: [],
+            reviewer_notes: []
+        }
+    });
+    promoteFindingsReviewPackageToSchema4({ reviewsRoot, taskId, reviewType });
+
+    const exact = readReviewArtifactState(
+        reviewsRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        null,
+        findingsPreflightPayload()
+    );
+    assert.ok(!exact.violations.some((violation) => violation.includes('review_execution_')));
+
+    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.review_execution_complete_scope_lineage_sha256 = null;
+    writeJson(receiptPath, receipt);
+    const missingLineage = readReviewArtifactState(
+        reviewsRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        null,
+        findingsPreflightPayload()
+    );
+
+    assert.equal(missingLineage.ready, false);
+    assert.ok(missingLineage.violations.includes(
+        'review receipt is missing valid review_execution_complete_scope_lineage_sha256'
+    ));
+});
+
+test('readReviewArtifactState rejects stale protected-finding bindings in schema-4 validation evidence', () => {
+    const reviewsRoot = tempRoot('garda-next-step-schema4-findings-');
+    const taskId = 'T-100';
+    const reviewType = 'code';
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    writeFindingsReviewPackage({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        report: {
+            schema_version: 1,
+            task_id: taskId,
+            review_type: reviewType,
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'protected findings',
+                note: 'Inspected protected finding reconciliation bindings.',
+                evidence: [{ location: `${CHANGED_FILE}:912`, observation: 'Validation lineage is checked.' }]
+            }],
+            coverage_ledger: {
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{ location: `${CHANGED_FILE}:912`, observation: 'Validation lineage is checked.' }],
+                    finding_ids: []
+                }]
+            },
+            findings: { critical: [], high: [], medium: [], low: [] },
+            residual_risks: [],
+            reviewer_notes: []
+        }
+    });
+    promoteFindingsReviewPackageToSchema4({ reviewsRoot, taskId, reviewType });
+    rewriteValidationArtifactExecutionBinding({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        field: 'review_execution_finding_reconciliation_sha256',
+        value: '9'.repeat(64)
+    });
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        null,
+        findingsPreflightPayload()
+    );
+
+    assert.equal(state.ready, false);
+    assert.ok(state.violations.some((violation) =>
+        violation.includes('review findings validation artifact execution binding')
+        && violation.includes('review_execution_finding_reconciliation_sha256')
+    ));
 });
 
 test('readReviewArtifactState rejects legacy verdict tokens for current findings-only contexts', () => {
@@ -807,7 +1016,7 @@ test('readReviewArtifactState rejects malformed findings JSON instead of derivin
 
     assert.equal(state.verdictToken, 'CODE REVIEW FAILED');
     assert.equal(state.failed, true);
-    assert.equal(state.failureKind, 'review-validation-rejected');
+    assert.equal(state.failureKind, 'review-correction-full-review-required');
     assert.equal(state.reviewFindingsValidationRejected, true);
     assert.ok(state.violations.some((violation) => violation.includes('review findings validation artifact is rejected')));
 });

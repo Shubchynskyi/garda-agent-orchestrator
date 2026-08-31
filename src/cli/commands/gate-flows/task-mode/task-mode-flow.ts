@@ -46,6 +46,9 @@ import {
 import {
     loadReviewExecutionPolicyConfig
 } from '../../../../core/review-execution-policy';
+import { loadFullSuiteValidationConfig } from '../../../../core/full-suite-validation-config';
+import { resolveReviewFollowUpTaskClosurePolicy } from '../../../../core/review-follow-up-task-closure-policy';
+import { readTaskQueueEntries } from '../../../../core/task-queue-read';
 import {
     normalizeOptionalPath,
     removeArtifactIfExists,
@@ -356,7 +359,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     }
     const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
 
-    const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId);
+    const taskQueueEntries = readTaskQueueEntries(repoRoot);
+    const taskQueueEntry = taskQueueEntries.get(taskId);
+    const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId, taskQueueEntries);
 
     assertTaskModeProtectedEntryAllowed({
         repoRoot,
@@ -422,9 +427,14 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtimeActiveProfile = resolvedProfile.selection.runtime_active_profile;
         runtimeProfileSource = resolvedProfile.selection.runtime_profile_source;
         const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
+        const fullSuiteValidation = loadFullSuiteValidationConfig(repoRoot);
         profilePolicySnapshot = buildTaskProfilePolicySnapshot(orchestratorRoot, rawTaskProfile, {
             reviewExecutionPolicyMode: reviewExecutionPolicy.mode,
-            reviewExecutionPolicyConfigured: reviewExecutionPolicy.configured
+            reviewExecutionPolicyConfigured: reviewExecutionPolicy.configured,
+            fullSuiteValidationEnabled: fullSuiteValidation.enabled,
+            fullSuiteValidationPlacement: fullSuiteValidation.placement,
+            reviewFollowUpTaskClosurePolicy: taskQueueEntry?.reviewFollowUpTaskClosurePolicy
+                || resolveReviewFollowUpTaskClosurePolicy(undefined)
         });
         if (
             Number.isInteger(resolvedProfile.effective_policy.depth)

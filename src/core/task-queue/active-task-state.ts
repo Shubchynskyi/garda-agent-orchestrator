@@ -4,49 +4,11 @@ import * as path from 'node:path';
 
 import { assertValidTaskId } from '../../gate-runtime/task-events-helpers';
 import { parseCanonicalActiveTaskQueue } from '../task-md-table';
+import { readTaskQueueStatusToken } from './task-queue-status';
+
+export * from './task-queue-status';
 
 const ACTIVE_TASK_RUNTIME_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
-
-export const TASK_QUEUE_STATUS_MARKERS: Readonly<Record<string, string>> = Object.freeze({
-    TODO: '🟦',
-    IN_PROGRESS: '🟨',
-    IN_REVIEW: '🟧',
-    DONE: '🟩',
-    BLOCKED: '🟥',
-    SPLIT_REQUIRED: '🟫',
-    DECOMPOSED: '🟪'
-});
-
-export function normalizeTaskQueueStatusCell(statusCell: string | null): string {
-    return String(statusCell || '').trim().toUpperCase();
-}
-
-export function readTaskQueueStatusToken(statusCell: string | null): string | null {
-    const normalized = normalizeTaskQueueStatusCell(statusCell);
-    for (const [status, marker] of Object.entries(TASK_QUEUE_STATUS_MARKERS)) {
-        if (normalized === status || normalized === marker) {
-            return status;
-        }
-        if (normalized.startsWith(marker)) {
-            const withoutMarker = normalized.slice(marker.length).trim();
-            if (withoutMarker === status) {
-                return status;
-            }
-        }
-    }
-    return null;
-}
-
-export function formatTaskQueueStatusCell(existingCell: string, nextStatus: string): string {
-    const normalizedStatus = normalizeTaskQueueStatusCell(nextStatus);
-    const leadingWhitespace = existingCell.match(/^\s*/)?.[0] ?? ' ';
-    const trailingWhitespace = existingCell.match(/\s*$/)?.[0] ?? ' ';
-    const hasMarker = Object.values(TASK_QUEUE_STATUS_MARKERS).some((marker) => existingCell.includes(marker));
-    const formattedStatus = hasMarker && TASK_QUEUE_STATUS_MARKERS[normalizedStatus]
-        ? `${TASK_QUEUE_STATUS_MARKERS[normalizedStatus]} ${normalizedStatus}`
-        : normalizedStatus;
-    return `${leadingWhitespace}${formattedStatus}${trailingWhitespace}`;
-}
 
 export function isTaskQueueActiveStatus(statusCell: string | null): boolean {
     const statusToken = readTaskQueueStatusToken(statusCell);

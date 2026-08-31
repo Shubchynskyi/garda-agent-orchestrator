@@ -2,8 +2,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
 import { getReviewExecutionPreparationBatches, resolveReviewExecutionPolicyModeFromPreflight } from '../../../../core/review-execution-policy';
+import { resolveCompiledReviewDependencyGraphFromPreflight } from '../../../../core/review-dependency-graph';
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { resolveTaskProfileReviewTriggerPolicy } from '../../../../policy/task-profile-policy-snapshot';
+import {
+    collectReviewRemediationProtectedBoundarySignals,
+    hasReviewRemediationPolicySourceChange,
+    resolveReviewRemediationModePolicyFromSnapshot
+} from '../../../../policy/review-remediation-mode-policy';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
 import { getPreflightContext, getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import {
@@ -11,6 +17,20 @@ import {
     readTaskReviewArtifactTexts,
     type IgnoredRemediationTargetAssessment
 } from '../../../../gates/review-remediation/ignored-remediation-targets';
+import {
+    getReviewRemediationBaselineArtifactPath
+} from '../../../../gates/review-remediation/review-remediation-baseline';
+import {
+    classifyReviewRemediationDelta
+} from '../../../../gates/review-remediation/review-remediation-delta';
+import { inspectTaskEventFile } from '../../../../gate-runtime/task-events';
+import {
+    resolveAuthoritativeReviewRemediationDecision,
+    type AuthoritativeReviewRemediationDecision,
+    type ReviewRemediationDecisionClassification,
+    type ReviewRemediationModePolicyValidationInputs,
+    type ReviewRemediationReusableReceipt
+} from '../../../../gates/review-remediation/review-remediation-recovery-routing';
 import { buildReviewContextPreflightDiffExpectations } from '../../../../gates/review-context/review-context-contract';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
@@ -28,6 +48,10 @@ import {
     readTimelineEventsSummary,
     type BuildReviewContextCommandResult
 } from '../../gate-build-handlers';
+import {
+    bindAuthoritativeRemediationDecisionToPreflight,
+    buildAuthenticatedRemediationReviewExecution
+} from '../review-context/review-context-flow';
 import {
     runHandshakeDiagnosticsCommand,
     runLoadRulePackCommand,
@@ -52,7 +76,10 @@ import {
     resolveReviewCycleReplayScope
 } from './recovery-flow-replay-scope';
 import { buildReviewCycleRestartedOutput } from './recovery-flow-rendering';
-import { normalizeChangedFiles } from './recovery-flow-shared';
+import {
+    excludeUnchangedDirtyWorkspaceBaselineFiles,
+    normalizeChangedFiles
+} from './recovery-flow-shared';
 import type {
     RestartReviewCycleCommandOptions,
     ReviewRemediationImpactAnalysis
@@ -84,6 +111,276 @@ function getDependencyBlockReason(error: unknown, reviewType: string): string | 
         return null;
     }
     return message.trim();
+}
+
+export function resolveRuntimeReviewRemediationModeGuards(options: {
+    currentChangedFiles: readonly string[];
+    preflightPayload?: unknown;
+    authenticatedTaskCriteria?: string | null;
+    currentTaskCriteria?: string | null;
+}) {
+    const protectedBoundarySignals = collectReviewRemediationProtectedBoundarySignals({
+        changedFiles: options.currentChangedFiles,
+        preflight: options.preflightPayload
+    });
+    const criteriaComparisonRequested = options.authenticatedTaskCriteria !== undefined
+        || options.currentTaskCriteria !== undefined;
+    const authenticatedTaskCriteria = String(options.authenticatedTaskCriteria || '').trim();
+    const currentTaskCriteria = String(options.currentTaskCriteria || '').trim();
+    const criteriaBindingChanged = criteriaComparisonRequested
+        && (
+            !authenticatedTaskCriteria
+            || !currentTaskCriteria
+            || authenticatedTaskCriteria !== currentTaskCriteria
+        );
+    return {
+        protectedBoundarySignals,
+        taskCriteriaChanged:
+            protectedBoundarySignals.includes('task_criteria_or_policy') || criteriaBindingChanged,
+        policyChanged: hasReviewRemediationPolicySourceChange(options.currentChangedFiles)
+    };
+}
+
+export function resolveRuntimeDecisionInputs(options: {
+    repoRoot: string;
+    taskId: string;
+    remediationReviewType: string;
+    requiredReviewTypes: readonly string[];
+    remediationFixClassification: {
+        category: string;
+        reason: string;
+        blocked_before_reuse: boolean;
+        invalidated_review_types: string[];
+    };
+    profilePolicySnapshot: unknown;
+    currentChangedFiles: readonly string[];
+    reviewTriggerPolicy: {
+        test_path_regexes: readonly string[];
+        test_refactor_structural_path_regexes: readonly string[];
+        test_refactor_changed_lines_threshold: number;
+    };
+    allowAuthenticatedDelta: boolean;
+    preflightPayload?: unknown;
+    authenticatedTaskCriteria?: string | null;
+    currentTaskCriteria?: string | null;
+}): {
+    currentReviewType: string;
+    classification: ReviewRemediationDecisionClassification;
+    modePolicyValidationInputs: ReviewRemediationModePolicyValidationInputs | null;
+} {
+    const currentReviewType = options.remediationReviewType
+        || options.remediationFixClassification.invalidated_review_types[0]
+        || options.requiredReviewTypes[0]
+        || '';
+    if (!currentReviewType) {
+        throw new Error('Review remediation decision requires at least one current required review lane.');
+    }
+    const buildFullFallback = (reason: string): {
+        currentReviewType: string;
+        classification: ReviewRemediationDecisionClassification;
+        modePolicyValidationInputs: null;
+    } => {
+        const invalidatedReviewTypes = [...new Set([
+            ...options.remediationFixClassification.invalidated_review_types,
+            currentReviewType
+        ])];
+        return {
+            currentReviewType,
+            modePolicyValidationInputs: null,
+            classification: {
+                source: 'runtime_fix',
+                classification: {
+                    category: options.remediationFixClassification.category,
+                    reason,
+                    blocked_before_reuse: options.remediationFixClassification.blocked_before_reuse,
+                    invalidated_review_types: invalidatedReviewTypes
+                }
+            }
+        };
+    };
+    if (options.allowAuthenticatedDelta && options.remediationReviewType) {
+        const reviewArtifactPath = resolveDefaultReviewsPath(
+            options.repoRoot,
+            `${options.taskId}-${currentReviewType}.md`
+        );
+        const baselineArtifactPath = getReviewRemediationBaselineArtifactPath(reviewArtifactPath);
+        if (!fs.existsSync(baselineArtifactPath) || !fs.statSync(baselineArtifactPath).isFile()) {
+            return buildFullFallback('Authenticated remediation baseline is unavailable; FULL review is required.');
+        }
+        const orchestratorRoot = resolveOrchestratorRoot(options.repoRoot);
+        const timelinePath = path.join(orchestratorRoot, 'runtime', 'task-events', `${options.taskId}.jsonl`);
+        const recordedEvent = { details: null as Record<string, unknown> | null };
+        let consecutiveDeltaReviews = 0;
+        const timelineIntegrity = inspectTaskEventFile(timelinePath, options.taskId, {
+            onIntegrityEvent: (event) => {
+                const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                    ? event.details as Record<string, unknown>
+                    : null;
+                if (
+                    String(event.event_type || '').trim().toUpperCase() === 'REVIEW_RECORDED'
+                    && String(event.outcome || '').trim().toUpperCase() === 'PASS'
+                    && String(details?.review_type || '').trim().toLowerCase() === currentReviewType
+                ) {
+                    recordedEvent.details = details;
+                    const recordedMode = String(details?.review_execution_mode || '').trim().toUpperCase();
+                    consecutiveDeltaReviews = recordedMode === 'DELTA'
+                        ? consecutiveDeltaReviews + 1
+                        : 0;
+                }
+            }
+        });
+        if (timelineIntegrity.status !== 'PASS') {
+            return buildFullFallback(
+                `Task timeline cannot authenticate remediation snapshot lineage (${timelineIntegrity.status}); FULL review is required.`
+            );
+        }
+        const recordedEventDetails = recordedEvent.details;
+        if (!recordedEventDetails) {
+            return buildFullFallback(
+                'Review telemetry does not bind an immutable remediation snapshot; FULL review is required.'
+            );
+        }
+        const recordedReviewExecutionMode = String(
+            recordedEventDetails.review_execution_mode || ''
+        ).trim().toUpperCase();
+        if (!['FULL', 'DELTA'].includes(recordedReviewExecutionMode)) {
+            return buildFullFallback(
+                `Review telemetry contains unsupported review execution mode `
+                + `'${recordedReviewExecutionMode || 'missing'}'; FULL review is required.`
+            );
+        }
+        if (
+            !String(recordedEventDetails.remediation_baseline_snapshot_path || '').trim()
+            || !String(recordedEventDetails.remediation_baseline_snapshot_sha256 || '').trim()
+        ) {
+            return buildFullFallback(
+                'Latest authenticated review telemetry does not bind an immutable remediation snapshot; '
+                + 'FULL review is required.'
+            );
+        }
+        const baselineSnapshotPath = path.resolve(
+            options.repoRoot,
+            String(recordedEventDetails.remediation_baseline_snapshot_path)
+        );
+        const baselineSnapshotSha256 = String(
+            recordedEventDetails.remediation_baseline_snapshot_sha256 || ''
+        ).trim().toLowerCase();
+        const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+        const expectedFileName = (
+            `${options.taskId}-${currentReviewType}-remediation-baseline-${baselineSnapshotSha256}.json`
+        ).toLowerCase();
+        if (
+            !/^[0-9a-f]{64}$/u.test(baselineSnapshotSha256)
+            || !gateHelpers.isPathRealpathInsideRoot(baselineSnapshotPath, reviewsRoot, { allowMissing: false })
+            || path.basename(baselineSnapshotPath).toLowerCase() !== expectedFileName
+        ) {
+            return buildFullFallback(
+                'Review telemetry contains an unsafe or invalid remediation snapshot binding; FULL review is required.'
+            );
+        }
+        try {
+            const modePolicyResolution = resolveReviewRemediationModePolicyFromSnapshot(
+                options.profilePolicySnapshot
+            );
+            const modeGuards = resolveRuntimeReviewRemediationModeGuards(options);
+            const delta = classifyReviewRemediationDelta({
+                repoRoot: options.repoRoot,
+                taskId: options.taskId,
+                reviewType: currentReviewType,
+                baselineArtifactPath: baselineSnapshotPath,
+                baselineArtifactSha256: baselineSnapshotSha256,
+                currentChangedFiles: options.currentChangedFiles,
+                testPathRegexes: options.reviewTriggerPolicy.test_path_regexes,
+                structuralTestPathRegexes: options.reviewTriggerPolicy.test_refactor_structural_path_regexes,
+                structuralTestChangedLinesThreshold:
+                    options.reviewTriggerPolicy.test_refactor_changed_lines_threshold,
+                modePolicy: modePolicyResolution.policy,
+                modePolicyLegacyFallback: modePolicyResolution.legacy_fallback,
+                consecutiveDeltaReviews,
+                protectedBoundarySignals: modeGuards.protectedBoundarySignals,
+                taskCriteriaChanged: modeGuards.taskCriteriaChanged,
+                policyChanged: modeGuards.policyChanged,
+                uncertainCrossFileImpact:
+                    options.remediationFixClassification.category === 'unknown'
+            });
+            const baseline = JSON.parse(fs.readFileSync(baselineSnapshotPath, 'utf8')) as Record<string, unknown>;
+            const bindings = baseline.bindings as Record<string, unknown> | undefined;
+            const policy = bindings?.policy as Record<string, unknown> | undefined;
+            return {
+                currentReviewType,
+                modePolicyValidationInputs: {
+                    consecutiveDeltaReviews,
+                    protectedBoundarySignals: modeGuards.protectedBoundarySignals,
+                    taskCriteriaChanged: modeGuards.taskCriteriaChanged,
+                    policyChanged: modeGuards.policyChanged,
+                    uncertainCrossFileImpact:
+                        options.remediationFixClassification.category === 'unknown'
+                },
+                classification: {
+                    source: 'delta',
+                    delta,
+                    profilePolicySnapshot: options.profilePolicySnapshot,
+                    baselineProfilePolicySnapshotSha256: String(
+                        policy?.profile_policy_snapshot_sha256 || ''
+                    ).trim().toLowerCase()
+                }
+            };
+        } catch (error: unknown) {
+            return buildFullFallback(
+                `Authenticated remediation snapshot could not be validated: ${error instanceof Error ? error.message : String(error)} FULL review is required.`
+            );
+        }
+    }
+    return {
+        currentReviewType,
+        modePolicyValidationInputs: null,
+        classification: {
+            source: 'runtime_fix',
+            classification: {
+                category: options.remediationFixClassification.category,
+                reason: options.remediationFixClassification.reason,
+                blocked_before_reuse: options.remediationFixClassification.blocked_before_reuse,
+                invalidated_review_types: options.remediationFixClassification.invalidated_review_types
+            }
+        }
+    };
+}
+
+function requireReadyAuthoritativeDecision(
+    decision: AuthoritativeReviewRemediationDecision
+): AuthoritativeReviewRemediationDecision {
+    if (decision.status === 'BLOCKED') {
+        throw new Error(
+            `Review remediation authoritative decision is blocked: ${decision.blocked_reasons.join(' ')}`
+        );
+    }
+    return decision;
+}
+
+export function buildReviewEvidenceOnlyRestartPlan(
+    invalidatedReviewTypes: readonly string[],
+    remediationReviewType: string
+): {
+    launchRequiredReviewTypes: string[];
+    pendingReviewTypes: string[];
+    pendingReason: string;
+    nextStep: string;
+} {
+    const normalizedInvalidatedReviewTypes = [...new Set(invalidatedReviewTypes
+        .map((reviewType) => String(reviewType || '').trim().toLowerCase())
+        .filter(Boolean))];
+    const restartReviewTypes = normalizedInvalidatedReviewTypes.length > 0
+        ? normalizedInvalidatedReviewTypes
+        : [String(remediationReviewType || '').trim().toLowerCase()].filter(Boolean);
+    const reviewLaneSummary = restartReviewTypes.join(', ');
+    return {
+        launchRequiredReviewTypes: [...restartReviewTypes],
+        pendingReviewTypes: [...restartReviewTypes],
+        pendingReason: 'failed delegated reviewer evidence invalidated the failed lane and every frozen-graph downstream lane',
+        nextStep: restartReviewTypes.length === 1
+            ? `Rerun next-step to materialize preserved review evidence and prepare one fresh '${reviewLaneSummary}' reviewer launch.`
+            : `Rerun next-step to materialize preserved review evidence and prepare fresh reviewer launches for invalidated lanes: ${reviewLaneSummary}.`
+    };
 }
 
 export async function runRestartReviewCycleCommand(
@@ -346,6 +643,11 @@ export async function runRestartReviewCycleCommand(
             }
             const requiredReviews = previousPreflight.preflight.required_reviews as Record<string, boolean>;
             const requiredReviewTypes = collectRequiredReviewTypes(requiredReviews);
+            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(previousPreflight.preflight);
+            const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+                previousPreflight.preflight,
+                reviewExecutionPolicyMode
+            );
             if (!requiredReviewTypes.includes(remediationReviewType)) {
                 throw new Error(
                     `review-evidence-only restart review type '${remediationReviewType}' is not required by the current preflight.`
@@ -372,10 +674,19 @@ export async function runRestartReviewCycleCommand(
                 true,
                 []
             ) as Record<string, unknown>;
-            const liveChangedFiles = normalizeChangedFiles(liveWorkspaceSnapshot.changed_files as unknown[]);
+            const liveChangedFiles = excludeUnchangedDirtyWorkspaceBaselineFiles(
+                repoRoot,
+                liveWorkspaceSnapshot.changed_files as unknown[],
+                previousTaskMode.dirty_workspace_baseline
+            );
+            const expectedChangedFiles = excludeUnchangedDirtyWorkspaceBaselineFiles(
+                repoRoot,
+                previousChangedFiles,
+                previousTaskMode.dirty_workspace_baseline
+            );
             if (
-                liveChangedFiles.length !== previousChangedFiles.length
-                || liveChangedFiles.some((entry, index) => entry !== previousChangedFiles[index])
+                liveChangedFiles.length !== expectedChangedFiles.length
+                || liveChangedFiles.some((entry, index) => entry !== expectedChangedFiles[index])
             ) {
                 throw new Error(
                     'review-evidence-only restart is blocked because the live workspace file scope changed after compile.'
@@ -406,13 +717,39 @@ export async function runRestartReviewCycleCommand(
                     testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
                     testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes,
                     reviewEvidenceOnly: true,
-                    remediationReviewType
+                    remediationReviewType,
+                    reviewDependencyGraph
                 }
             );
-            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(previousPreflight.preflight);
+            const evidenceOnlyDecisionInputs = resolveRuntimeDecisionInputs({
+                repoRoot,
+                taskId: resolvedTaskId,
+                remediationReviewType,
+                requiredReviewTypes,
+                remediationFixClassification,
+                profilePolicySnapshot: previousTaskMode.profile_policy_snapshot,
+                currentChangedFiles: [],
+                reviewTriggerPolicy,
+                allowAuthenticatedDelta: false
+            });
+            const authoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+                requireReadyAuthoritativeDecision(resolveAuthoritativeReviewRemediationDecision({
+                    taskId: resolvedTaskId,
+                    currentReviewType: evidenceOnlyDecisionInputs.currentReviewType,
+                    classification: evidenceOnlyDecisionInputs.classification,
+                    modePolicyValidationInputs: evidenceOnlyDecisionInputs.modePolicyValidationInputs,
+                    requiredReviews,
+                    reviewExecutionPolicyMode,
+                    reviewDependencyGraph
+                })),
+                currentPreflightSha256
+            );
             const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, previousPreflight);
-            const nextStep =
-                `Rerun next-step to materialize preserved review evidence and prepare one fresh '${remediationReviewType}' reviewer launch.`;
+            const evidenceOnlyRestartPlan = buildReviewEvidenceOnlyRestartPlan(
+                authoritativeDecision.invalidated_review_types,
+                remediationReviewType
+            );
+            const nextStep = evidenceOnlyRestartPlan.nextStep;
             const remediationArtifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
                 schema_version: 1,
                 task_id: resolvedTaskId,
@@ -424,6 +761,8 @@ export async function runRestartReviewCycleCommand(
                 detection_source: 'review_evidence_only',
                 impact_analysis: remediationImpactAnalysis,
                 remediation_fix_classification: remediationFixClassification,
+                authoritative_review_decision: authoritativeDecision,
+                authoritative_review_classification: evidenceOnlyDecisionInputs.classification,
                 remediation_scope: {
                     status: scopeBoundary.status,
                     previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -441,10 +780,10 @@ export async function runRestartReviewCycleCommand(
                 review_reuse: {
                     review_execution_policy: reviewExecutionPolicyMode,
                     prepared_review_types: [],
-                    launch_required_review_types: [remediationReviewType],
-                    reused_review_types: remediationFixClassification.preserved_review_types,
-                    pending_review_types: [remediationReviewType],
-                    pending_reason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes'
+                    launch_required_review_types: evidenceOnlyRestartPlan.launchRequiredReviewTypes,
+                    reused_review_types: authoritativeDecision.reused_review_types,
+                    pending_review_types: evidenceOnlyRestartPlan.pendingReviewTypes,
+                    pending_reason: evidenceOnlyRestartPlan.pendingReason
                 }
             });
             const restartArtifactPath = appendRestartCompletedEvidence({
@@ -468,15 +807,17 @@ export async function runRestartReviewCycleCommand(
                     impact_analysis_source: remediationImpactAnalysis.source,
                     affected_files_count: 0,
                     remediation_category: remediationFixClassification.category,
-                    invalidated_review_types: remediationFixClassification.invalidated_review_types,
-                    preserved_review_types: remediationFixClassification.preserved_review_types,
+                    invalidated_review_types: authoritativeDecision.invalidated_review_types,
+                    preserved_review_types: authoritativeDecision.preserved_review_types,
+                    authoritative_review_decision: authoritativeDecision,
+                    authoritative_review_classification: evidenceOnlyDecisionInputs.classification,
                     review_contexts_refresh_status: 'deferred_to_navigator',
                     review_execution_policy_mode: reviewExecutionPolicyMode,
                     prepared_review_types: [],
-                    launch_required_review_types: [remediationReviewType],
-                    reused_review_types: remediationFixClassification.preserved_review_types,
-                    pending_review_types: [remediationReviewType],
-                    pending_reason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes'
+                    launch_required_review_types: evidenceOnlyRestartPlan.launchRequiredReviewTypes,
+                    reused_review_types: authoritativeDecision.reused_review_types,
+                    pending_review_types: evidenceOnlyRestartPlan.pendingReviewTypes,
+                    pending_reason: evidenceOnlyRestartPlan.pendingReason
                 }
             });
             return {
@@ -490,8 +831,8 @@ export async function runRestartReviewCycleCommand(
                     affectedFilesCount: 0,
                     impactAnalysisSource: remediationImpactAnalysis.source,
                     remediationCategory: remediationFixClassification.category,
-                    invalidatedReviewTypes: remediationFixClassification.invalidated_review_types,
-                    preservedReviewTypes: remediationFixClassification.preserved_review_types,
+                    invalidatedReviewTypes: authoritativeDecision.invalidated_review_types,
+                    preservedReviewTypes: authoritativeDecision.preserved_review_types,
                     scopeBoundaryStatus: scopeBoundary.status,
                     previousFilesCount: previousChangedFiles.length,
                     currentFilesCount: 0,
@@ -500,10 +841,10 @@ export async function runRestartReviewCycleCommand(
                     effectiveDepth,
                     reviewExecutionPolicyMode,
                     preparedResults: [],
-                    launchRequiredReviewTypes: [remediationReviewType],
-                    reusedReviewTypes: remediationFixClassification.preserved_review_types,
-                    pendingReviewTypes: [remediationReviewType],
-                    pendingReason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes',
+                    launchRequiredReviewTypes: evidenceOnlyRestartPlan.launchRequiredReviewTypes,
+                    reusedReviewTypes: authoritativeDecision.reused_review_types,
+                    pendingReviewTypes: evidenceOnlyRestartPlan.pendingReviewTypes,
+                    pendingReason: evidenceOnlyRestartPlan.pendingReason,
                     nextStep,
                     preflightMode: previousPreflight.preflight.mode,
                     preflightScopeCategory: previousPreflight.preflight.scope_category,
@@ -559,6 +900,10 @@ export async function runRestartReviewCycleCommand(
         const refreshedRequiredReviews = refreshedPreflight.preflight.required_reviews as Record<string, boolean>;
         const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, refreshedPreflight);
         const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(refreshedPreflight.preflight);
+        const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+            refreshedPreflight.preflight,
+            reviewExecutionPolicyMode
+        );
 
         ensureStepPassed('load-rule-pack (POST_PREFLIGHT)', runLoadRulePackCommand({
             repoRoot,
@@ -600,7 +945,8 @@ export async function runRestartReviewCycleCommand(
 
         const requiredReviewBatches = getReviewExecutionPreparationBatches(
             refreshedRequiredReviews,
-            reviewExecutionPolicyMode
+            reviewExecutionPolicyMode,
+            reviewDependencyGraph
         );
         const requiredReviewTypes = requiredReviewBatches.flat();
         remediationFixClassification = classifyReviewRemediationFix(
@@ -612,8 +958,48 @@ export async function runRestartReviewCycleCommand(
             {
                 testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
                 testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes,
-                changedFileStats: remediationWorkspaceSnapshot.changed_file_stats
+                changedFileStats: remediationWorkspaceSnapshot.changed_file_stats,
+                reviewDependencyGraph
             }
+        );
+        const authoritativeDecisionInputs = resolveRuntimeDecisionInputs({
+            repoRoot,
+            taskId: resolvedTaskId,
+            remediationReviewType,
+            requiredReviewTypes,
+            remediationFixClassification,
+            profilePolicySnapshot: previousTaskMode.profile_policy_snapshot,
+            currentChangedFiles: scopeBoundary.currentChangedFiles,
+            reviewTriggerPolicy,
+            allowAuthenticatedDelta: true,
+            preflightPayload: refreshedPreflight.preflight,
+            authenticatedTaskCriteria: previousTaskMode.task_summary,
+            currentTaskCriteria: taskSummary
+        });
+        const preliminaryAuthoritativeDecisionWithoutPreflight = requireReadyAuthoritativeDecision(
+            resolveAuthoritativeReviewRemediationDecision({
+                taskId: resolvedTaskId,
+                currentReviewType: authoritativeDecisionInputs.currentReviewType,
+                classification: authoritativeDecisionInputs.classification,
+                modePolicyValidationInputs: authoritativeDecisionInputs.modePolicyValidationInputs,
+                requiredReviews: refreshedRequiredReviews,
+                reviewExecutionPolicyMode,
+                reviewDependencyGraph
+            })
+        );
+        const refreshedPreflightSha256 = requireArtifactSha256(
+            refreshedPreflightPath,
+            'refreshed-preflight'
+        );
+        const preliminaryAuthoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+            preliminaryAuthoritativeDecisionWithoutPreflight,
+            refreshedPreflightSha256
+        );
+        const preliminaryLaneDecisionByType = new Map(
+            preliminaryAuthoritativeDecision.lane_decisions.map((decision) => [decision.review_type, decision])
+        );
+        const refreshedFullReviewScope = normalizeChangedFiles(
+            refreshedPreflight.preflight.changed_files as unknown[]
         );
         const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
         const sharedTokenEconomyConfigData: TokenEconomyConfig | null = (
@@ -632,11 +1018,10 @@ export async function runRestartReviewCycleCommand(
             allowLegacyFallback: true
         });
         const preparedResults: BuildReviewContextCommandResult[] = [];
-        const reusedReviewTypes: string[] = [];
+        const reusableReceipts: ReviewRemediationReusableReceipt[] = [];
         const launchRequiredReviewTypes: string[] = [];
         let pendingReviewTypes: string[] = [];
         let pendingReason: string | null = null;
-        const invalidatedReviewTypes = new Set(remediationFixClassification.invalidated_review_types);
 
         for (let batchIndex = 0; batchIndex < requiredReviewBatches.length; batchIndex += 1) {
             const reviewBatch = requiredReviewBatches[batchIndex];
@@ -645,12 +1030,10 @@ export async function runRestartReviewCycleCommand(
             );
             const batchResults = await Promise.all(reviewBatch.map(async (reviewType) => {
                 try {
-                    const reviewReuseBlockedReason = invalidatedReviewTypes.has(reviewType)
-                        ? `review reuse blocked by remediation classification '${remediationFixClassification.category}' for invalidated review type '${reviewType}'`
-                        : '';
-                    const remediationPreservedScopeMismatchReason = reviewReuseBlockedReason
-                        ? ''
-                        : `remediation classification '${remediationFixClassification.category}' preserved review type '${reviewType}'`;
+                    const laneDecision = preliminaryLaneDecisionByType.get(reviewType);
+                    if (!laneDecision) {
+                        throw new Error(`Authoritative remediation decision is missing required lane '${reviewType}'.`);
+                    }
                     const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(
                         refreshedPreflight.preflight,
                         reviewType
@@ -682,8 +1065,6 @@ export async function runRestartReviewCycleCommand(
                         tokenEconomyConfigData: sharedTokenEconomyConfigData,
                         scopedDiffMetadataPath,
                         timelineEventsSummary: batchTimelineSummary,
-                        reviewReuseBlockedReason,
-                        remediationPreservedScopeMismatchReason,
                         ruleContextSectionsCache: sharedRuleContextSectionsCache,
                         ruleFileContentCache: sharedRuleFileContentCache
                     });
@@ -713,9 +1094,23 @@ export async function runRestartReviewCycleCommand(
                     continue;
                 }
                 preparedResults.push(result.prepared);
-                if (result.prepared.reusedReviewEvidence) {
-                    reusedReviewTypes.push(result.reviewType);
+                if (result.prepared.acceptedReviewEvidenceKind) {
+                    reusableReceipts.push({
+                        review_type: result.reviewType,
+                        reuse_status: 'ACCEPTED',
+                        findings_satisfied: true,
+                        evidence_kind: result.prepared.acceptedReviewEvidenceKind,
+                        reason: result.prepared.acceptedReviewEvidenceKind === 'REUSED'
+                            ? 'build-review-context accepted authenticated current-cycle reuse evidence'
+                            : 'build-review-context accepted fresh authenticated current-cycle review evidence'
+                    });
                 } else {
+                    reusableReceipts.push({
+                        review_type: result.reviewType,
+                        reuse_status: 'REJECTED',
+                        findings_satisfied: false,
+                        reason: 'build-review-context did not accept authenticated satisfied reuse evidence'
+                    });
                     launchRequiredReviewTypes.push(result.reviewType);
                 }
             }
@@ -726,6 +1121,82 @@ export async function runRestartReviewCycleCommand(
                 pendingReason = dependencyBlockedResult.dependencyBlockReason;
                 break;
             }
+        }
+
+        const authoritativeDecision = bindAuthoritativeRemediationDecisionToPreflight(
+            requireReadyAuthoritativeDecision(resolveAuthoritativeReviewRemediationDecision({
+                taskId: resolvedTaskId,
+                currentReviewType: authoritativeDecisionInputs.currentReviewType,
+                classification: authoritativeDecisionInputs.classification,
+                modePolicyValidationInputs: authoritativeDecisionInputs.modePolicyValidationInputs,
+                requiredReviews: refreshedRequiredReviews,
+                reviewExecutionPolicyMode,
+                reviewDependencyGraph,
+                reusableReceipts
+            })),
+            refreshedPreflightSha256
+        );
+        const reusedReviewTypes = authoritativeDecision.reused_review_types;
+        const finalLaneDecisionByType = new Map(
+            authoritativeDecision.lane_decisions.map((decision) => [decision.review_type, decision])
+        );
+
+        for (let index = 0; index < preparedResults.length; index += 1) {
+            const preparedResult = preparedResults[index];
+            if (!launchRequiredReviewTypes.includes(preparedResult.reviewType)) {
+                continue;
+            }
+            const laneDecision = finalLaneDecisionByType.get(preparedResult.reviewType);
+            if (!laneDecision || laneDecision.mode === 'REUSE') {
+                throw new Error(
+                    `Final authoritative remediation decision has no executable FULL/DELTA lane `
+                    + `'${preparedResult.reviewType}'.`
+                );
+            }
+            const reviewExecution = buildAuthenticatedRemediationReviewExecution({
+                taskId: resolvedTaskId,
+                reviewType: preparedResult.reviewType,
+                preflightSha256: refreshedPreflightSha256,
+                fullReviewScope: refreshedFullReviewScope,
+                authoritativeDecision,
+                authoritativeClassification: authoritativeDecisionInputs.classification,
+                persistedDecisionSha256: authoritativeDecision.decision_sha256
+            });
+            const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(
+                refreshedPreflight.preflight,
+                preparedResult.reviewType
+            ).expectedScopedDiff;
+            preparedResults[index] = await runBuildReviewContextCommand({
+                repoRoot,
+                reviewType: preparedResult.reviewType,
+                depth: String(effectiveDepth),
+                preflightPath: refreshedPreflightPath,
+                preflightPayload: refreshedPreflight.preflight,
+                taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+                taskModeEvidence: previousTaskMode,
+                runtimeReviewerIdentity: sharedRuntimeReviewerIdentity,
+                tokenEconomyConfigPath: sharedTokenEconomyConfigPath,
+                tokenEconomyConfigData: sharedTokenEconomyConfigData,
+                scopedDiffMetadataPath: scopedDiffExpected
+                    ? resolveScopedDiffMetadataPath(
+                        '',
+                        refreshedPreflightPath,
+                        preparedResult.reviewType,
+                        repoRoot
+                    )
+                    : '',
+                timelineEventsSummary: readTimelineEventsSummary(
+                    gateHelpers.joinOrchestratorPath(
+                        repoRoot,
+                        path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`)
+                    )
+                ),
+                reviewReuseBlockedReason: laneDecision.reason,
+                reviewExecutionContract: reviewExecution.contract,
+                reviewExecutionValidationAuthority: reviewExecution.validationAuthority,
+                ruleContextSectionsCache: sharedRuleContextSectionsCache,
+                ruleFileContentCache: sharedRuleFileContentCache
+            });
         }
 
         const pendingOnTrustBoundaryPrerequisite = pendingReason?.includes(
@@ -763,6 +1234,8 @@ export async function runRestartReviewCycleCommand(
                 violations: ignoredRemediationTargetAssessment.violations
             },
             remediation_fix_classification: remediationFixClassification,
+            authoritative_review_decision: authoritativeDecision,
+            authoritative_review_classification: authoritativeDecisionInputs.classification,
             remediation_scope: {
                 status: scopeBoundary.status,
                 previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -813,8 +1286,10 @@ export async function runRestartReviewCycleCommand(
                 impact_analysis_source: remediationImpactAnalysis.source,
                 affected_files_count: scopeBoundary.currentChangedFiles.length,
                 remediation_category: remediationFixClassification.category,
-                invalidated_review_types: remediationFixClassification.invalidated_review_types,
-                preserved_review_types: remediationFixClassification.preserved_review_types,
+                invalidated_review_types: authoritativeDecision.invalidated_review_types,
+                preserved_review_types: authoritativeDecision.preserved_review_types,
+                authoritative_review_decision: authoritativeDecision,
+                authoritative_review_classification: authoritativeDecisionInputs.classification,
                 review_contexts_refresh_status: reviewContextsRefreshStatus,
                 review_execution_policy_mode: reviewExecutionPolicyMode,
                 prepared_review_types: preparedResults.map((result) => result.reviewType),
@@ -837,8 +1312,8 @@ export async function runRestartReviewCycleCommand(
                 affectedFilesCount: scopeBoundary.currentChangedFiles.length,
                 impactAnalysisSource: remediationImpactAnalysis.source,
                 remediationCategory: remediationFixClassification.category,
-                invalidatedReviewTypes: remediationFixClassification.invalidated_review_types,
-                preservedReviewTypes: remediationFixClassification.preserved_review_types,
+                invalidatedReviewTypes: authoritativeDecision.invalidated_review_types,
+                preservedReviewTypes: authoritativeDecision.preserved_review_types,
                 scopeBoundaryStatus: scopeBoundary.status,
                 previousFilesCount: scopeBoundary.previousChangedFiles.length,
                 currentFilesCount: scopeBoundary.currentChangedFiles.length,

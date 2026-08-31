@@ -8,6 +8,17 @@ import {
     type EffectiveReviewExecutionPolicyMode,
     type ResolvedReviewExecutionPolicyConfig
 } from '../../core/review-execution-policy';
+import {
+    bindFullSuiteValidationBarrier,
+    resolveCompiledReviewDependencyGraphFromPreflight
+} from '../../core/review-dependency-graph';
+import {
+    assertEffectiveReviewSnapshotExecutionPolicyBinding,
+    getEffectiveReviewSnapshotViolations,
+    hasCurrentReviewDependencyGraphContract,
+    type EffectiveReviewSnapshot,
+    type FrozenReviewExecutionPolicyBinding
+} from '../../policy/effective-review-snapshot';
 import { isPlainRecord } from '../../core/records';
 import {
     readTaskQueueEntries,
@@ -61,8 +72,7 @@ import {
     sameRepairChildScopes,
     validateRepairChildChangedFiles
 } from '../full-suite/full-suite-repair-child-scope';
-import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
-import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
+import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
 import {
     readRecoverableFullSuiteValidationRunMarker,
     resolveFullSuiteValidationRunMarkerPath
@@ -132,8 +142,16 @@ import {
     suggestSkills
 } from '../../runtime/skills';
 import {
+    getActiveTaskLifecycleGateIds,
+    resolveFirstActiveTaskLifecycleGate
+} from '../../runtime/task-lifecycle-phase-runtime';
+import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
+import {
+    buildNextStepTaskStartGuidance,
+    type NextStepTaskStartGuidanceSummary
+} from './next-step-task-start-guidance';
 import {
     selectTaskEntryRulePackFileNames
 } from '../rule-pack/rule-pack-selection';
@@ -143,8 +161,12 @@ import {
     readPreflightWorkspaceReadiness
 } from './next-step-compile-full-suite-readiness';
 import {
-    getClassificationConfig
+    getClassificationConfig,
+    getReviewCapabilities
 } from '../preflight/classify-change-config';
+import {
+    resolveTaskRequiredReviewDeclaration
+} from '../preflight/classify-change-task-required-reviews';
 import {
     assessReviewRemediationScopeBoundary,
     getTaskManualValidationBoundaryFiles
@@ -166,6 +188,10 @@ import {
     assessReviewCycleContinuationEvidence
 } from '../review-cycle/review-cycle-continuation';
 import { resolveTaskProfileSelection } from '../../policy/task-profile-selection';
+import {
+    resolveTaskProfileTaskDecompositionPolicy,
+    type TaskProfilePolicySnapshot
+} from '../../policy/task-profile-policy-snapshot';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
     buildForcedSourceCheckoutRuntimeBuildCommand,
@@ -197,6 +223,9 @@ import {
     type ReviewArtifactState
 } from './next-step-review-artifact-readers';
 import {
+    resolveLockedReviewFindingPolicyFromPreflight
+} from '../review/review-finding-disposition';
+import {
     applyFullSuiteReadinessToReviewLaunchPlan,
     buildNextStepReviewLaunchPlan,
     describeBlockedReviewDependencies,
@@ -214,10 +243,15 @@ import {
     timelineHasDelegatedReviewRoutingAfterCompile
 } from './next-step-reviewer-launch-evidence';
 import {
+    isFullSuiteSatisfiedBySemanticCycleResume,
+    isReviewSatisfiedBySemanticCycleResume,
     resolveFailedReviewRemediationRoute,
     resolveStrictSequentialUpstreamReuseRoute,
     type ReviewReuseCandidateHint
 } from './next-step-review-reuse-routing';
+import {
+    readSemanticCycleResumeRoutingState
+} from '../semantic-cycle-resume/semantic-cycle-routing';
 import {
     isPassedIntermediateCommandEvent,
     readFocusedTestRequiredByReview,
@@ -243,6 +277,9 @@ import {
     buildBaselineOnlyPreImplementationRoute
 } from './next-step-pre-implementation-routing';
 import {
+    buildTestFirstExpectedFailureRoute
+} from './next-step-test-first-routing';
+import {
     buildNextStepQualityChecklistSummary,
     markQualityChecklistReadinessStaleForWorkspace,
     readQualityChecklistReadiness,
@@ -256,6 +293,11 @@ import {
     readReadyFinalReportSummary,
     type NextStepFinalReportSummary
 } from './next-step-closeout-status-readers';
+import {
+    evaluatePostReviewSourceMutationGuard,
+    hasAuthenticatedFixNowDisposition,
+    resolveAuthenticatedFixNowRemediationState
+} from './next-step-post-review-source-mutation-guard';
 import {
     materializeSplitRequiredLatch,
     readSplitRequiredLatchEvidence,
@@ -310,6 +352,8 @@ export { formatNextStepText } from './next-step-command-formatters';
 import {
     buildCompleteReviewerLaunchCommand,
     buildPrepareReviewerLaunchCommand,
+    buildRecordReviewOutputCorrectionInvocationCommand,
+    buildRecordReviewOutputCorrectionTransportCommand,
     buildRecordReviewerDelegationStartedCommand,
     buildRecordReviewResultCommand,
     buildRecordReviewerInvocationCommand,
@@ -318,12 +362,15 @@ import {
     buildScopedDiffCommand,
     buildTaskModePathCommandParts
 } from './next-step-review-command-builders';
+import { buildCoherentCycleRestartCommand } from '../completion/completion-reporting';
 export type { NextStepQualityChecklistSummary } from './next-step-quality-checklist-readiness';
 import {
-    buildDocImpactCommand,
+    buildDocImpactCommandPlan,
     buildDocImpactCompatibilityHint,
     buildProjectMemoryNextStepSummary,
     buildStaleCompletionFailureDocCloseoutAllowance,
+    isProjectMemoryEvidenceCurrentForCloseout,
+    readNextStepCloseoutTimelineSnapshot,
     readPreflightCycleReadiness,
     type NextStepProjectMemorySummary
 } from './next-step-doc-closeout-readiness';
@@ -417,6 +464,15 @@ export interface NextStepReviewSummary {
     required_reviews: string[];
     review_execution_policy_mode: EffectiveReviewExecutionPolicyMode;
     review_execution_policy_source: ReviewExecutionPolicySource;
+    review_finding_policy_id: string;
+    review_finding_policy_source: string;
+    review_finding_policy_actions: {
+        critical: string;
+        high: string;
+        medium: string;
+        low: string;
+        residual_risk: string;
+    };
     launchable_review_types: string[];
     blocked_review_lanes: NextStepBlockedReviewLane[];
     failed_review_type: string | null;
@@ -450,6 +506,9 @@ export interface NextStepProfileSummary {
     effective_profile_source: string | null;
     runtime_active_profile: string | null;
     runtime_active_profile_source: string | null;
+    task_decomposition_enabled: boolean | null;
+    task_decomposition_configured: boolean | null;
+    task_decomposition_provenance: string | null;
     requested_depth: number | null;
     effective_depth: number | null;
     depth_escalation_reason: string | null;
@@ -517,6 +576,7 @@ export interface NextStepResult {
     profile: NextStepProfileSummary | null;
     markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     optional_skill_selection: NextStepOptionalSkillSelectionSummary | null;
+    task_start_guidance: NextStepTaskStartGuidanceSummary | null;
     quality_checklist: NextStepQualityChecklistSummary | null;
     warnings: string[];
     invalidation_impact: NextStepInvalidationImpactSummary | null;
@@ -1005,7 +1065,7 @@ function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null)
         && zeroDiffGuard.completion_requires_audited_no_op === true;
 }
 
-type ReviewExecutionPolicySource = 'preflight' | 'workflow_config' | 'workflow_config_fallback';
+type ReviewExecutionPolicySource = 'preflight' | 'task_profile' | 'workflow_config' | 'workflow_config_fallback';
 
 function hasPreflightReviewPolicyMode(preflight: Record<string, unknown> | null): boolean {
     return !!preflight
@@ -1015,21 +1075,101 @@ function hasPreflightReviewPolicyMode(preflight: Record<string, unknown> | null)
 
 function resolveReviewPolicy(
     preflight: Record<string, unknown> | null,
-    workflowPolicy: ResolvedReviewExecutionPolicyConfig
+    workflowPolicy: ResolvedReviewExecutionPolicyConfig,
+    frozenPolicy?: FrozenReviewExecutionPolicyBinding | null
 ): {
     mode: EffectiveReviewExecutionPolicyMode;
     source: ReviewExecutionPolicySource;
 } {
+    const frozenCurrentContract = !!frozenPolicy && (
+        Object.prototype.hasOwnProperty.call(frozenPolicy, 'review_dependency_graph')
+        || Object.prototype.hasOwnProperty.call(frozenPolicy, 'full_suite_validation')
+    );
     if (hasPreflightReviewPolicyMode(preflight)) {
+        const mode = resolveReviewExecutionPolicyModeFromPreflight(preflight);
+        if (frozenCurrentContract && mode !== frozenPolicy.mode) {
+            throw new Error(
+                `Preflight review execution policy mode '${mode}' does not match frozen task profile mode '${frozenPolicy.mode}'.`
+            );
+        }
         return {
-            mode: resolveReviewExecutionPolicyModeFromPreflight(preflight),
+            mode,
             source: 'preflight'
         };
+    }
+    if (!preflight && frozenCurrentContract) {
+        return {
+            mode: frozenPolicy.mode,
+            source: 'task_profile'
+        };
+    }
+    if (frozenCurrentContract) {
+        throw new Error(
+            'Preflight review execution policy is required by the frozen task profile; refusing live workflow fallback.'
+        );
     }
     return {
         mode: workflowPolicy.mode,
         source: workflowPolicy.configured ? 'workflow_config' : 'workflow_config_fallback'
     };
+}
+
+function resolveFrozenReviewExecutionPolicyBinding(
+    taskMode: Record<string, unknown> | null
+): FrozenReviewExecutionPolicyBinding | null {
+    const profileSnapshot = isPlainRecord(taskMode?.profile_policy_snapshot)
+        ? taskMode.profile_policy_snapshot
+        : null;
+    return profileSnapshot && isPlainRecord(profileSnapshot.review_execution_policy)
+        ? profileSnapshot.review_execution_policy as unknown as FrozenReviewExecutionPolicyBinding
+        : null;
+}
+
+function resolveTimelineBoundReviewDependencyGraph(
+    eventsRoot: string,
+    taskId: string,
+    preflight: Record<string, unknown> | null
+): EffectiveReviewSnapshot['review_dependency_graph'] | undefined {
+    if (!preflight?.effective_review_snapshot) {
+        return undefined;
+    }
+    const timeline = readOrderedTaskEvents(path.join(eventsRoot, `${taskId}.jsonl`)).events;
+    let latestPreflightEvent: (typeof timeline)[number] | undefined;
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+        const event = timeline[index];
+        if (String(event.event_type || '').trim().toUpperCase() === 'PREFLIGHT_CLASSIFIED') {
+            latestPreflightEvent = event;
+            break;
+        }
+    }
+    const eventDetails = isPlainRecord(latestPreflightEvent?.details)
+        ? latestPreflightEvent.details
+        : null;
+    const eventSnapshot = eventDetails?.effective_review_snapshot;
+    if (!eventSnapshot) {
+        throw new Error(
+            'Latest PREFLIGHT_CLASSIFIED timeline event is missing the effective review snapshot binding.'
+        );
+    }
+    const preflightSnapshot = preflight.effective_review_snapshot;
+    const eventViolations = getEffectiveReviewSnapshotViolations(eventSnapshot);
+    const preflightViolations = getEffectiveReviewSnapshotViolations(preflightSnapshot);
+    if (eventViolations.length > 0 || preflightViolations.length > 0) {
+        throw new Error(
+            `Current-cycle effective review snapshot binding is invalid: ${[
+                ...eventViolations,
+                ...preflightViolations
+            ].join('; ')}`
+        );
+    }
+    const eventSnapshotRecord = eventSnapshot as EffectiveReviewSnapshot;
+    const preflightSnapshotRecord = preflightSnapshot as EffectiveReviewSnapshot;
+    if (eventSnapshotRecord.snapshot_sha256 !== preflightSnapshotRecord.snapshot_sha256) {
+        throw new Error(
+            'Preflight effective review snapshot does not match the latest PREFLIGHT_CLASSIFIED timeline binding.'
+        );
+    }
+    return eventSnapshotRecord.review_dependency_graph;
 }
 
 function resolveTaskQueueCaseMismatch(taskEntries: Map<string, TaskQueueEntry>, taskId: string): string | null {
@@ -1158,6 +1298,38 @@ function buildNextStepProfileSummary(
     const depthEscalation = preflight?.depth_escalation && typeof preflight.depth_escalation === 'object'
         ? preflight.depth_escalation as Record<string, unknown>
         : null;
+    const frozenTaskDecomposition = isPlainRecord(taskMode?.profile_policy_snapshot)
+        ? resolveTaskProfileTaskDecompositionPolicy(
+            taskMode.profile_policy_snapshot as unknown as TaskProfilePolicySnapshot
+        )
+        : null;
+    let liveTaskDecomposition: ReturnType<typeof resolveTaskProfileSelection>['effective_policy']['task_decomposition'] | null = null;
+    if (!frozenTaskDecomposition) {
+        try {
+            liveTaskDecomposition = resolveTaskProfileSelection(
+                resolveBundleRootForTarget(repoRoot),
+                rawTaskProfile,
+                typeof preflight?.scope_category === 'string' ? preflight.scope_category : null
+            ).effective_policy.task_decomposition;
+        } catch {
+            liveTaskDecomposition = null;
+        }
+    }
+    const legacyProfileName = String(
+        taskMode?.active_profile
+        || rawTaskProfile
+        || resolvedSelection?.effective_profile
+        || ''
+    ).trim().toLowerCase();
+    const taskDecomposition = frozenTaskDecomposition || liveTaskDecomposition || {
+        enabled: legacyProfileName === 'strict' || legacyProfileName === 'balanced',
+        configured: false,
+        provenance: legacyProfileName === 'strict'
+            ? 'legacy_snapshot_strict_compatibility'
+            : legacyProfileName === 'balanced'
+                ? 'legacy_snapshot_balanced_default'
+                : 'legacy_snapshot_disabled_default'
+    };
 
     const summary: NextStepProfileSummary = {
         task_selected_profile: rawTaskProfile || resolvedSelection?.task_profile || null,
@@ -1181,6 +1353,9 @@ function buildNextStepProfileSummary(
             (typeof taskMode?.runtime_profile_source === 'string' && taskMode.runtime_profile_source.trim())
             || resolvedSelection?.runtime_profile_source
             || null,
+        task_decomposition_enabled: taskDecomposition?.enabled ?? null,
+        task_decomposition_configured: taskDecomposition?.configured ?? null,
+        task_decomposition_provenance: taskDecomposition?.provenance ?? null,
         requested_depth:
             parseOptionalNumberField(budgetForecast?.requested_depth)
             ?? parseOptionalNumberField(taskMode?.requested_depth),
@@ -1206,6 +1381,7 @@ function buildNextStepProfileSummary(
         summary.task_selected_profile == null
         && summary.effective_profile == null
         && summary.runtime_active_profile == null
+        && summary.task_decomposition_enabled == null
         && summary.requested_depth == null
         && summary.effective_depth == null
         && summary.total_forecast_tokens == null
@@ -1716,6 +1892,7 @@ function buildResult(params: {
     profile: NextStepProfileSummary | null;
     markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     optionalSkillSelection?: NextStepOptionalSkillSelectionSummary | null;
+    taskStartGuidance?: NextStepTaskStartGuidanceSummary | null;
     qualityChecklist?: NextStepQualityChecklistSummary | null;
     warnings?: string[];
     reviewCycleBlock?: NextStepReviewCycleBlock | null;
@@ -1879,7 +2056,11 @@ function buildMinimalRecoveryChain(nextGate: string, commands: NextStepCommand[]
 
 function buildReuseCandidates(text: string, affectedReviewLanes: string[]): string[] {
     if (/\breuse eligibility validation\b.*\bbefore treating\b|\bbefore treating .*PASS evidence as reusable\b/iu.test(text)) {
-        return ['none indicated'];
+        return affectedReviewLanes.length > 0
+            ? affectedReviewLanes.map((reviewType) => (
+                `${reviewType} (historical PASS evidence exists; authoritative reuse eligibility is pending build-review-context validation)`
+            ))
+            : ['historical PASS evidence exists; authoritative reuse eligibility is pending build-review-context validation'];
     }
     if (!/\breview reuse\b|\bmaterialize reuse\b|\blane-domain current\b|\bdomain-limited remediation\b|\bexisting .*PASS evidence\b/iu.test(text)) {
         return ['none indicated'];
@@ -1892,6 +2073,14 @@ function buildReuseCandidates(text: string, affectedReviewLanes: string[]): stri
 
 export function buildReviewReuseCandidatesForDiagnostics(text: string, affectedReviewLanes: string[]): string[] {
     return buildReuseCandidates(text, affectedReviewLanes);
+}
+
+export function buildFocusedRecoveryCoverageContractSha256(options: {
+    reviewType: string;
+    preflight: Record<string, unknown>;
+    repoRoot: string;
+}): string {
+    return buildAuthoritativeReviewCoverageContract(options).contract.contract_sha256;
 }
 
 function getCurrentWorkspaceRefreshChangedFiles(
@@ -1973,6 +2162,53 @@ function getPreflightRefreshCommandChangedFiles(params: {
         return currentTaskScopeChangedFiles.length > 0
             ? [...new Set([...taskScopedRefreshChangedFiles, ...currentTaskScopeChangedFiles])].sort()
             : taskScopedChangedFiles;
+    }
+    const explicitAuthorizedFiles = String(params.preflight?.detection_source || '').trim().toLowerCase()
+        === 'explicit_changed_files'
+        && Array.isArray(params.preflight?.authorized_files)
+        ? normalizeWorkspaceRelativePaths(params.repoRoot, params.preflight.authorized_files)
+        : [];
+    if (explicitAuthorizedFiles.length > 0 && !params.includeFullFailedReviewRemediationScope) {
+        const currentChangedFiles = filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(
+            params.repoRoot,
+            getCurrentWorkspaceRefreshChangedFiles(
+                params.repoRoot,
+                params.preflight,
+                params.fallbackChangedFiles,
+                params.workspaceSnapshotRequest
+            )
+        );
+        if (!currentChangedFiles) {
+            return explicitAuthorizedFiles;
+        }
+        const authorizedSet = new Set(explicitAuthorizedFiles);
+        const dirtyBaselineSet = new Set([
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.repoRoot, params.taskMode),
+            ...getPreflightTriggerChangedFiles(
+                params.repoRoot,
+                params.preflight,
+                'dirty_workspace_baseline_changed_files'
+            )
+        ]);
+        const dirtyBaselineFileHashes = {
+            ...getTaskModeDirtyWorkspaceBaselineFileHashes(params.repoRoot, params.taskMode),
+            ...getPreflightTriggerFileHashes(
+                params.repoRoot,
+                params.preflight,
+                'dirty_workspace_protected_file_hashes'
+            )
+        };
+        const unchangedDirtyBaselineSet = new Set(
+            [...dirtyBaselineSet].filter((changedFile) => (
+                dirtyBaselineFileMatchesCurrent(params.repoRoot, changedFile, dirtyBaselineFileHashes)
+            ))
+        );
+        const taskScopedCurrentFiles = currentChangedFiles.filter((changedFile) => (
+            authorizedSet.has(changedFile) || !unchangedDirtyBaselineSet.has(changedFile)
+        ));
+        return taskScopedCurrentFiles.length > 0
+            ? taskScopedCurrentFiles
+            : explicitAuthorizedFiles;
     }
     const dirtyBaselineCommandFiles = getTaskModeDirtyWorkspaceBaselineCommandChangedFiles(params.repoRoot, params.taskMode);
     if (dirtyBaselineCommandFiles.length > 0) {
@@ -2079,6 +2315,30 @@ function getPreflightTriggerChangedFiles(
     return normalizeWorkspaceRelativePaths(repoRoot, value);
 }
 
+function getPreflightTriggerFileHashes(
+    repoRoot: string,
+    preflight: Record<string, unknown> | null,
+    fieldName: string
+): Record<string, string> {
+    const triggers = preflight?.triggers;
+    if (!triggers || typeof triggers !== 'object' || Array.isArray(triggers)) {
+        return {};
+    }
+    const value = (triggers as Record<string, unknown>)[fieldName];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+    const hashes: Record<string, string> = {};
+    for (const [filePath, hash] of Object.entries(value as Record<string, unknown>)) {
+        const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, filePath);
+        const normalizedHash = String(hash || '').trim().toLowerCase();
+        if (normalizedPath && /^[0-9a-f]{64}$/u.test(normalizedHash)) {
+            hashes[normalizedPath] = normalizedHash;
+        }
+    }
+    return hashes;
+}
+
 function getBuildReviewContextReuseCandidateHint(
     eventsRoot: string,
     taskId: string,
@@ -2183,15 +2443,43 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         preflight,
         rulePack,
         taskMode,
-        preflightSha256
+        preflightSha256,
+        taskEventsPath
     } = context;
     const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
     const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
     const taskEntries = readTaskQueueEntries(repoRoot);
     const taskEntry = taskEntries.get(taskId) || null;
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
+    let taskRequiredReviewDeclarationError: string | null = null;
+    if (taskEntry && !preflight) {
+        try {
+            resolveTaskRequiredReviewDeclaration({
+                taskId,
+                notes: taskEntry.notes,
+                reviewCapabilities: getReviewCapabilities(repoRoot)
+            });
+        } catch (error: unknown) {
+            taskRequiredReviewDeclarationError = error instanceof Error ? error.message : String(error);
+        }
+    }
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
+    const findingPolicyResolution = resolveLockedReviewFindingPolicyFromPreflight(
+        preflight || {
+            profile_policy_snapshot: isPlainRecord(taskMode?.profile_policy_snapshot)
+                ? taskMode.profile_policy_snapshot
+                : null
+        }
+    );
+    const findingPolicySummary = {
+        review_finding_policy_id: findingPolicyResolution.policy.policy_id,
+        review_finding_policy_source: findingPolicyResolution.source,
+        review_finding_policy_actions: {
+            ...findingPolicyResolution.policy.findings,
+            residual_risk: findingPolicyResolution.policy.residual_risk
+        }
+    };
     const optionalSkillSelectionSummary = buildOptionalSkillSelectionSummary(repoRoot, cliPrefix, taskId, preflight);
     let workflowReviewPolicy: ResolvedReviewExecutionPolicyConfig = {
         mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
@@ -2233,6 +2521,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 required_reviews: [],
                 review_execution_policy_mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
                 review_execution_policy_source: 'workflow_config_fallback',
+                ...findingPolicySummary,
                 launchable_review_types: [],
                 blocked_review_lanes: [],
                 failed_review_type: null,
@@ -2258,7 +2547,29 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskQueueEntries: taskEntries,
         workspaceSnapshotRequest
     });
-    const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
+    const frozenReviewPolicy = resolveFrozenReviewExecutionPolicyBinding(taskMode);
+    const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy, frozenReviewPolicy);
+    const frozenReviewDependencyGraph = frozenReviewPolicy && preflight?.effective_review_snapshot
+        ? assertEffectiveReviewSnapshotExecutionPolicyBinding(
+            preflight.effective_review_snapshot as EffectiveReviewSnapshot,
+            frozenReviewPolicy
+        )
+        : null;
+    const timelineBoundReviewDependencyGraph = resolveTimelineBoundReviewDependencyGraph(
+        eventsRoot,
+        taskId,
+        preflight
+    );
+    const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+        preflight,
+        reviewPolicy.mode,
+        timelineBoundReviewDependencyGraph ?? frozenReviewDependencyGraph,
+        !!frozenReviewPolicy && hasCurrentReviewDependencyGraphContract(frozenReviewPolicy)
+    );
+    const fullSuiteConfig = bindFullSuiteValidationBarrier(
+        loadFullSuiteValidationConfig(repoRoot),
+        reviewDependencyGraph
+    );
     const fullSuiteTimeoutForecast = fullSuiteConfig.enabled
         ? buildFullSuiteTimeoutForecast(repoRoot, fullSuiteConfig)
         : null;
@@ -2269,6 +2580,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const fullSuiteNotRequiredForZeroDiffNoReviewableScope = hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes);
     const fullSuiteNotRequiredForCurrentScope = fullSuiteNotRequiredForDocsOnly || fullSuiteNotRequiredForZeroDiffNoReviewableScope;
+    const semanticCycleResume = readSemanticCycleResumeRoutingState({
+        repo_root: repoRoot,
+        task_id: taskId,
+        manifest_path: readinessArtifacts.paths.semanticCycleRebindPath,
+        task_events_path: taskEventsPath,
+        preflight_path: preflightPath
+    });
+    const semanticResumeReusable = semanticCycleResume.status === 'REUSABLE';
     const fullSuiteLifecycleGatePassed = isGatePassed(summary, 'full-suite-validation');
     const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
     const fullSuiteCurrentArtifactMatchesCycle = fullSuiteArtifactMatchesCurrentCycle(
@@ -2287,9 +2606,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         );
     const fullSuiteCurrentArtifactMatchesCycleAndConfig = fullSuiteCurrentArtifactMatchesCycle
         && fullSuiteCurrentArtifactMatchesConfig;
-    const fullSuiteCurrentGateStatus = fullSuiteCurrentArtifactMatchesCycleAndConfig
-        ? fullSuiteGateStatus
-        : null;
+    const semanticFullSuiteReusable = isFullSuiteSatisfiedBySemanticCycleResume({
+        semanticResumeReusable,
+        acceptedFullSuite: semanticCycleResume.accepted_full_suite,
+        currentConfigMatches: fullSuiteCurrentArtifactMatchesConfig
+    });
+    const fullSuiteCurrentGateStatus = semanticFullSuiteReusable
+        ? 'PASS'
+        : fullSuiteCurrentArtifactMatchesCycleAndConfig
+            ? fullSuiteGateStatus
+            : null;
     const fullSuiteLifecycleWarningPolicyPresent = hasFullSuiteTimeoutWarningLifecyclePolicy(
         repoRoot,
         taskId,
@@ -2306,7 +2632,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         fullSuiteCurrentArtifactMatchesCycleAndConfig,
         fullSuiteLifecycleGatePassed
     );
-    const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
+    const fullSuiteGatePassed = semanticFullSuiteReusable
+        ? true
+        : fullSuiteNotRequiredForDocsOnly
         ? hasAcceptedDocsOnlyFullSuiteSkipArtifact(
                 reviewsRoot,
                 taskId,
@@ -2344,7 +2672,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskId,
         preflightPath
     });
-    const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
     const taskQueueFollowUpFingerprintIndex = buildTaskQueueFollowUpFingerprintIndex(taskEntries, taskId);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(
@@ -2455,11 +2782,22 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
             policyMode: reviewPolicy.mode,
+            dependencyGraph: reviewDependencyGraph,
             requiredReviews: summary.required_reviews,
             reviewStates,
             isSatisfied: (state) => (
                 reviewGateOverrideSkippedReviewTypes.has(normalizeReviewTypeValue(state.reviewType) || '')
-                || reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
+                || isReviewSatisfiedBySemanticCycleResume({
+                    reviewType: state.reviewType,
+                    ordinarySatisfied: reviewStateHasSatisfiedEvidence(
+                        repoRoot,
+                        eventsRoot,
+                        taskId,
+                        state as ReviewArtifactState
+                    ),
+                    semanticResumeReusable,
+                    acceptedReviewTypes: semanticCycleResume.accepted_review_types
+                })
             ),
             isCurrentFailed: (state) => reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
         }),
@@ -2473,6 +2811,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         required_reviews: requiredReviewTypes,
         review_execution_policy_mode: reviewPolicy.mode,
         review_execution_policy_source: reviewPolicy.source,
+        ...findingPolicySummary,
         launchable_review_types: reviewLaunchPlan.launchable_review_types,
         blocked_review_lanes: toNextStepBlockedReviewLanes(reviewLaunchPlan),
         failed_review_type: reviewLaunchPlan.failed_review_type,
@@ -2521,6 +2860,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         profile: profileSummary,
         markdownWorkingPlan,
         optionalSkillSelection: optionalSkillSelectionSummary,
+        taskStartGuidance: buildNextStepTaskStartGuidance({
+            optionalSkillSelection: optionalSkillSelectionSummary,
+            preflight
+        }),
         qualityChecklist: qualityChecklistReadiness
             ? buildNextStepQualityChecklistSummary(qualityChecklistReadiness)
             : null,
@@ -2528,6 +2871,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
+    if (taskRequiredReviewDeclarationError) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'task-metadata-validation',
+            title: 'Correct the TASK.md required-review declaration.',
+            reason:
+                `${taskRequiredReviewDeclarationError} Correct the task notes to the exact form ` +
+                '`Required reviews: lane, lane.` and rerun the navigator before classify-change.',
+            commands: []
+        });
+    }
     const buildDecisionRouteResult = (
         route: NextStepDecisionRoutePayload,
         overrides: { qualityChecklist?: NextStepQualityChecklistSummary | null } = {}
@@ -2829,6 +3184,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     }
 
     const docImpactPath = readinessArtifacts.paths.docImpactPath;
+    const closeoutTimelineSnapshot = readNextStepCloseoutTimelineSnapshot(eventsRoot, taskId);
     const preflightWorkspaceReadiness = preflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: null,
@@ -2852,9 +3208,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             allowDocsOnlyDelta: false
         })
         : { ready: false, reason: 'No current preflight exists.' };
-    const preflightCycleReadiness = readPreflightCycleReadiness(
-        eventsRoot,
-        taskId,
+    const staleCompletionFailureDocCloseoutAllowance =
         buildStaleCompletionFailureDocCloseoutAllowance(
             repoRoot,
             eventsRoot,
@@ -2862,14 +3216,25 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             preflightPath,
             preflightSha256,
             preflightWorkspaceReadiness,
-            docImpactPath
-        )
+            docImpactPath,
+            closeoutTimelineSnapshot
+        );
+    const preflightCycleReadiness = readPreflightCycleReadiness(
+        eventsRoot,
+        taskId,
+        {
+            ...staleCompletionFailureDocCloseoutAllowance,
+            timelineSnapshot: closeoutTimelineSnapshot
+        }
     );
-    const failedCurrentReviewStateForPreflight = reviewLaunchPlan.next_review_type
+    const failedReviewStateFromLaunchPlan = reviewLaunchPlan.next_review_type
         ? reviewStates.find((candidate) => (
             candidate.reviewType === reviewLaunchPlan.next_review_type && candidate.failed
         ))
         : undefined;
+    const failedCurrentReviewStateForPreflight = failedReviewStateFromLaunchPlan
+        ?? resolveAuthenticatedFixNowRemediationState(reviewStates, reviewLaunchPlan.next_review_type)
+        ?? undefined;
     const effectivePreflightWorkspaceReadiness = preflight && failedCurrentReviewStateForPreflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
@@ -3068,6 +3433,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         return buildDecisionRouteResult(currentProtectedScopeRoute);
     }
 
+    const preGuardWorkspaceReadiness = reviewGateAlreadyPassed
+        ? effectivePreflightWorkspaceReadiness
+        : effectiveStrictPreGuardWorkspaceReadiness;
+    const postReviewSourceMutationGuard = evaluatePostReviewSourceMutationGuard({
+        repoRoot,
+        preflight,
+        workspaceReadiness: preGuardWorkspaceReadiness,
+        reviewStates,
+        authorizedImplementationTransition: Boolean(
+            failedCurrentReviewStateForPreflight
+            && hasAuthenticatedFixNowDisposition(failedCurrentReviewStateForPreflight)
+        )
+    });
+
     const preGuardRoute = resolvePreGuardDecisionRoute({
         preflightCycleReadiness,
         preflightCycleRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
@@ -3095,9 +3474,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             selfGuardPolicyChangeCommand: buildGardaSelfGuardPolicyChangeCommand(cliPrefix),
             orchestratorWorkRestartCommand: buildOrchestratorWorkRestartCommand(repoRoot, cliPrefix, taskId, taskMode)
         },
-        workspaceReadiness: reviewGateAlreadyPassed
-            ? effectivePreflightWorkspaceReadiness
-            : effectiveStrictPreGuardWorkspaceReadiness,
+        postReviewSourceMutationGuard,
+        workspaceReadiness: preGuardWorkspaceReadiness,
         workspaceRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
             cliPrefix,
@@ -3127,6 +3505,25 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     || failedCurrentReviewStateForPreflight.failToken
                     || 'FAILED',
                 expandedNonTestFiles: failedReviewRemediationExpandedNonTestFiles,
+                closedCycleRestart: reviewGateAlreadyPassed
+                    ? {
+                        boundary: 'REVIEW_GATE_PASSED',
+                        command: buildCoherentCycleRestartCommand(
+                            repoRoot,
+                            taskId,
+                            preflightCommandPath,
+                            taskModePath,
+                            null,
+                            null,
+                            {
+                                requiresOperatorConfirmation: Boolean(
+                                    taskMode?.orchestrator_work === true
+                                    || taskMode?.workflow_config_work === true
+                                )
+                            }
+                        )
+                    }
+                    : null,
                 restartReviewCycleCommand: buildRestartReviewCycleCommand(
                     repoRoot,
                     cliPrefix,
@@ -3134,7 +3531,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     getStringField(taskMode, 'task_summary', taskEntry?.title || taskId),
                     preflightCommandPath,
                     taskModePath,
-                    failedReviewIgnoredRemediationChangedFiles
+                    failedReviewIgnoredRemediationChangedFiles,
+                    {
+                        reviewType: failedCurrentReviewStateForPreflight.reviewType
+                    }
                 )
             }
             : null,
@@ -3371,7 +3771,50 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }
         return auditedNoOpState;
     };
+    const resolveFullSuiteLifecycleRoute = () => {
+        const fullSuiteRepairTaskCommand =
+            `${cliPrefix} gate materialize-full-suite-repair-task --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --full-suite-artifact-path "${toRepoDisplayPath(repoRoot, readinessArtifacts.paths.fullSuiteValidationPath)}" --repo-root "."`;
+        const fullSuiteRunMarkerRecoveryCommand =
+            `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+        const fullSuiteRunMarkerCleanupCommand =
+            `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --clear-dead-marker --operator-confirmed yes --repo-root "."`;
+        return resolveFullSuiteDecisionRoute({
+            enabled: fullSuiteConfig.enabled,
+            placement: fullSuiteConfig.placement,
+            notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
+            gateStatus: fullSuiteCurrentGateStatus,
+            gatePassed: fullSuiteGatePassed,
+            timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
+            timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
+            repeatedTimeoutBlockerAnalysis: fullSuiteTimeoutRepairTaskProposal.repeatedBlockerAnalysis,
+            timeoutRepairTaskCommand: fullSuiteTimeoutRepairTaskProposal.suggestedTaskId
+                ? fullSuiteRepairTaskCommand
+                : null,
+            timeoutRepairTaskMaterialized: fullSuiteTimeoutRepairTaskMaterialized,
+            timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
+            transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
+            transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
+            targetedDiagnosticRetryAvailable: fullSuiteTargetedDiagnosticEvidence.available,
+            targetedDiagnosticRetryReason: fullSuiteTargetedDiagnosticEvidence.reason,
+            configPath: fullSuiteSummary.config_path,
+            commandText: fullSuiteConfig.command,
+            timeoutForecastLine: fullSuiteTimeoutForecastLine,
+            command: fullSuiteCommand,
+            runMarkerRecoveryCommand: fullSuiteRunMarkerRecoveryCommand,
+            runMarkerCleanupCommand: fullSuiteRunMarkerCleanupCommand,
+            navigatorCommand,
+            nextReviewType: reviewLaunchPlan.next_review_type,
+            interruptedRun: interruptedFullSuiteRun,
+            unresolvedRunMarkerPath: unresolvedFullSuiteRunMarkerPath
+        });
+    };
     const validationDecisionRoute = resolveValidationDecisionRoute({
+        lifecycleGateIds: getActiveTaskLifecycleGateIds('validation', {
+            changes_exist: Array.isArray(preflight?.changed_files) && preflight.changed_files.length > 0,
+            optional_quality_checks_enabled: qualityChecklistReadiness?.enabled === true,
+            full_suite_after_compile_before_reviews:
+                fullSuiteConfig.enabled && fullSuiteConfig.placement === 'after_compile_before_reviews'
+        }),
         resolveQualityChecklistRoute: () => qualityChecklistReadiness
             ? resolveNextStepQualityChecklistRoute({
                 enabled: qualityChecklistReadiness.enabled,
@@ -3380,6 +3823,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 status: qualityChecklistReadiness.status,
                 reason: qualityChecklistReadiness.reason,
                 actionRequiredSummary: qualityChecklistReadiness.actionRequiredSummary,
+                answersTemplatePath: qualityChecklistReadiness.answersTemplatePath
+                    ? toRepoDisplayPath(repoRoot, qualityChecklistReadiness.answersTemplatePath)
+                    : null,
                 command: buildQualityChecklistCommand(
                     repoRoot,
                     cliPrefix,
@@ -3397,8 +3843,24 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             preflight,
             auditedNoOpPassed: resolveAuditedNoOpState().passed
         }),
+        resolveTestFirstExpectedFailureRoute: () => buildTestFirstExpectedFailureRoute({
+            repoRoot,
+            reviewsRoot,
+            eventsRoot,
+            taskId,
+            taskEntry,
+            preflight,
+            preflightPath,
+            preflightCommandPath,
+            cliPrefix,
+            workspaceReady: preflightWorkspaceReadiness.ready,
+            currentChangedFiles: preflightWorkspaceReadiness.currentChangedFiles
+        }),
         resolveCompileGateRoute: () => {
-            const compileReadiness = preflight
+            const semanticCompileAccepted = semanticResumeReusable && semanticCycleResume.accepted_compile;
+            const compileReadiness = semanticCompileAccepted
+                ? { ready: true, reason: semanticCycleResume.reason }
+                : preflight
                 ? readCompileReadiness(
                     repoRoot,
                     reviewsRoot,
@@ -3409,10 +3871,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 )
                 : { ready: false, reason: 'No current preflight exists.' };
             return resolveNextStepCompileGateRoute({
-                compileGatePassed: isGatePassed(summary, 'compile-gate'),
+                compileGatePassed: semanticCompileAccepted || isGatePassed(summary, 'compile-gate'),
                 ready: compileReadiness.ready,
                 reason: compileReadiness.reason,
                 recoveryGate: compileReadiness.recoveryGate,
+                restartTaskModeCommand: buildOrchestratorWorkRestartCommand(
+                    repoRoot,
+                    cliPrefix,
+                    taskId,
+                    taskMode
+                ),
                 refreshPreflightCommand: buildAuthenticatedScopeClassifyChangeCommand({
                     repoRoot,
                     cliPrefix,
@@ -3441,46 +3909,22 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             });
         },
         resolveAuditedNoOpState,
-        resolveFullSuiteValidationRoute: () => {
-            const fullSuiteRepairTaskCommand =
-                `${cliPrefix} gate materialize-full-suite-repair-task --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --full-suite-artifact-path "${toRepoDisplayPath(repoRoot, readinessArtifacts.paths.fullSuiteValidationPath)}" --repo-root "."`;
-            const fullSuiteRunMarkerRecoveryCommand =
-                `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-            const fullSuiteRunMarkerCleanupCommand =
-                `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --clear-dead-marker --operator-confirmed yes --repo-root "."`;
-            return resolveFullSuiteDecisionRoute({
-                enabled: fullSuiteConfig.enabled,
-                placement: fullSuiteConfig.placement,
-                notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
-                gateStatus: fullSuiteCurrentGateStatus,
-                gatePassed: fullSuiteGatePassed,
-                timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
-                timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
-                repeatedTimeoutBlockerAnalysis: fullSuiteTimeoutRepairTaskProposal.repeatedBlockerAnalysis,
-                timeoutRepairTaskCommand: fullSuiteTimeoutRepairTaskProposal.suggestedTaskId
-                    ? fullSuiteRepairTaskCommand
-                    : null,
-                timeoutRepairTaskMaterialized: fullSuiteTimeoutRepairTaskMaterialized,
-                timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
-                transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
-                transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
-                targetedDiagnosticRetryAvailable: fullSuiteTargetedDiagnosticEvidence.available,
-                targetedDiagnosticRetryReason: fullSuiteTargetedDiagnosticEvidence.reason,
-                configPath: fullSuiteSummary.config_path,
-                commandText: fullSuiteConfig.command,
-                timeoutForecastLine: fullSuiteTimeoutForecastLine,
-                command: fullSuiteCommand,
-                runMarkerRecoveryCommand: fullSuiteRunMarkerRecoveryCommand,
-                runMarkerCleanupCommand: fullSuiteRunMarkerCleanupCommand,
-                navigatorCommand,
-                nextReviewType: reviewLaunchPlan.next_review_type,
-                interruptedRun: interruptedFullSuiteRun,
-                unresolvedRunMarkerPath: unresolvedFullSuiteRunMarkerPath
-            });
-        }
+        resolveFullSuiteValidationRoute: resolveFullSuiteLifecycleRoute
     });
     if (validationDecisionRoute) {
         return buildDecisionRouteResult(validationDecisionRoute);
+    }
+
+    const reviewBoundaryDecisionRoute = resolveFirstActiveTaskLifecycleGate(
+        getActiveTaskLifecycleGateIds('review', {
+            reviews_required: requiredReviewTypes.length > 0,
+            full_suite_before_review_checkpoint:
+                fullSuiteConfig.enabled && fullSuiteConfig.placement === 'before_test_review'
+        }),
+        { 'full-suite-validation': resolveFullSuiteLifecycleRoute }
+    );
+    if (reviewBoundaryDecisionRoute) {
+        return buildDecisionRouteResult(reviewBoundaryDecisionRoute);
     }
 
     if (reviewLaunchPlan.next_review_type) {
@@ -3728,12 +4172,15 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             if (!state?.failed) {
                 return null;
             }
+            const correctionFullReviewRestart =
+                state.failureKind === 'review-correction-full-review-required';
             const taskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
             const downstreamReviewTypes = getDownstreamReviewTypesFor(
                 reviewType,
                 requiredReviewTypes,
                 summary.required_reviews,
-                reviewPolicy.mode
+                reviewPolicy.mode,
+                reviewDependencyGraph
             );
             const reviewContextChain = buildReviewGateChainStatusSummary({
                 repoRoot,
@@ -3754,14 +4201,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 })
                 : null;
             const focusedRecoveryCoverageContractSha256 = state.failureKind === 'missing-focused-validation-evidence'
-                ? buildReviewCoverageContract({
+                ? buildFocusedRecoveryCoverageContractSha256({
                     reviewType,
-                    changedFiles: resolveReviewCoverageChangedFiles({
-                        reviewType,
-                        preflight: preflight as Record<string, unknown>,
-                        repoRoot
-                    })
-                }).contract_sha256
+                    preflight: preflight as Record<string, unknown>,
+                    repoRoot
+                })
                 : null;
             const focusedIntermediateEvidence = state.failureKind === 'missing-focused-validation-evidence'
                 ? readPostReviewFocusedIntermediateEvidence({
@@ -3779,13 +4223,17 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     expectedCoverageContractSha256: focusedRecoveryCoverageContractSha256
                 })
                 : { available: false, reason: null };
-            const reviewerResultRecoveryIdentity = state.failureKind === 'review-validation-rejected'
+            const reviewerResultRecoveryIdentity = [
+                'review-validation-rejected',
+                'review-correction-transport-selection-required'
+            ].includes(state.failureKind || '')
                 ? resolveReviewerResultRecoveryIdentity({
                     launchState: currentReviewerLaunchArtifactEvidence?.state === 'provider_failed'
                         ? 'launched'
                         : currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
                     launchReviewerIdentity: currentReviewerLaunchArtifactEvidence?.reviewerIdentity || null,
                     receiptReviewerIdentity: state.reviewerIdentity,
+                    receiptIdentityCurrent: state.receiptContractCurrent === true,
                     contextReviewerIdentity: state.contextReviewerIdentity,
                     receivingGateCanResolveCurrentAttempt: false
                 })
@@ -3805,6 +4253,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 downstreamReviewTypes,
                 reviewerResultRecoveryIdentity,
                 launchArtifactState: currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
+                correctionHandoff: state.reviewOutputCorrectionHandoff,
                 commands: {
                     restartReviewCycle: buildCommand(
                         state.failureKind === 'missing-focused-validation-evidence'
@@ -3827,8 +4276,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             }),
                             {
                                 includeChangedFileScope:
-                                    state.failureKind !== 'missing-focused-validation-evidence'
-                                    && state.failureKind !== 'missing-validation-evidence'
+                                    !correctionFullReviewRestart
+                                    && state.failureKind !== 'missing-focused-validation-evidence'
+                                    && state.failureKind !== 'missing-validation-evidence',
+                                reviewType,
+                                reviewEvidenceOnly: correctionFullReviewRestart
                             }
                         )
                     ),
@@ -3868,6 +4320,51 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             taskModePath,
                             requiredFocusedTestPath
                         )
+                    ),
+                    recordCorrectionInvocation: buildCommand(
+                        'After launching the correction-only reviewer, attest its provider invocation',
+                        buildRecordReviewOutputCorrectionInvocationCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            state.reviewOutputCorrectionArtifactPath || state.artifactPath,
+                            state.reviewOutputCorrectionArtifactPath
+                                ? fileSha256(state.reviewOutputCorrectionArtifactPath) || '<persisted correction input sha256>'
+                                : '<persisted correction input sha256>',
+                            taskModePath,
+                            state.reviewOutputCorrectionLaunchState === 'delegation_started'
+                                ? {
+                                    producerIdentity: state.reviewOutputCorrectionProducerIdentity,
+                                    providerInvocationId: state.reviewOutputCorrectionProviderInvocationId,
+                                    attestationSource: state.reviewOutputCorrectionAttestationSource
+                                }
+                                : undefined
+                        )
+                    ),
+                    recordCorrectionTransport: buildCommand(
+                        'Record fail-closed provider-controller session unavailability',
+                        buildRecordReviewOutputCorrectionTransportCommand({
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            correctionArtifactPath:
+                                state.reviewOutputCorrectionArtifactPath || state.artifactPath,
+                            reviewerIdentity:
+                                state.reviewOutputCorrectionReviewerIdentity
+                                || (
+                                    reviewerResultRecoveryIdentity?.ready
+                                        ? reviewerResultRecoveryIdentity.reviewerIdentity
+                                        : null
+                                )
+                                || state.contextReviewerIdentity
+                                || '<agent:original-reviewer-id>',
+                            providerInvocationId:
+                                state.reviewOutputCorrectionOriginalProviderInvocationId
+                                || '<original-provider-invocation-id>',
+                            taskModePath
+                        })
                     ),
                     recordResult: buildCommand(
                         'Record corrected delegated review result',
@@ -4247,17 +4744,30 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             resolveDelegatedReadinessRoute: resolveDelegatedReadinessDecisionRoute
         });
         if (activeReviewLifecycleDecisionRoute) {
+            const semanticResumePrefix = semanticResumeReusable
+                ? `${semanticCycleResume.reason} Accepted unchanged review lanes: ${
+                    semanticCycleResume.accepted_review_types.join(', ') || 'none'
+                }. `
+                : '';
             return buildResult({
                 ...resultBase,
                 status: activeReviewLifecycleDecisionRoute.status,
                 nextGate: activeReviewLifecycleDecisionRoute.nextGate,
                 title: activeReviewLifecycleDecisionRoute.title,
-                reason: activeReviewLifecycleDecisionRoute.reason,
+                reason: semanticResumePrefix + activeReviewLifecycleDecisionRoute.reason,
                 commands: activeReviewLifecycleDecisionRoute.commands
             });
         }
     }
 
+    const docImpactCommandPlan = buildDocImpactCommandPlan(
+        cliPrefix,
+        taskId,
+        preflightCommandPath,
+        preflight,
+        repoRoot,
+        effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
+    );
     const postReviewLifecycleDecisionRoute = resolvePostReviewLifecycleDecisionRouteFromState({
         repoRoot,
         eventsRoot,
@@ -4279,15 +4789,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
             zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
             docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
+            docImpactRequiresProjectMemoryBeforeAssessment:
+                docImpactCommandPlan.requiresProjectMemoryBeforeAssessment,
             docImpactCompatibilityHint: buildDocImpactCompatibilityHint(),
-            docImpactCommand: buildDocImpactCommand(
-                cliPrefix,
-                taskId,
-                preflightCommandPath,
-                preflight,
-                repoRoot,
-                effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
-            ),
+            docImpactCommand: docImpactCommandPlan.command,
             fullSuiteEnabled: fullSuiteConfig.enabled,
             fullSuiteGatePassed,
             fullSuiteTimeoutBlockerResolvedByRepairTask: fullSuiteTimeoutBlockerExhausted && fullSuiteTimeoutRepairTaskMaterialized,
@@ -4298,7 +4803,13 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             fullSuiteTimeoutForecastLine,
             fullSuiteCommand,
             projectMemoryRequired: projectMemoryEvidence.required,
-            projectMemoryEvidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+            projectMemoryEvidenceCurrent: isProjectMemoryEvidenceCurrentForCloseout({
+                eventsRoot,
+                taskId,
+                docImpactPath,
+                evidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+                timelineSnapshot: closeoutTimelineSnapshot
+            }),
             projectMemoryVisibleSummaryLine: projectMemoryEvidence.visible_summary_line,
             projectMemoryAffectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
             projectMemoryViolations: projectMemoryEvidence.violations,

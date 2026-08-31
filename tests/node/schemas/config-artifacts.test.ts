@@ -16,6 +16,7 @@ import {
     validateTokenEconomyConfig,
     validateProfilesConfig,
     validateReviewArtifactStorageConfig,
+    validateReviewCatalogConfig,
     validateRuntimeRetentionConfig,
     validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
@@ -146,6 +147,29 @@ test('tracked template managed configs validate successfully', () => {
         const validated = validateManagedConfigByName(configName, readTemplateConfig(configName));
         assert.ok(validated);
     }
+});
+
+test('managed review catalog validator compiles the built-in compatibility catalog', () => {
+    const catalog = readTemplateConfig('review-catalog');
+    const result = validateReviewCatalogConfig(catalog);
+    const reviewTypes = result.review_types as Array<Record<string, unknown>>;
+
+    assert.deepEqual(catalog, { version: 1, custom_review_types: [] });
+    assert.equal(reviewTypes.length, 9);
+    assert.deepEqual(reviewTypes.map((definition) => definition.id), [
+        'code',
+        'db',
+        'security',
+        'refactor',
+        'api',
+        'test',
+        'performance',
+        'infra',
+        'dependency'
+    ]);
+    assert.ok(reviewTypes.every((definition) => definition.built_in === true));
+    assert.ok(reviewTypes.every((definition) => definition.enabled_by_default === true));
+    assert.match(String(result.catalog_sha256), /^[a-f0-9]{64}$/u);
 });
 
 test('tracked workflow template ships current optional quality baseline', () => {
@@ -876,9 +900,48 @@ test('validateProfilesConfig validates template profiles.json', () => {
         (builtIn.balanced.review_follow_up_policy as Record<string, unknown>).materialization_mode,
         'grouped_by_parent'
     );
+    assert.equal(
+        (builtIn.fast.review_follow_up_policy as Record<string, unknown>).materialization_mode,
+        'grouped_by_parent'
+    );
+    const fastFindingPolicy = builtIn.fast.review_finding_policy as Record<string, unknown>;
+    assert.equal(fastFindingPolicy.policy_id, 'custom');
+    assert.equal(
+        (fastFindingPolicy.findings as Record<string, unknown>).high,
+        'fix_now'
+    );
+    assert.equal(
+        (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
+        'conservative_review_remediation_mode_v1'
+    );
+    assert.deepEqual(
+        (builtIn.balanced.review_remediation_mode_policy as Record<string, unknown>).delta_eligible_review_types,
+        ['api', 'code', 'db', 'dependency', 'infra', 'performance', 'refactor', 'security', 'test']
+    );
+    assert.deepEqual(builtIn.balanced.task_decomposition, { enabled: true });
 
     const user = normalized.user_profiles as Record<string, unknown>;
     assert.equal(Object.keys(user).length, 0);
+});
+
+test('validateProfilesConfig requires task_decomposition to be exactly enabled boolean', () => {
+    const withUnknownKey = structuredClone(readTemplateConfig('profiles'));
+    (
+        withUnknownKey.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.task_decomposition = { enabled: true, mode: 'guarded' };
+    assert.throws(
+        () => validateProfilesConfig(withUnknownKey),
+        /task_decomposition must be exactly/u
+    );
+
+    const withNonBoolean = structuredClone(readTemplateConfig('profiles'));
+    (
+        withNonBoolean.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.task_decomposition = { enabled: 'true' };
+    assert.throws(
+        () => validateProfilesConfig(withNonBoolean),
+        /task_decomposition\.enabled must be a boolean/u
+    );
 });
 
 test('validateProfilesConfig normalizes boolean-like review_policy values', () => {
@@ -938,6 +1001,34 @@ test('validateProfilesConfig allows legacy profiles without review_finding_polic
     const builtIn = normalized.built_in_profiles as Record<string, Record<string, unknown>>;
     assert.equal(builtIn.legacy.review_finding_policy, undefined);
     assert.equal(builtIn.legacy.review_follow_up_policy, undefined);
+    assert.equal(builtIn.legacy.review_remediation_mode_policy, undefined);
+});
+
+test('validateProfilesConfig accepts explicit disables and stable custom lanes while rejecting malformed lane ids', () => {
+    const profiles = structuredClone(readTemplateConfig('profiles'));
+    const policy = (
+        profiles.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    policy.delta_eligible_review_types = [];
+    const normalized = validateProfilesConfig(profiles);
+    assert.deepEqual(
+        (normalized.built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy,
+        policy
+    );
+
+    policy.delta_eligible_review_types = ['custom-quality'];
+    assert.deepEqual(
+        ((validateProfilesConfig(profiles).built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy as Record<string, unknown>).delta_eligible_review_types,
+        ['custom-quality']
+    );
+
+    policy.delta_eligible_review_types = ['custom_lane'];
+    assert.throws(
+        () => validateProfilesConfig(profiles),
+        /invalid or unsupported.*review lane identifiers/u
+    );
 });
 
 test('validateProfilesConfig rejects unknown grouped follow-up modes and keys', () => {

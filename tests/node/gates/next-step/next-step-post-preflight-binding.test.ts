@@ -12,7 +12,9 @@ import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { writeBalancedTestProfilesConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import { bindFixtureEffectiveReviewSnapshot } from './next-step-test-support';
 import {
     seedAuthenticatedReviewerLaunchFixture
 } from './next-step-reviewer-launch-fixtures';
@@ -81,6 +83,7 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeBalancedTestProfilesConfig(repoRoot);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -342,8 +345,20 @@ function writePreflight(
             visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
         }
     });
+    const reviewKey = Object.entries(requiredReviews)
+        .find(([, required]) => required)?.[0] || 'code';
+    bindFixtureEffectiveReviewSnapshot(
+        repoRoot,
+        taskId,
+        reviewKey,
+        preflightPath,
+        path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`),
+        { ensureSkillEntrypoints: false }
+    );
+    const boundPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-        output_path: normalizeForTimeline(preflightPath)
+        output_path: normalizeForTimeline(preflightPath),
+        effective_review_snapshot: boundPreflight.effective_review_snapshot
     });
     if (options.seedPostPreflight !== false) {
         seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
@@ -550,13 +565,13 @@ describe('gates/next-step post preflight binding', () => {
     it('routes stale POST_PREFLIGHT evidence back to load-rule-pack after preflight refresh', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
-        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
-        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-        preflight.required_reviews = { ...ALL_REVIEW_FLAGS, code: true, test: true };
-        writeJson(preflightPath, preflight);
-        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
-            output_path: normalizeForTimeline(preflightPath)
-        });
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true, test: true },
+            { seedPostPreflight: false }
+        );
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 

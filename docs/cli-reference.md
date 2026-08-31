@@ -13,7 +13,7 @@ The runtime is Node-only.
 
 Runtime compatibility matrix:
 
-| Node.js line | Garda 1.3.x status | Notes |
+| Node.js line | Garda 1.4.x status | Notes |
 |---|---|---|
 | Node 24 LTS | Supported primary runtime | Covered by `package.json` engines, CI, release validation, and cross-platform smoke. |
 | Node 22.13+ LTS | Supported compatibility runtime | Covered by `package.json` engines, CI typecheck/test/release validation, runtime diagnostics, docs, and cross-platform smoke. |
@@ -644,6 +644,39 @@ Notes:
 - Enabling a capability validates that a matching live review skill is present under `live/skills/**`; bridge presence is reported separately for bridge-hosted providers, but root-entrypoint providers use the live skill directly.
 - Unsupported custom live skills remain manual-only and do not become preflight-triggered review types automatically.
 
+### `garda review-catalog`
+
+Inspect built-in and custom review lanes, validate catalog/profile/dependency resolution, and manage custom lanes through a guarded transaction.
+
+```text
+garda review-catalog list --target-root "."
+garda review-catalog validate --target-root "."
+garda review-catalog show <review-id> --profile <name> --target-root "."
+garda review-catalog explain <review-id> --profile <name> --target-root "."
+garda review-catalog create <review-id> --display-label <label> --skill-id <skill-id> --trigger-mode <manual|signals> [definition options] --target-root "."
+garda review-catalog update <review-id> [definition options] --target-root "."
+garda review-catalog enable|disable <review-id> --target-root "."
+garda review-catalog profile-bind <review-id> --profile <name> --state <disabled|auto|required> --target-root "."
+garda review-catalog dependency <review-id> --profile <name> --depends-on <review-id> --target-root "."
+garda review-catalog dependency <review-id> --profile <name> --clear-dependencies --target-root "."
+garda review-catalog migrate --target-root "."
+garda review-catalog migrate --confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601> --target-root "."
+garda review-catalog migrate --apply --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --confirmation-receipt-sha256 <hash> --target-root "."
+```
+
+Notes:
+
+- A missing `live/config/review-catalog.json` is legacy-compatible: inspection exposes the built-in lanes with their canonical verdict tokens.
+- `migrate` is an explicit guarded migration for legacy configuration. Its first call is a dry-run that validates and normalizes the catalog, capabilities, and profiles, then reports parity hashes for required reviews, verdict/receipt tokens, dependency order, and task-report lanes without writing.
+- Migration retains `review-capabilities.json`, preserves its effective choices and the configured or implicit review-execution preset, and never enables custom lanes. It uses the same separate confirmation, one-time receipt, transaction lock, audit, backup, and rollback path as catalog mutations.
+- A stale workflow preset, invalid legacy config, interrupted publish, or parity mismatch fails closed. A repeated migration after successful normalization returns an unchanged preview and applies as `NO_CHANGE` when separately confirmed.
+- Custom lanes are declarative and disabled by default. The CLI rejects prompt bodies, verdict-token overrides, built-in replacement, and unrecognized fields.
+- `list`, `show`, `explain`, and `validate` are read-only. Mutations affect future task snapshots only.
+- A mutation call without a phase flag is preview-only. Confirm the exact preview with `--confirm --expected-state-sha256 <hash> --expected-plan-sha256 <hash> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601>`, then apply it with `--apply`, the same expected hashes, and `--confirmation-receipt-sha256 <hash>`.
+- Confirmation receipts are one-time and stale-state-bound. The transaction rejects active agent tasks, concurrent writers, changed config or filesystem boundaries, and replayed receipts.
+- Successful apply records audit and backup paths. A later publish failure automatically rolls all managed files back and records the rollback diagnostic.
+- Profile state and the validated dependency graph determine eligibility and review launch order; they do not retroactively alter an already-entered task.
+
 ### `garda profile`
 
 Manage the active workspace profile and user-defined profile presets.
@@ -670,12 +703,16 @@ Remove the orchestrator from a project.
 
 ```text
 garda uninstall --target-root "."
+garda uninstall --target-root "." --no-prompt
+garda uninstall --target-root "." --dry-run --no-prompt --keep-task-file no
 garda uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
-garda uninstall --target-root "." --dry-run --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts no
 ```
 
 Notes:
 - Uninstall removes managed blocks, bridge files, and the deployed bundle while preserving unrelated user content.
+- `TASK.md` is preserved by default, including with `--no-prompt`, so the operator queue survives uninstall and later setup/reinstall.
+- `--keep-task-file no` is the explicit destructive override for removing the managed task queue. Without `--skip-backups`, output includes `TaskFileRecoveryPath` for the exact pre-removal copy.
+- Combining `--keep-task-file no` with `--skip-backups` intentionally removes the managed queue without a recovery copy and emits a warning.
 - Before destructive work, uninstall creates an internal journal snapshot and attempts automatic restore if the uninstall flow fails mid-run.
 - `--skip-backups` skips the user-facing recovery backup copies; use it only when you intentionally accept losing those recovery artifacts.
 - `--keep-runtime-artifacts yes` preserves runtime reports, rollback snapshots, and task-event history under `garda-agent-orchestrator/runtime/`, along with user-owned `live/docs/project-memory/**`.

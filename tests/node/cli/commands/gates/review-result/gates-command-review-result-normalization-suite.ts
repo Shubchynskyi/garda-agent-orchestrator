@@ -5,6 +5,7 @@ import {
     fs,
     path,
     runCliMainWithHandling,
+    gateReviewHandlers,
     createTempRepo,
     seedTaskQueue,
     seedInitAnswers,
@@ -19,6 +20,8 @@ import {
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
     writeManualReviewerHandoffFixture,
+    buildNoFindingsJsonReviewReport,
+    buildReviewExecutionEvidenceFixture,
     recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
     seedPromptBoundReviewFixture
@@ -27,16 +30,35 @@ import { createPartitionedTestRegistrar } from '../../gate-test-partition';
 import { createHash } from 'node:crypto';
 import * as os from 'node:os';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
+import { fileSha256 } from '../../../../../../src/gate-runtime/hash';
 import { readReviewArtifactState } from '../../../../../../src/gates/next-step/next-step-review-artifact-readers';
 import {
-    getCurrentReviewerLaunchArtifactEvidenceForInvocation
-} from '../../../../../../src/gates/next-step/next-step-reviewer-launch-evidence';
+    buildReviewOutputCorrectionArtifact,
+    persistReviewOutputCorrection,
+    readReviewOutputCorrectionArtifact
+} from '../../../../../../src/gates/review/review-output-correction';
+import { resolveReviewExecutionRuntimeBindings } from '../../../../../../src/cli/commands/gate-review-handlers/context/review-context-runtime-validation';
+import {
+    formatReviewFollowUpTaskClosurePolicyMetadata,
+    resolveReviewFollowUpTaskClosurePolicy
+} from '../../../../../../src/core/review-follow-up-task-closure-policy';
 
 const it = createPartitionedTestRegistrar(
     nodeIt,
     'GARDA_REVIEW_RESULT_NORMALIZATION_PART',
     6
 );
+
+function loadLifecycleEventEmittersModule(): {
+    emitReviewOutputCorrectionAcceptedEventAsync: (...args: unknown[]) => Promise<unknown>;
+} {
+    return require(path.join(
+        __dirname,
+        '../../../../../../src/gate-runtime/timeline/lifecycle-event-emitters.js'
+    )) as {
+        emitReviewOutputCorrectionAcceptedEventAsync: (...args: unknown[]) => Promise<unknown>;
+    };
+}
 
 function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
@@ -58,46 +80,7 @@ function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
 }
 
 function buildNoFindingsJsonReport(reviewContextPath: string, taskId: string, reviewType = 'code'): Record<string, unknown> {
-    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
-        coverage_contract: {
-            contract_sha256: string;
-            obligations: Array<{ id: string; kind: string; target: string }>;
-        };
-        task_scope: { changed_files: string[] };
-        tree_state: { tree_state_sha256: string };
-    };
-    const defaultFile = reviewContext.task_scope.changed_files[0];
-    const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
-    return {
-        schema_version: 1,
-        task_id: taskId,
-        review_type: reviewType,
-        review_context_sha256: reviewContextSha256,
-        tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
-        validation_notes: [{
-            id: 'N-001',
-            topic: 'complete-scope-sweep',
-            note: 'Reviewed the complete assigned code scope and generated coverage obligations for verdict-free findings JSON ingestion.',
-            evidence: [{
-                location: `${defaultFile}:1`,
-                observation: 'Validated concrete source behavior and receipt materialization for the assigned review contract.'
-            }]
-        }],
-        coverage_ledger: {
-            coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
-            entries: reviewContext.coverage_contract.obligations.map((obligation) => ({
-                obligation_id: obligation.id,
-                evidence: [{
-                    location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
-                    observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against the assigned review contract.`
-                }],
-                finding_ids: []
-            }))
-        },
-        findings: { critical: [], high: [], medium: [], low: [] },
-        residual_risks: [],
-        reviewer_notes: ['No legacy verdict token is present in this JSON output.']
-    };
+    return buildNoFindingsJsonReviewReport(reviewContextPath, taskId, reviewType);
 }
 
 function writeProfilesConfig(repoRoot: string, activeProfile: 'soft' | 'balanced' | 'strict' | 'custom-reviewer'): void {
@@ -142,7 +125,7 @@ function balancedProfilePolicySnapshot(): Record<string, unknown> {
             findings: {
                 critical: 'fix_now',
                 high: 'fix_now',
-                medium: 'create_follow_up',
+                medium: 'fix_now',
                 low: 'create_follow_up'
             },
             residual_risk: 'create_follow_up'
@@ -162,6 +145,39 @@ function softProfilePolicySnapshot(): Record<string, unknown> {
                 low: 'ignore'
             },
             residual_risk: 'ignore'
+        }
+    };
+}
+
+function followUpClosureScenarioInput(
+    taskId: string,
+    skipLowFindings: boolean,
+    forbidChildTasks: boolean
+): {
+    taskNotes: string;
+    parentTask: { taskId: string; notes: string };
+    profilePolicySnapshot: Record<string, unknown>;
+} {
+    const parentTaskId = taskId.replace(/-F[1-9][0-9]*$/u, '');
+    const parentNotes = `Review follow-up tasks materialized: \`${taskId}\`; artifact `
+        + `\`garda-agent-orchestrator/runtime/reviews/${parentTaskId}-review-findings-follow-up-tasks.json\`.`;
+    const taskNotes = `Child of \`${parentTaskId}\`. review_follow_up_fingerprint=${'a'.repeat(64)}. `
+        + formatReviewFollowUpTaskClosurePolicyMetadata({
+            skip_low_findings: skipLowFindings,
+            forbid_child_tasks: forbidChildTasks
+        });
+    return {
+        taskNotes,
+        parentTask: { taskId: parentTaskId, notes: parentNotes },
+        profilePolicySnapshot: {
+            ...balancedProfilePolicySnapshot(),
+            review_follow_up_task_closure_policy: resolveReviewFollowUpTaskClosurePolicy(taskNotes, {
+                taskId,
+                taskRows: [
+                    { taskId: parentTaskId, notes: parentNotes },
+                    { taskId, notes: taskNotes }
+                ]
+            })
         }
     };
 }
@@ -237,6 +253,8 @@ function rebindCompletedLaunchAttemptForTest(options: {
     reviewerLaunchAttemptId: string;
     reviewOutputPath?: string;
     recordCompletion?: boolean;
+    provider?: string;
+    attestationSource?: string;
 }): void {
     const invocationEvent = [...readTaskTimelineEvents(options.repoRoot, options.taskId)]
         .reverse()
@@ -364,6 +382,12 @@ function rebindCompletedLaunchAttemptForTest(options: {
     launchArtifact.review_output_path = (
         options.reviewOutputPath || path.join(path.dirname(options.launchArtifactPath), 'review-output.md')
     ).replace(/\\/g, '/');
+    if (options.provider) {
+        launchArtifact.provider = options.provider;
+    }
+    if (options.attestationSource) {
+        launchArtifact.attestation_source = options.attestationSource;
+    }
     const reboundLaunchCompletedAtUtc = options.recordCompletion ? new Date().toISOString() : null;
     if (reboundLaunchCompletedAtUtc) {
         launchArtifact.launch_completed_at_utc = reboundLaunchCompletedAtUtc;
@@ -385,6 +409,12 @@ function rebindCompletedLaunchAttemptForTest(options: {
         prepared_launch_event_task_sequence: preparedLaunchEventTaskSequence,
         launch_binding_sha256: launchBindingSha256,
         review_context_sha256: reviewContextSha256,
+        ...(options.attestationSource
+            ? {
+                reviewer_launch_attestation_source: options.attestationSource,
+                attestation_source: options.attestationSource
+            }
+            : {}),
         ...(reboundLaunchCompletedAtUtc ? { launch_completed_at_utc: reboundLaunchCompletedAtUtc } : {})
     };
     if (options.recordCompletion) {
@@ -518,10 +548,111 @@ describe('gates command review result - normalization', () => {
         assert.ok(artifactContent.includes('## Residual Risks\nnone'));
         assert.ok(artifactContent.includes('## Verdict\nREVIEW FAILED'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
         assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(receipt[field], expectedValue);
+        }
+        const invocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.equal(
+            receipt.reviewer_provenance.reviewer_launch_artifact_path,
+            (invocationEvent?.details as Record<string, unknown>)?.reviewer_launch_artifact_path
+        );
+        assert.equal(
+            receipt.reviewer_provenance.reviewer_launch_artifact_sha256,
+            (invocationEvent?.details as Record<string, unknown>)?.reviewer_launch_artifact_sha256
+        );
         assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects an invocation-bound substituted review execution contract', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-992-result-execution-binding-tamper';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const invocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.ok(invocationEvent?.details);
+        const launchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        fs.writeFileSync(fixture.launchArtifactPath, `${JSON.stringify({
+            ...launchArtifact,
+            review_execution_contract_sha256: '0'.repeat(64)
+        }, null, 2)}\n`, 'utf8');
+        const substitutedLaunchArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(fixture.launchArtifactPath))
+            .digest('hex');
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_INVOCATION_ATTESTED',
+            'INFO',
+            'Reviewer invocation rebound to a substituted execution contract by regression fixture.',
+            {
+                ...(invocationEvent.details as Record<string, unknown>),
+                reviewer_launch_artifact_sha256: substitutedLaunchArtifactSha256
+            }
+        );
+        const reviewOutputDir = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code'
+        );
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes(
+                'Reviewer launch artifact review_execution_contract_sha256 does not match the current authenticated review context'
+            )),
+            result.errors.join('\n')
+        );
+        assert.equal(
+            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)),
+            false
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEW_RECORDED'),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1365,6 +1496,14 @@ describe('gates command review result - normalization', () => {
         assert.equal(coverage.status, 'PASS');
         assert.equal(coverage.completed_obligation_count, coverage.obligation_count);
         assert.equal(receipt.review_output_format, 'findings_json');
+        const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(
+            JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>
+        );
+        const reviewOutputContract = receipt.review_output_contract as Record<string, unknown>;
+        for (const [field, expectedValue] of Object.entries(reviewExecutionBindings)) {
+            assert.equal(receipt[field], expectedValue);
+            assert.equal(reviewOutputContract[field], expectedValue);
+        }
         const acceptedValidationArtifactPath = path.join(
             fixture.reviewsRoot,
             `${taskId}-code-findings-validation.json`
@@ -1634,11 +1773,12 @@ describe('gates command review result - normalization', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         const outputPath = path.join(outputDir, 'review-output.md');
         fs.writeFileSync(outputPath, `${JSON.stringify({
-            schema_version: 1,
+            schema_version: 2,
             task_id: taskId,
             review_type: 'code',
             review_context_sha256: reviewContextSha256,
             tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            review_execution: buildReviewExecutionEvidenceFixture(fixture.reviewContextPath),
             validation_notes: [{
                 id: 'N-001',
                 topic: 'complete-scope-sweep',
@@ -1701,7 +1841,7 @@ describe('gates command review result - normalization', () => {
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.deepEqual(receipt.review_coverage.finding_ids, ['F-001']);
         assert.equal(receipt.review_output_format, 'findings_json');
-        assert.equal(receipt.review_output_schema_version, 1);
+        assert.equal(receipt.review_output_schema_version, 2);
         assert.equal(receipt.review_output_contract.format, 'findings_json');
         assert.equal(receipt.review_output_contract.review_context_sha256, reviewContextSha256);
         assert.equal(receipt.review_output_contract.review_tree_state_sha256, reviewContext.tree_state.tree_state_sha256);
@@ -1813,6 +1953,9 @@ describe('gates command review result - normalization', () => {
     });
 
     it('record-review-result applies locked balanced dispositions before deriving the gate verdict', async () => {
+        const skipLowClosure = followUpClosureScenarioInput('T-979-10-F1', true, false);
+        const forbidChildClosure = followUpClosureScenarioInput('T-979-11-F1', false, true);
+        const forbidChildResidualClosure = followUpClosureScenarioInput('T-979-12-F1', false, true);
         const scenarios = [
             {
                 taskId: 'T-979-9-balanced-low-follow-up',
@@ -1868,6 +2011,48 @@ describe('gates command review result - normalization', () => {
                 expectedAction: 'fix_now',
                 expectedBlockingCount: 1,
                 expectedDispositionVerdict: 'fail_for_fix_now'
+            },
+            {
+                taskId: 'T-979-10-F1',
+                profilePolicySnapshot: skipLowClosure.profilePolicySnapshot,
+                taskNotes: skipLowClosure.taskNotes,
+                parentTask: skipLowClosure.parentTask,
+                subject: 'finding' as const,
+                severity: 'low' as const,
+                expectedVerdict: 'REVIEW PASSED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'ignore',
+                expectedBlockingCount: 0,
+                expectedDispositionVerdict: 'pass_with_follow_up_or_ignored_findings',
+                expectedSourceRule: 'review_follow_up_task_closure_policy.skip_low_findings'
+            },
+            {
+                taskId: 'T-979-11-F1',
+                profilePolicySnapshot: forbidChildClosure.profilePolicySnapshot,
+                taskNotes: forbidChildClosure.taskNotes,
+                parentTask: forbidChildClosure.parentTask,
+                subject: 'finding' as const,
+                severity: 'low' as const,
+                expectedVerdict: 'REVIEW FAILED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'fix_now',
+                expectedBlockingCount: 1,
+                expectedDispositionVerdict: 'fail_for_fix_now',
+                expectedSourceRule: 'review_follow_up_task_closure_policy.forbid_child_tasks'
+            },
+            {
+                taskId: 'T-979-12-F1',
+                profilePolicySnapshot: forbidChildResidualClosure.profilePolicySnapshot,
+                taskNotes: forbidChildResidualClosure.taskNotes,
+                parentTask: forbidChildResidualClosure.parentTask,
+                subject: 'residual_risk' as const,
+                severity: null,
+                expectedVerdict: 'REVIEW FAILED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'fix_now',
+                expectedBlockingCount: 1,
+                expectedDispositionVerdict: 'fail_for_fix_now',
+                expectedSourceRule: 'review_follow_up_task_closure_policy.forbid_child_tasks'
             }
         ];
 
@@ -1877,6 +2062,8 @@ describe('gates command review result - normalization', () => {
                 const fixture = await seedPromptBoundReviewFixture({
                     repoRoot,
                     taskId: scenario.taskId,
+                    ...('taskNotes' in scenario ? { taskNotes: scenario.taskNotes } : {}),
+                    ...('parentTask' in scenario ? { parentTask: scenario.parentTask } : {}),
                     preflightOverrides: {
                         profile_policy_snapshot: scenario.profilePolicySnapshot
                     }
@@ -1969,14 +2156,28 @@ describe('gates command review result - normalization', () => {
                 );
                 assert.equal(dispositionArtifact.items.length, 1);
                 const dispositionItem = dispositionArtifact.items[0];
+                const expectedClosureSourceRule = 'expectedSourceRule' in scenario
+                    ? scenario.expectedSourceRule
+                    : undefined;
                 assert.equal(dispositionItem.id, scenario.subject === 'finding' ? 'F-001' : 'R-001');
                 assert.equal(dispositionItem.action, scenario.expectedAction);
                 assert.equal(
                     dispositionItem.source_rule,
-                    scenario.subject === 'finding'
-                        ? `review_finding_policy.findings.${String(scenario.severity)}`
-                        : 'review_finding_policy.residual_risk'
+                    expectedClosureSourceRule
+                        ?? (scenario.subject === 'finding'
+                            ? `review_finding_policy.findings.${String(scenario.severity)}`
+                            : 'review_finding_policy.residual_risk')
                 );
+                if (expectedClosureSourceRule) {
+                    assert.deepEqual(
+                        receipt.review_findings_disposition.review_follow_up_task_closure_policy,
+                        scenario.profilePolicySnapshot.review_follow_up_task_closure_policy
+                    );
+                    assert.deepEqual(
+                        dispositionArtifact.policy.review_follow_up_task_closure_policy,
+                        scenario.profilePolicySnapshot.review_follow_up_task_closure_policy
+                    );
+                }
                 assert.equal(
                     dispositionItem.materialization_status,
                     scenario.expectedAction === 'fix_now'
@@ -1997,14 +2198,15 @@ describe('gates command review result - normalization', () => {
                 if (scenario.expectedAction === 'fix_now') {
                     const baseline = JSON.parse(fs.readFileSync(remediationBaselinePath, 'utf8'));
                     const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8'));
+                    const expectedItemId = scenario.subject === 'finding' ? 'F-001' : 'R-001';
                     assert.equal(baseline.artifact_type, 'review_findings_remediation_baseline');
                     assert.equal(baseline.schema_version, 2);
                     assert.equal(baseline.task_id, scenario.taskId);
                     assert.equal(baseline.review_type, 'code');
-                    assert.deepEqual(baseline.fix_now_items.map((item: { id: string }) => item.id), ['F-001']);
+                    assert.deepEqual(baseline.fix_now_items.map((item: { id: string }) => item.id), [expectedItemId]);
                     assert.equal(baseline.fix_now_items[0].action, 'fix_now');
                     assert.equal(baseline.path_line_inventory.length, 1);
-                    assert.deepEqual(baseline.path_line_inventory[0].item_ids, ['F-001']);
+                    assert.deepEqual(baseline.path_line_inventory[0].item_ids, [expectedItemId]);
                     assert.equal(
                         baseline.bindings.findings_validation.artifact_sha256,
                         receipt.review_findings_validation.artifact_sha256
@@ -2177,7 +2379,7 @@ describe('gates command review result - normalization', () => {
             },
             findings: { critical: [], high: [], medium: [], low: [] },
             residual_risks: [],
-            reviewer_notes: []
+            reviewer_notes: ['password=super-secret-review-output']
         }, null, 2)}\n`;
         fs.writeFileSync(outputPath, invalidReviewOutput, 'utf8');
 
@@ -2252,7 +2454,8 @@ describe('gates command review result - normalization', () => {
             launchArtifactPath: explicitLaunchArtifactPath,
             reviewerLaunchAttemptId: 'explicit-path-rejected-attempt',
             reviewOutputPath: outputPath,
-            recordCompletion: true
+            recordCompletion: true,
+            provider: 'StatelessFixture'
         });
         const unboundOutputPath = path.join(outputDir, 'unbound-invalid-output.md');
         fs.writeFileSync(unboundOutputPath, invalidReviewOutput, 'utf8');
@@ -2353,113 +2556,106 @@ describe('gates command review result - normalization', () => {
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
         assert.equal(fs.existsSync(outputPath), true, 'rejected reviewer output must remain available as audit evidence');
         assert.equal(fs.existsSync(fixture.launchArtifactPath), false);
-        const failedLaunchArtifact = JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8'));
-        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
-        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
-        assert.equal(failedLaunchArtifact.launch_failure_recorded_by, 'record-review-result');
+        const preservedLaunchArtifact = JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8'));
+        assert.equal(preservedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(preservedLaunchArtifact.launch_failure_stage, undefined);
         assert.equal(
-            failedLaunchArtifact.review_findings_validation_artifact_path,
-            validationArtifactPath.replace(/\\/g, '/')
-        );
-        assert.equal(
-            failedLaunchArtifact.review_findings_validation_artifact_sha256,
-            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex')
-        );
-        assert.equal(
-            failedLaunchArtifact.rejected_reviewer_launch_artifact_sha256,
+            createHash('sha256').update(fs.readFileSync(explicitLaunchArtifactPath)).digest('hex'),
             completedLaunchArtifactSha256
         );
-        const failedLaunchArtifactSha256 = createHash('sha256')
-            .update(fs.readFileSync(explicitLaunchArtifactPath))
-            .digest('hex');
-        const rejectedValidationSha256 = createHash('sha256')
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const correctionArtifact = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            state: string;
+            recovery: {
+                correction_attempt: number;
+                selected_transport: string;
+                available_transports: string[];
+            };
+            binding: {
+                reviewer_attempt_id: string;
+                validation_artifact_path: string;
+                validation_artifact_sha256: string;
+                original_output_path: string;
+            };
+            transport_binding: {
+                session_availability: string;
+                availability_attestation: {
+                    evidence_type: string;
+                } | null;
+            };
+        };
+        assert.equal(correctionArtifact.state, 'REVIEW_OUTPUT_CORRECTION_REQUIRED');
+        assert.equal(correctionArtifact.recovery.correction_attempt, 1);
+        assert.equal(correctionArtifact.recovery.selected_transport, 'correction_only_invocation');
+        assert.equal(correctionArtifact.recovery.available_transports.includes('live_reviewer_continuation'), false);
+        assert.equal(correctionArtifact.recovery.available_transports.includes('correction_only_invocation'), true);
+        assert.equal(correctionArtifact.transport_binding.session_availability, 'stateless');
+        assert.equal(
+            correctionArtifact.transport_binding.availability_attestation?.evidence_type,
+            'fail_closed_no_provider_session_receipt'
+        );
+        assert.equal(correctionArtifact.binding.reviewer_attempt_id, 'explicit-path-rejected-attempt');
+        const correctionLaunchArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction-launch.json`
+        );
+        const correctionLaunchArtifact = JSON.parse(fs.readFileSync(correctionLaunchArtifactPath, 'utf8')) as {
+            artifact_type: string;
+            state: string;
+            correction_artifact_sha256: string;
+        };
+        assert.equal(correctionLaunchArtifact.artifact_type, 'review_output_correction_launch');
+        assert.equal(correctionLaunchArtifact.state, 'prepared');
+        assert.equal(
+            correctionLaunchArtifact.correction_artifact_sha256,
+            createHash('sha256').update(fs.readFileSync(correctionArtifactPath)).digest('hex')
+        );
+        const validationArtifactSha256 = createHash('sha256')
             .update(fs.readFileSync(validationArtifactPath))
             .digest('hex');
-        const failedLaunchEvent = readTaskTimelineEvents(repoRoot, taskId)
-            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
-        assert.ok(failedLaunchEvent);
-        const failedLaunchEventDetails = failedLaunchEvent.details as Record<string, unknown>;
-        assert.equal(failedLaunchEventDetails.reviewer_launch_attempt_id, 'explicit-path-rejected-attempt');
-        assert.equal(failedLaunchEventDetails.review_type, 'code');
-        assert.equal(failedLaunchEventDetails.reviewer_identity, fixture.reviewerIdentity);
-        assert.equal(failedLaunchEventDetails.review_context_sha256, reviewContextSha256);
         assert.equal(
-            failedLaunchEventDetails.launch_failure_stage,
-            'review_findings_validation'
+            correctionArtifact.binding.validation_artifact_path,
+            validationArtifactPath
+                .replace(/\.json$/u, `-${validationArtifactSha256}.json`)
+                .replace(/\\/g, '/')
         );
         assert.equal(
-            failedLaunchEventDetails.reviewer_launch_artifact_path,
-            explicitLaunchArtifactPath.replace(/\\/g, '/')
-        );
-        assert.equal(failedLaunchEventDetails.reviewer_launch_artifact_sha256, failedLaunchArtifactSha256);
-        assert.equal(
-            failedLaunchEventDetails.rejected_reviewer_launch_artifact_sha256,
-            completedLaunchArtifactSha256
+            correctionArtifact.binding.validation_artifact_sha256,
+            validationArtifactSha256
         );
         assert.equal(
-            failedLaunchEventDetails.review_findings_validation_artifact_path,
-            validationArtifactPath.replace(/\\/g, '/')
-        );
-        assert.equal(
-            failedLaunchEventDetails.review_findings_validation_artifact_sha256,
-            rejectedValidationSha256
-        );
-        assert.match(
-            String((failedLaunchEvent.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''),
-            /^[0-9a-f]{64}$/
-        );
-
-        const taskEventsPath = path.join(taskEventsRoot, `${taskId}.jsonl`);
-        const timelineWithoutFailure = fs.readFileSync(taskEventsPath, 'utf8')
-            .split(/\r?\n/)
-            .filter(Boolean)
-            .filter((line) => JSON.parse(line).event_type !== 'REVIEWER_LAUNCH_FAILED');
-        fs.writeFileSync(taskEventsPath, `${timelineWithoutFailure.join('\n')}\n`, 'utf8');
-
-        const crashReplayResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
-
-        assert.notEqual(crashReplayResult.exitCode, 0);
-        assert.equal(
-            createHash('sha256').update(fs.readFileSync(explicitLaunchArtifactPath)).digest('hex'),
-            failedLaunchArtifactSha256
-        );
-        assert.equal(
-            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
-            rejectedValidationSha256
-        );
-        const recoveredFailureEvents = readTaskTimelineEvents(repoRoot, taskId)
-            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
-        assert.equal(recoveredFailureEvents.length, 1);
-        const recoveredFailedLaunchEvent = recoveredFailureEvents[0];
-        const recoveredFailureDetails = recoveredFailedLaunchEvent.details as Record<string, unknown>;
-        assert.equal(recoveredFailureDetails.reviewer_launch_attempt_id, 'explicit-path-rejected-attempt');
-        assert.equal(recoveredFailureDetails.reviewer_launch_artifact_sha256, failedLaunchArtifactSha256);
-        assert.equal(
-            recoveredFailureDetails.rejected_reviewer_launch_artifact_sha256,
-            completedLaunchArtifactSha256
-        );
-        assert.equal(
-            recoveredFailureDetails.review_findings_validation_artifact_sha256,
-            rejectedValidationSha256
-        );
-
-        fs.writeFileSync(outputPath, `${JSON.stringify({ schema_version: 1 }, null, 2)}\n`, 'utf8');
-        const replayResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
-
-        assert.notEqual(replayResult.exitCode, 0);
-        assert.equal(
-            createHash('sha256').update(fs.readFileSync(explicitLaunchArtifactPath)).digest('hex'),
-            failedLaunchArtifactSha256
-        );
-        assert.equal(
-            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
-            rejectedValidationSha256
+            fs.readFileSync(correctionArtifact.binding.original_output_path, 'utf8'),
+            invalidReviewOutput
         );
         assert.equal(
             readTaskTimelineEvents(repoRoot, taskId)
                 .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            0
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION').length,
             1
         );
+
+        const secondCorrection = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+        assert.notEqual(secondCorrection.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')).recovery.correction_attempt,
+            2
+        );
+        const exhaustedCorrection = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+        assert.notEqual(exhaustedCorrection.exitCode, 0);
+        const exhaustedArtifact = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            state: string;
+            recovery: { correction_attempt: number; selected_transport: string };
+        };
+        assert.equal(exhaustedArtifact.state, 'FULL_REVIEW_REQUIRED');
+        assert.equal(exhaustedArtifact.recovery.correction_attempt, 3);
+        assert.equal(exhaustedArtifact.recovery.selected_transport, 'full_reviewer_relaunch');
         const currentPreflight = JSON.parse(fs.readFileSync(fixture.preflightPath, 'utf8')) as Record<string, unknown>;
         const failedReviewState = readReviewArtifactState(
             fixture.reviewsRoot,
@@ -2470,18 +2666,7 @@ describe('gates command review result - normalization', () => {
             currentPreflight,
             repoRoot
         );
-        const failedLaunchEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
-            repoRoot,
-            taskEventsRoot,
-            taskId,
-            failedReviewState
-        );
-        assert.equal(
-            failedLaunchEvidence.state,
-            'provider_failed',
-            JSON.stringify({ failedLaunchEvidence, failedReviewState })
-        );
-        assert.equal(failedLaunchEvidence.path, explicitLaunchArtifactPath);
+        assert.equal(failedReviewState.failureKind, 'review-correction-full-review-required');
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
@@ -2559,7 +2744,7 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result terminalizes a completed launch when the first output is malformed JSON', async () => {
+    it('record-review-result preserves the completed launch and requests correction when the first output is malformed JSON', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-7-result-malformed-first-output';
         const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
@@ -2616,20 +2801,146 @@ describe('gates command review result - normalization', () => {
         assert.equal(validationArtifact.validation_result.accepted, false);
         assert.equal(validationArtifact.validation_result.detected, false);
         assert.ok(validationArtifact.validation_result.violations.includes('review output must be a JSON object.'));
-        const failedLaunchArtifact = JSON.parse(
+        const preservedLaunchArtifact = JSON.parse(
             fs.readFileSync(fixture.launchArtifactPath, 'utf8')
         ) as Record<string, unknown>;
-        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
-        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(preservedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(preservedLaunchArtifact.launch_failure_stage, undefined);
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const correctionArtifact = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            state: string;
+            recovery: { correction_attempt: number; selected_transport: string };
+            binding: { original_output_path: string };
+        };
+        assert.equal(correctionArtifact.state, 'FULL_REVIEW_REQUIRED');
+        assert.equal(correctionArtifact.recovery.correction_attempt, 1);
+        assert.equal(correctionArtifact.recovery.selected_transport, 'full_reviewer_relaunch');
+        assert.equal(fs.readFileSync(correctionArtifact.binding.original_output_path, 'utf8'), '{ malformed reviewer output\n');
         assert.equal(
             readTaskTimelineEvents(repoRoot, taskId)
                 .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            0
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED').length,
             1
         );
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result terminalizes a plain-text transport error even when it contains a legacy verdict token', async () => {
+    it('record-review-result ignores a prior correction package after a fresh full-review launch', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-fresh-full-review-after-correction';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, '{ malformed reviewer output\n', 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'rejected-output-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+
+        const rejectedResult = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.notEqual(rejectedResult.exitCode, 0);
+
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const correctionBeforeFullReview = JSON.parse(
+            fs.readFileSync(correctionArtifactPath, 'utf8')
+        ) as { state: string; binding: { reviewer_attempt_id: string; validation_artifact_path: string } };
+        assert.equal(correctionBeforeFullReview.state, 'FULL_REVIEW_REQUIRED');
+        assert.equal(correctionBeforeFullReview.binding.reviewer_attempt_id, 'rejected-output-attempt');
+        fs.appendFileSync(
+            correctionBeforeFullReview.binding.validation_artifact_path,
+            '\nvalidation snapshot superseded by a later full-review cycle',
+            'utf8'
+        );
+
+        fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'fresh-full-review-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+
+        const acceptedResult = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.equal(
+            acceptedResult.exitCode,
+            0,
+            [...acceptedResult.errors, ...acceptedResult.logs].join('\n')
+        );
+        const receipt = JSON.parse(fs.readFileSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`),
+            'utf8'
+        )) as { reviewer_identity: string; review_findings_validation: { accepted: boolean } };
+        assert.equal(receipt.reviewer_identity, fixture.reviewerIdentity);
+        assert.equal(receipt.review_findings_validation.accepted, true);
+        const correctionAfterFullReview = JSON.parse(
+            fs.readFileSync(correctionArtifactPath, 'utf8')
+        ) as { state: string };
+        assert.equal(correctionAfterFullReview.state, 'FULL_REVIEW_REQUIRED');
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result requests correction for a plain-text transport error even when it contains a legacy verdict token', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-54-result-plain-transport-error';
         const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
@@ -2690,14 +3001,28 @@ describe('gates command review result - normalization', () => {
         assert.equal(validationArtifact.validation_result.accepted, false);
         assert.equal(validationArtifact.validation_result.detected, false);
         assert.ok(validationArtifact.validation_result.violations.includes('review output must be a JSON object.'));
-        const failedLaunchArtifact = JSON.parse(
+        const preservedLaunchArtifact = JSON.parse(
             fs.readFileSync(fixture.launchArtifactPath, 'utf8')
         ) as Record<string, unknown>;
-        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
-        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(preservedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(preservedLaunchArtifact.launch_failure_stage, undefined);
+        const correctionArtifact = JSON.parse(fs.readFileSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-output-correction.json`),
+            'utf8'
+        )) as { state: string; binding: { original_output_path: string } };
+        assert.equal(correctionArtifact.state, 'FULL_REVIEW_REQUIRED');
+        assert.equal(
+            fs.readFileSync(correctionArtifact.binding.original_output_path, 'utf8'),
+            'Agent errored: stream disconnected before completion.\n\n## Verdict\nREVIEW PASSED\n'
+        );
         assert.equal(
             readTaskTimelineEvents(repoRoot, taskId)
                 .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            0
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_FULL_REVIEW_REQUIRED').length,
             1
         );
         assert.equal(
@@ -2707,7 +3032,7 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result restores the completed launch when corrected findings are accepted', async () => {
+    it('record-review-result accepts corrected findings without mutating the completed launch', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-7-result-corrected-findings-recovery';
         const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
@@ -2729,7 +3054,9 @@ describe('gates command review result - normalization', () => {
             'review-output.md'
         );
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, '{ malformed reviewer output\n', 'utf8');
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        fs.writeFileSync(outputPath, `${JSON.stringify(rejectedReport, null, 2)}\n`, 'utf8');
         rebindCompletedLaunchAttemptForTest({
             repoRoot,
             taskId,
@@ -2760,33 +3087,150 @@ describe('gates command review result - normalization', () => {
         assert.notEqual(rejected.exitCode, 0);
         assert.equal(
             JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
-            'launch_failed'
+            'launched'
         );
-        const failedLaunchSha256 = createHash('sha256')
+        const preservedLaunchSha256 = createHash('sha256')
             .update(fs.readFileSync(fixture.launchArtifactPath))
             .digest('hex');
+        assert.equal(preservedLaunchSha256, completedLaunchSha256);
         fs.writeFileSync(
             outputPath,
             `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
             'utf8'
         );
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const correctionOnlyArtifact = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            recovery: { selected_transport: string; available_transports: string[] };
+        };
+        assert.equal(correctionOnlyArtifact.recovery.selected_transport, 'correction_only_invocation');
+        assert.equal(
+            correctionOnlyArtifact.recovery.available_transports.includes('live_reviewer_continuation'),
+            false
+        );
+        const correctionLaunchInputSha256 = createHash('sha256')
+            .update(fs.readFileSync(correctionArtifactPath))
+            .digest('hex');
+        const correctionProducerIdentity = 'agent:/root/corrected-findings-recovery';
+        const correctionProviderInvocationId = '/root/corrected-findings-recovery';
+        const correctionInvocation = await runCliWithCapturedOutput([
+            'gate', 'record-review-output-correction-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', correctionArtifactPath,
+            '--correction-producer-identity', correctionProducerIdentity,
+            '--provider-invocation-id', correctionProviderInvocationId,
+            '--attestation-source', 'codex_collaboration_spawn_agent',
+            '--launch-input-sha256', correctionLaunchInputSha256,
+            '--fork-context', 'false',
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+        assert.equal(correctionInvocation.exitCode, 0, correctionInvocation.errors.join('\n'));
+        assert.match(correctionInvocation.logs.join('\n'), /REVIEW_OUTPUT_CORRECTION_DELEGATION_STARTED/u);
+        const correctionProviderResponsePath = String(JSON.parse(fs.readFileSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-output-correction-launch.json`),
+            'utf8'
+        )).provider_response_output_path || '');
+        assert.ok(correctionProviderResponsePath);
+        fs.writeFileSync(
+            correctionProviderResponsePath,
+            fs.readFileSync(outputPath, 'utf8'),
+            'utf8'
+        );
+        const correctionInvocationCompleted = await runCliWithCapturedOutput([
+            'gate', 'record-review-output-correction-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', correctionArtifactPath,
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+        assert.equal(
+            correctionInvocationCompleted.exitCode,
+            0,
+            correctionInvocationCompleted.errors.join('\n')
+        );
+        const boundInvocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => (
+                event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                && (event.details as Record<string, unknown> | undefined)?.invocation_role
+                    === 'review_output_correction'
+            ));
+        assert.ok(boundInvocationEvent?.details);
+        const boundInvocationEventSha256 = String(
+            (boundInvocationEvent.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''
+        );
+        assert.match(boundInvocationEventSha256, /^[0-9a-f]{64}$/u);
+        const boundInvocationDetails = boundInvocationEvent.details as Record<string, unknown>;
+        assert.equal(boundInvocationDetails.provider_invocation_id, correctionProviderInvocationId);
+        const correctedArgs = [
+            ...args,
+            '--correction-producer-identity', correctionProducerIdentity,
+            '--correction-provider-invocation-id', correctionProviderInvocationId,
+            '--correction-provider-invocation-event-sha256', boundInvocationEventSha256,
+            '--correction-attestation-source', 'codex_collaboration_spawn_agent',
+            '--correction-launch-input-sha256', correctionLaunchInputSha256,
+            '--correction-fork-context', 'false'
+        ];
         const receiptPath = path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`);
         fs.mkdirSync(receiptPath);
 
-        const persistenceFailure = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+        const persistenceFailure = await runCliWithCapturedOutput(correctedArgs, { cwd: repoRoot });
 
         assert.notEqual(persistenceFailure.exitCode, 0);
         assert.equal(
             JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
-            'launch_failed'
+            'launched'
         );
         assert.equal(
             createHash('sha256').update(fs.readFileSync(fixture.launchArtifactPath)).digest('hex'),
-            failedLaunchSha256
+            preservedLaunchSha256
+        );
+        assert.equal(
+            JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')).state,
+            'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED').length,
+            0
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED').length,
+            1
         );
         fs.rmSync(receiptPath, { recursive: true, force: true });
 
-        const corrected = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+        const lifecycleEventEmitters = loadLifecycleEventEmittersModule();
+        const originalEmitCorrectionAccepted =
+            lifecycleEventEmitters.emitReviewOutputCorrectionAcceptedEventAsync;
+        let acceptanceTelemetryFailure: Awaited<ReturnType<typeof runCliWithCapturedOutput>>;
+        try {
+            lifecycleEventEmitters.emitReviewOutputCorrectionAcceptedEventAsync = async () => null;
+            acceptanceTelemetryFailure = await runCliWithCapturedOutput(correctedArgs, { cwd: repoRoot });
+        } finally {
+            lifecycleEventEmitters.emitReviewOutputCorrectionAcceptedEventAsync =
+                originalEmitCorrectionAccepted;
+        }
+        assert.notEqual(acceptanceTelemetryFailure.exitCode, 0);
+        assert.match(
+            acceptanceTelemetryFailure.errors.join('\n'),
+            /correction acceptance telemetry failed/iu
+        );
+        assert.equal(
+            JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')).state,
+            'REVIEW_OUTPUT_CORRECTION_REQUIRED'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED').length,
+            0
+        );
+
+        const corrected = await runCliWithCapturedOutput(correctedArgs, { cwd: repoRoot });
 
         assert.equal(corrected.exitCode, 0, corrected.errors.join('\n'));
         assert.equal(
@@ -2800,6 +3244,16 @@ describe('gates command review result - normalization', () => {
         assert.equal(
             readTaskTimelineEvents(repoRoot, taskId)
                 .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            0
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_ACCEPTED').length,
+            1
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED').length,
             1
         );
         assert.equal(
@@ -2807,10 +3261,967 @@ describe('gates command review result - normalization', () => {
                 .filter((event) => event.event_type === 'REVIEW_RECORDED').length,
             1
         );
+        const correctionRead = readReviewOutputCorrectionArtifact(correctionArtifactPath);
+        assert.deepEqual(correctionRead.violations, []);
+        assert.equal(correctionRead.artifact?.state, 'CORRECTION_ACCEPTED');
+        const correctionTimeline = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => [
+                'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
+                'REVIEW_OUTPUT_CORRECTION_ACCEPTED',
+                'REVIEW_RECORDED'
+            ].includes(String(event.event_type || '')));
+        assert.deepEqual(
+            correctionTimeline.map((event) => event.event_type),
+            [
+                'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED',
+                'REVIEW_OUTPUT_CORRECTION_ACCEPTED',
+                'REVIEW_RECORDED'
+            ]
+        );
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-receipt terminalizes rejected findings from the bound canonical artifact', async () => {
+    it('record-review-result atomically authenticates a live correction response', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-authenticated-live-correction';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        fs.writeFileSync(outputPath, `${JSON.stringify(rejectedReport, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'authenticated-live-correction-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true,
+            provider: 'Codex'
+        });
+        const baseArgs = [
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ];
+        const rejected = await runCliWithCapturedOutput(baseArgs, { cwd: repoRoot });
+        assert.notEqual(rejected.exitCode, 0);
+
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const pendingCorrection = readReviewOutputCorrectionArtifact(correctionArtifactPath).artifact!;
+        const originalInvocationEventSha256 = pendingCorrection.binding.reviewer_invocation_event_sha256!;
+        const originalInvocation = readTaskTimelineEvents(repoRoot, taskId).find((event) => (
+            event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+            && String(
+                (event.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''
+            ) === originalInvocationEventSha256
+        ));
+        const originalInvocationDetails = originalInvocation?.details as Record<string, unknown>;
+        const originalProviderInvocationId = String(originalInvocationDetails.provider_invocation_id || '');
+        const originalAttestationSource = String(
+            originalInvocationDetails.reviewer_launch_attestation_source
+            || originalInvocationDetails.attestation_source
+            || ''
+        );
+        const correctionInputSha256 = fileSha256(correctionArtifactPath)!;
+        fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+        const correctedOutputSha256 = fileSha256(outputPath);
+        const correctedArgs = [
+            ...baseArgs,
+            '--correction-producer-identity', fixture.reviewerIdentity,
+            '--correction-provider-invocation-id', originalProviderInvocationId,
+            '--correction-provider-invocation-event-sha256', originalInvocationEventSha256,
+            '--correction-attestation-source', originalAttestationSource,
+            '--correction-launch-input-sha256', correctionInputSha256
+        ];
+        const outsideResponseRoot = fs.mkdtempSync(
+            path.join(os.tmpdir(), 'garda-live-response-outside-')
+        );
+        const outsideResponsePath = path.join(outsideResponseRoot, 'review-output.md');
+        fs.writeFileSync(
+            outsideResponsePath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+        const linkedResponseRoot = path.join(path.dirname(outputPath), 'linked-response-root');
+        fs.symlinkSync(
+            outsideResponseRoot,
+            linkedResponseRoot,
+            process.platform === 'win32' ? 'junction' : 'dir'
+        );
+        const escapedResponseAttestation = await runCliWithCapturedOutput([
+            'gate', 'record-review-output-correction-response',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', correctionArtifactPath,
+            '--review-output-path', path.join(linkedResponseRoot, 'review-output.md'),
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--provider-invocation-id', originalProviderInvocationId,
+            '--attestation-source', originalAttestationSource,
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+        assert.notEqual(escapedResponseAttestation.exitCode, 0);
+        assert.match(
+            escapedResponseAttestation.errors.join('\n'),
+            /symlink|junction|task-owned/iu
+        );
+        fs.unlinkSync(linkedResponseRoot);
+        const responseAttestation = await runCliWithCapturedOutput([
+            'gate', 'record-review-output-correction-response',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', correctionArtifactPath,
+            '--review-output-path', outputPath,
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--provider-invocation-id', originalProviderInvocationId,
+            '--attestation-source', originalAttestationSource,
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+        assert.equal(responseAttestation.exitCode, 0, responseAttestation.errors.join('\n'));
+
+        const corrected = await runCliWithCapturedOutput(correctedArgs, { cwd: repoRoot });
+
+        assert.equal(corrected.exitCode, 0, corrected.errors.join('\n'));
+        const accepted = readReviewOutputCorrectionArtifact(correctionArtifactPath);
+        assert.deepEqual(accepted.violations, []);
+        assert.equal(accepted.artifact?.state, 'CORRECTION_ACCEPTED');
+        assert.equal(accepted.artifact?.transport_binding?.session_availability, 'available');
+        assert.equal(
+            accepted.artifact?.transport_binding?.availability_attestation
+                ?.provider_invocation_event_sha256,
+            originalInvocationEventSha256
+        );
+        assert.equal(
+            accepted.artifact?.transport_binding?.availability_attestation?.provider_response_sha256,
+            correctedOutputSha256
+        );
+        const liveEvents = readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+            event.event_type === 'REVIEW_OUTPUT_CORRECTION_LIVE_CONTINUATION'
+        ));
+        assert.equal(liveEvents.length, 1);
+        assert.equal(
+            accepted.artifact?.transport_binding?.availability_attestation
+                ?.provider_response_event_sha256,
+            (liveEvents[0]?.integrity as Record<string, unknown>).event_sha256
+        );
+        assert.equal(
+            (liveEvents[0]?.details as Record<string, unknown>)
+                .availability_provider_invocation_event_sha256,
+            originalInvocationEventSha256
+        );
+        fs.rmSync(outsideResponseRoot, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('routes multi_agent_v1 Codex corrections through a clean correction-only reviewer', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-multi-agent-correction-only';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        fs.writeFileSync(outputPath, `${JSON.stringify(rejectedReport, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'multi-agent-correction-only-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true,
+            provider: 'Codex',
+            attestationSource: 'multi_agent_v1.spawn_agent'
+        });
+
+        const rejected = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(rejected.exitCode, 0);
+        const correctionArtifact = readReviewOutputCorrectionArtifact(path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        )).artifact!;
+        assert.equal(correctionArtifact.recovery.selected_transport, 'correction_only_invocation');
+        assert.equal(
+            correctionArtifact.recovery.available_transports.includes('live_reviewer_continuation'),
+            false
+        );
+        assert.equal(correctionArtifact.recovery.handoff?.provider_action, 'launch_correction_only_reviewer');
+        assert.equal(correctionArtifact.transport_binding?.session_availability, 'stateless');
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects caller-asserted Codex availability before correction-only fallback', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-live-codex-correction';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        fs.writeFileSync(outputPath, `${JSON.stringify(rejectedReport, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'live-codex-correction-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true,
+            provider: 'Codex'
+        });
+
+        const recordResultArgs = [
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ];
+        const rejected = await runCliWithCapturedOutput(recordResultArgs, { cwd: repoRoot });
+
+        assert.notEqual(rejected.exitCode, 0);
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const correctionArtifact = JSON.parse(fs.readFileSync(
+            correctionArtifactPath,
+            'utf8'
+        )) as {
+            transport_binding: {
+                provider_invocation_id: string;
+                session_availability: string;
+            };
+            recovery: {
+                selected_transport: string;
+                available_transports: string[];
+                handoff: { provider_action: string; target_reviewer_identity: string };
+            };
+        };
+        assert.equal(correctionArtifact.recovery.selected_transport, 'live_reviewer_continuation');
+        assert.equal(
+            correctionArtifact.recovery.available_transports.includes('live_reviewer_continuation'),
+            true
+        );
+        assert.equal(correctionArtifact.recovery.handoff.provider_action, 'continue_delegated_reviewer');
+        assert.equal(correctionArtifact.recovery.handoff.target_reviewer_identity, fixture.reviewerIdentity);
+        assert.equal(correctionArtifact.transport_binding.session_availability, 'pending');
+        assert.deepEqual(
+            readReviewOutputCorrectionArtifact(correctionArtifactPath).violations,
+            [],
+            fs.readFileSync(correctionArtifactPath, 'utf8')
+        );
+        assert.equal(fs.existsSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-output-correction-launch.json`)
+        ), false);
+
+        const buildTransportArgs = (
+            sessionAvailability: string,
+            attestationSource?: string
+        ) => [
+            'gate', 'record-review-output-correction-transport',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', correctionArtifactPath,
+            '--session-availability', sessionAvailability,
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--provider-invocation-id', correctionArtifact.transport_binding.provider_invocation_id,
+            ...(attestationSource ? ['--attestation-source', attestationSource] : []),
+            '--repo-root', repoRoot
+        ];
+        const transportArgs = buildTransportArgs('closed');
+        const forgedLive = await runCliWithCapturedOutput(
+            buildTransportArgs('available'),
+            { cwd: repoRoot }
+        );
+        assert.notEqual(forgedLive.exitCode, 0);
+        assert.match(
+            forgedLive.errors.join('\n'),
+            /requires fail-closed --session-availability 'closed' or 'stateless'/iu
+        );
+        assert.equal(
+            readReviewOutputCorrectionArtifact(correctionArtifactPath).artifact
+                ?.transport_binding?.session_availability,
+            'pending'
+        );
+        const pendingArtifactText = fs.readFileSync(correctionArtifactPath, 'utf8');
+        const timelinePath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const pendingTimelineText = fs.readFileSync(timelinePath, 'utf8');
+        const labeledLive = await runCliWithCapturedOutput(
+            buildTransportArgs('available', 'codex_collaboration_followup_task'),
+            { cwd: repoRoot }
+        );
+        assert.notEqual(labeledLive.exitCode, 0);
+        assert.match(
+            labeledLive.errors.join('\n'),
+            /Live continuation is frozen only with an authenticated corrected response/iu
+        );
+        assert.equal(fs.readFileSync(correctionArtifactPath, 'utf8'), pendingArtifactText);
+        assert.equal(fs.readFileSync(timelinePath, 'utf8'), pendingTimelineText);
+        const sharedTransportLockPath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            '.record-review-output-correction-transport.lock'
+        );
+        fs.mkdirSync(sharedTransportLockPath, { recursive: true });
+        fs.writeFileSync(
+            path.join(sharedTransportLockPath, 'owner.json'),
+            `${JSON.stringify({
+                pid: process.pid,
+                hostname: os.hostname(),
+                created_at_utc: new Date().toISOString(),
+                owner_label: `record-review-output-correction-transport:${taskId}:code`
+            }, null, 2)}\n`,
+            'utf8'
+        );
+        const blockedResult = await runCliWithCapturedOutput(recordResultArgs, { cwd: repoRoot });
+        assert.notEqual(blockedResult.exitCode, 0);
+        assert.match(
+            blockedResult.errors.join('\n'),
+            /timed out acquiring file lock: .*\.record-review-output-correction-transport\.lock/iu
+        );
+        assert.equal(fs.readFileSync(correctionArtifactPath, 'utf8'), pendingArtifactText);
+        assert.equal(fs.readFileSync(timelinePath, 'utf8'), pendingTimelineText);
+        fs.rmSync(sharedTransportLockPath, { recursive: true, force: true });
+        const selected = await runCliWithCapturedOutput(transportArgs, { cwd: repoRoot });
+        assert.equal(selected.exitCode, 0, selected.errors.join('\n'));
+        assert.deepEqual(readReviewOutputCorrectionArtifact(correctionArtifactPath).violations, []);
+        const fallbackArtifact = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            transport_binding: { session_availability: string };
+            recovery: { selected_transport: string; handoff: { provider_action: string } };
+        };
+        assert.equal(fallbackArtifact.transport_binding.session_availability, 'closed');
+        assert.equal(fallbackArtifact.recovery.selected_transport, 'correction_only_invocation');
+        assert.equal(fallbackArtifact.recovery.handoff.provider_action, 'launch_correction_only_reviewer');
+        assert.equal(fs.existsSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-output-correction-launch.json`)
+        ), true);
+        const eventsAfterSelection = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(eventsAfterSelection.at(-1)?.event_type, 'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION');
+        fs.writeFileSync(
+            timelinePath,
+            `${eventsAfterSelection.slice(0, -1).map((event) => JSON.stringify(event)).join('\n')}\n`,
+            'utf8'
+        );
+
+        const recovered = await runCliWithCapturedOutput(transportArgs, { cwd: repoRoot });
+        assert.equal(recovered.exitCode, 0, recovered.errors.join('\n'));
+        assert.equal(
+            recovered.logs.some((line) => line.includes('REVIEW_OUTPUT_CORRECTION_TRANSPORT_RECOVERED')),
+            true
+        );
+        const recoveredEvents = readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+            event.event_type === 'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION'
+        ));
+        assert.equal(recoveredEvents.length, 1);
+        const recoveredDetails = recoveredEvents[0]?.details as Record<string, unknown> | undefined;
+        assert.equal(
+            typeof recoveredDetails?.previous_correction_package_sha256,
+            'string'
+        );
+
+        const repeated = await runCliWithCapturedOutput(transportArgs, { cwd: repoRoot });
+        assert.equal(repeated.exitCode, 0, repeated.errors.join('\n'));
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+            event.event_type === 'REVIEW_OUTPUT_CORRECTION_ONLY_INVOCATION'
+        )).length, 1);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-output-correction-invocation attests a correction-only reviewer once', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-correction-only-invocation-attestation';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const originalInvocation = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.ok(originalInvocation?.details);
+        const originalInvocationSha256 = String(
+            (originalInvocation.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''
+        );
+        assert.match(originalInvocationSha256, /^[0-9a-f]{64}$/u);
+        const originalInvocationDetails = originalInvocation.details as Record<string, unknown>;
+        const originalReviewerAttemptId = String(
+            originalInvocationDetails.reviewer_launch_attempt_id
+            || originalInvocationDetails.provider_invocation_id
+            || originalInvocationSha256
+        );
+        const rawOutput = `${JSON.stringify(
+            buildNoFindingsJsonReport(fixture.reviewContextPath, taskId),
+            null,
+            2
+        )}\n`;
+        const invalidCorrectionReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        invalidCorrectionReport.unexpected = true;
+        const invalidCorrectionOutput = `${JSON.stringify(invalidCorrectionReport, null, 2)}\n`;
+        const rejectedOutputPath = path.join(fixture.reviewsRoot, `${taskId}-code-rejected-placeholder.md`);
+        const validationArtifactContent = '{}\n';
+        const validationArtifactSha256 = createHash('sha256')
+            .update(validationArtifactContent)
+            .digest('hex');
+        const validationArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-findings-validation-${validationArtifactSha256}.json`
+        );
+        fs.writeFileSync(rejectedOutputPath, rawOutput, 'utf8');
+        fs.writeFileSync(validationArtifactPath, validationArtifactContent, 'utf8');
+        const reviewContext = JSON.parse(
+            fs.readFileSync(fixture.reviewContextPath, 'utf8')
+        ) as Record<string, unknown>;
+        const reviewArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code.md`);
+        const correctionArtifact = buildReviewOutputCorrectionArtifact({
+            taskId,
+            reviewType: 'code',
+            rejectedOutputPath,
+            rejectedOutputSha256: createHash('sha256').update(rawOutput).digest('hex'),
+            rejectedOutputContent: rawOutput,
+            reviewContextPath: fixture.reviewContextPath,
+            reviewContextSha256: createHash('sha256')
+                .update(fs.readFileSync(fixture.reviewContextPath))
+                .digest('hex'),
+            reviewTreeStateSha256: String(
+                (reviewContext.tree_state as Record<string, unknown>).tree_state_sha256 || ''
+            ),
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewerAttemptId: originalReviewerAttemptId,
+            reviewerInvocationEventSha256: originalInvocationSha256,
+            validationArtifactPath,
+            validationArtifactSha256,
+            violations: ['findings.high[0].description is required.'],
+            capabilities: {
+                live_reviewer_continuation: false,
+                api_conversation_continuation: false,
+                correction_only_invocation: true
+            }
+        });
+        const persisted = persistReviewOutputCorrection({
+            repoRoot,
+            reviewArtifactPath,
+            rawOutput,
+            artifact: correctionArtifact
+        });
+        const correctionInputSha256 = createHash('sha256')
+            .update(fs.readFileSync(persisted.artifactPath))
+            .digest('hex');
+        const args = [
+            'gate', 'record-review-output-correction-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', persisted.artifactPath,
+            '--correction-producer-identity', 'agent:/root/correction-only-reviewer',
+            '--provider-invocation-id', '/root/correction-only-reviewer',
+            '--attestation-source', 'codex_collaboration_spawn_agent',
+            '--launch-input-sha256', correctionInputSha256,
+            '--fork-context', 'false',
+            '--repo-root', repoRoot
+        ];
+
+        const started = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+        assert.equal(started.exitCode, 0, started.errors.join('\n'));
+        assert.match(started.logs.join('\n'), /REVIEW_OUTPUT_CORRECTION_DELEGATION_STARTED/u);
+        const startedTimeline = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(startedTimeline.filter((event) => (
+            event.event_type === 'REVIEWER_DELEGATION_STARTED'
+            && (event.details as Record<string, unknown> | undefined)?.invocation_role
+                === 'review_output_correction'
+        )).length, 1);
+        assert.equal(startedTimeline.filter((event) => (
+            event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+            && (event.details as Record<string, unknown> | undefined)?.invocation_role
+                === 'review_output_correction'
+        )).length, 0);
+        assert.equal(startedTimeline.filter((event) => (
+            event.event_type === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED'
+        )).length, 0);
+        const startedCorrectionLaunchArtifact = JSON.parse(fs.readFileSync(
+            persisted.correctionLaunchArtifactPath!,
+            'utf8'
+        )) as { provider_response_output_path: string };
+        fs.writeFileSync(
+            startedCorrectionLaunchArtifact.provider_response_output_path,
+            invalidCorrectionOutput,
+            'utf8'
+        );
+
+        const rejectedResupply = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+        assert.notEqual(rejectedResupply.exitCode, 0);
+        assert.match(
+            rejectedResupply.errors.join('\n'),
+            /completion consumes the frozen provider delegation receipt/iu
+        );
+        const completionArgs = [
+            'gate', 'record-review-output-correction-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--correction-artifact-path', persisted.artifactPath,
+            '--repo-root', repoRoot
+        ];
+        const completed = await runCliWithCapturedOutput(completionArgs, { cwd: repoRoot });
+        assert.equal(completed.exitCode, 0, completed.errors.join('\n'));
+        assert.match(completed.logs.join('\n'), /REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED/u);
+        const repeated = await runCliWithCapturedOutput(completionArgs, { cwd: repoRoot });
+
+        assert.equal(repeated.exitCode, 0, repeated.errors.join('\n'));
+        const correctionDelegations = readTaskTimelineEvents(repoRoot, taskId).filter((event) => {
+            const details = event.details as Record<string, unknown> | undefined;
+            return event.event_type === 'REVIEWER_DELEGATION_STARTED'
+                && details?.invocation_role === 'review_output_correction';
+        });
+        const correctionInvocations = readTaskTimelineEvents(repoRoot, taskId).filter((event) => {
+            const details = event.details as Record<string, unknown> | undefined;
+            return event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                && details?.invocation_role === 'review_output_correction';
+        });
+        const correctionInvocationTelemetry = readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+            event.event_type === 'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED'
+        ));
+        assert.equal(correctionDelegations.length, 1);
+        assert.equal(correctionInvocations.length, 1);
+        assert.equal(correctionInvocationTelemetry.length, 1);
+        assert.equal(
+            (correctionInvocationTelemetry[0]?.details as Record<string, unknown>).state,
+            'REVIEW_OUTPUT_CORRECTION_INVOCATION_ATTESTED'
+        );
+        assert.equal(
+            (correctionInvocations[0]?.details as Record<string, unknown>).launch_input_sha256,
+            correctionInputSha256
+        );
+        assert.equal(
+            (correctionInvocations[0]?.details as Record<string, unknown>)
+                .correction_delegation_started_event_sha256,
+            (correctionDelegations[0]?.integrity as Record<string, unknown>).event_sha256
+        );
+        const pendingCorrectionRead = readReviewOutputCorrectionArtifact(persisted.artifactPath);
+        assert.deepEqual(pendingCorrectionRead.violations, []);
+        assert.equal(
+            pendingCorrectionRead.artifact?.binding.reviewer_attempt_id,
+            originalReviewerAttemptId
+        );
+        const completedCorrectionLaunchArtifact = JSON.parse(fs.readFileSync(
+            persisted.correctionLaunchArtifactPath!,
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(completedCorrectionLaunchArtifact.state, 'delegation_started');
+        assert.equal(
+            completedCorrectionLaunchArtifact.correction_producer_identity,
+            'agent:/root/correction-only-reviewer'
+        );
+        const rejectedCorrection = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', startedCorrectionLaunchArtifact.provider_response_output_path,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--correction-producer-identity', 'agent:/root/correction-only-reviewer',
+            '--correction-provider-invocation-id', '/root/correction-only-reviewer',
+            '--correction-provider-invocation-event-sha256', String(
+                (correctionInvocationTelemetry[0]?.details as Record<string, unknown>)
+                    .provider_invocation_event_sha256 || ''
+            ),
+            '--correction-attestation-source', 'codex_collaboration_spawn_agent',
+            '--correction-launch-input-sha256', correctionInputSha256,
+            '--correction-fork-context', 'false',
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+        assert.notEqual(rejectedCorrection.exitCode, 0);
+        const retriedCorrection = JSON.parse(fs.readFileSync(persisted.artifactPath, 'utf8')) as {
+            state: string;
+            recovery: { correction_attempt: number; selected_transport: string };
+        };
+        assert.equal(
+            retriedCorrection.recovery.correction_attempt,
+            2,
+            rejectedCorrection.errors.join('\n')
+        );
+        assert.equal(retriedCorrection.state, 'REVIEW_OUTPUT_CORRECTION_REQUIRED');
+        assert.equal(retriedCorrection.recovery.selected_transport, 'correction_only_invocation');
+        const correctionLaunchArtifact = JSON.parse(fs.readFileSync(
+            persisted.correctionLaunchArtifactPath!,
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(correctionLaunchArtifact.state, 'prepared');
+        assert.equal(correctionLaunchArtifact.correction_producer_identity, undefined);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects an invalid correction before it can replace the findings baseline', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-invalid-correction-findings-substitution';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        const rejectedOutput = `${JSON.stringify(rejectedReport, null, 2)}\n`;
+        fs.writeFileSync(outputPath, rejectedOutput, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'invalid-correction-substitution-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+        const baseArgs = [
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ];
+        const rejected = await runCliWithCapturedOutput(baseArgs, { cwd: repoRoot });
+        assert.notEqual(rejected.exitCode, 0);
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const before = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            binding: { findings_semantic_fingerprint: string; original_output_path: string };
+        };
+        const boundInvocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => (
+                event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                && String(
+                    (event.details as Record<string, unknown> | undefined)?.reviewer_launch_attempt_id || ''
+                ) === 'invalid-correction-substitution-attempt'
+            ));
+        assert.ok(boundInvocationEvent?.details);
+        const boundInvocationDetails = boundInvocationEvent.details as Record<string, unknown>;
+        const boundInvocationEventSha256 = String(
+            (boundInvocationEvent.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''
+        );
+        const changedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        changedReport.unexpected = true;
+        const changedFindings = changedReport.findings as Record<string, unknown[]>;
+        changedFindings.high.push({
+            id: 'F-001',
+            title: 'Substituted finding',
+            description: 'This semantic finding was not present in the original rejected output.',
+            evidence: [{ location: 'src/app.ts:1', observation: 'Substitution regression evidence.' }],
+            coverage_obligation_ids: ['FILE-001']
+        });
+        fs.writeFileSync(outputPath, `${JSON.stringify(changedReport, null, 2)}\n`, 'utf8');
+
+        const changed = await runCliWithCapturedOutput([
+            ...baseArgs,
+            '--correction-producer-identity', fixture.reviewerIdentity,
+            '--correction-provider-invocation-id', String(boundInvocationDetails.provider_invocation_id || ''),
+            '--correction-provider-invocation-event-sha256', boundInvocationEventSha256,
+            '--correction-attestation-source', 'codex_collaboration_followup_task',
+            '--correction-launch-input-sha256', createHash('sha256')
+                .update(fs.readFileSync(correctionArtifactPath))
+                .digest('hex')
+        ], { cwd: repoRoot });
+
+        assert.notEqual(changed.exitCode, 0);
+        assert.ok(
+            changed.errors.some((line) => line.includes('semantic findings fingerprint')),
+            changed.errors.join('\n')
+        );
+        const after = JSON.parse(fs.readFileSync(correctionArtifactPath, 'utf8')) as {
+            state: string;
+            binding: { findings_semantic_fingerprint: string; original_output_path: string };
+        };
+        assert.equal(after.state, 'FULL_REVIEW_REQUIRED');
+        assert.equal(after.binding.findings_semantic_fingerprint, before.binding.findings_semantic_fingerprint);
+        assert.equal(fs.readFileSync(after.binding.original_output_path, 'utf8'), rejectedOutput);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result persists a correction package for rejected stdin findings output', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-stdin-rejected-correction';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const boundOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(boundOutputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        const rejectedOutput = `${JSON.stringify(rejectedReport, null, 2)}\n`;
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'stdin-rejected-attempt',
+            reviewOutputPath: boundOutputPath,
+            recordCompletion: true
+        });
+
+        const mutableHandlers = gateReviewHandlers as { readReviewOutputFromStdin: () => Promise<string> };
+        const originalReadReviewOutputFromStdin = mutableHandlers.readReviewOutputFromStdin;
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        mutableHandlers.readReviewOutputFromStdin = async () => rejectedOutput;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate', 'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-stdin',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ]);
+            assert.notEqual(process.exitCode ?? 0, 0);
+        } finally {
+            mutableHandlers.readReviewOutputFromStdin = originalReadReviewOutputFromStdin;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const correctionArtifact = JSON.parse(fs.readFileSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-output-correction.json`),
+            'utf8'
+        )) as { state: string; binding: { original_output_path: string } };
+        assert.equal(correctionArtifact.state, 'REVIEW_OUTPUT_CORRECTION_REQUIRED');
+        assert.equal(fs.readFileSync(correctionArtifact.binding.original_output_path, 'utf8'), rejectedOutput);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result requires a full review when correction provider provenance changes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-correction-attempt-mismatch';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const rejectedReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReport.unexpected = true;
+        fs.writeFileSync(outputPath, `${JSON.stringify(rejectedReport, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'correction-attempt-1',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+        const args = [
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ];
+
+        const rejected = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+        assert.notEqual(rejected.exitCode, 0);
+        fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+        const correctionArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-output-correction.json`
+        );
+        const boundInvocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => (
+                event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                && String(
+                    (event.details as Record<string, unknown> | undefined)?.reviewer_launch_attempt_id || ''
+                ) === 'correction-attempt-1'
+            ));
+        assert.ok(boundInvocationEvent);
+        const boundInvocationEventSha256 = String(
+            (boundInvocationEvent.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''
+        );
+        assert.match(boundInvocationEventSha256, /^[0-9a-f]{64}$/u);
+        const mismatchedAttempt = await runCliWithCapturedOutput([
+            ...args,
+            '--correction-producer-identity', fixture.reviewerIdentity,
+            '--correction-provider-invocation-id', 'forged-correction-invocation',
+            '--correction-provider-invocation-event-sha256', boundInvocationEventSha256,
+            '--correction-attestation-source', 'codex_collaboration_followup_task',
+            '--correction-launch-input-sha256', createHash('sha256')
+                .update(fs.readFileSync(correctionArtifactPath))
+                .digest('hex')
+        ], { cwd: repoRoot });
+
+        assert.notEqual(mismatchedAttempt.exitCode, 0);
+        assert.ok(
+            mismatchedAttempt.errors.some((line) => line.includes('provider invocation id does not match')),
+            mismatchedAttempt.errors.join('\n')
+        );
+        const correctionArtifact = JSON.parse(fs.readFileSync(
+            correctionArtifactPath,
+            'utf8'
+        )) as { state: string; recovery: { selected_transport: string } };
+        assert.equal(correctionArtifact.state, 'FULL_REVIEW_REQUIRED');
+        assert.equal(correctionArtifact.recovery.selected_transport, 'full_reviewer_relaunch');
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_RECORDED').length,
+            0
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt preserves launch provenance and requests correction for rejected canonical findings', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-7-receipt-json-invalid-validation-artifact';
         const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
@@ -2946,26 +4357,32 @@ describe('gates command review result - normalization', () => {
         const result = await runCliWithCapturedOutput(receiptArgs, { cwd: repoRoot });
 
         assert.notEqual(result.exitCode, 0);
-        assert.ok(
-            result.errors.some((line) => line.includes('Verdict-free findings JSON report is invalid')),
-            result.errors.join('\n')
-        );
-        const failedLaunchArtifact = JSON.parse(
+        assert.match(result.errors.join('\n'), /Verdict-free findings JSON report is invalid/u);
+        const preservedLaunchArtifact = JSON.parse(
             fs.readFileSync(fixture.launchArtifactPath, 'utf8')
         ) as Record<string, unknown>;
-        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
-        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
-        assert.equal(failedLaunchArtifact.launch_failure_recorded_by, 'record-review-receipt');
-        const failedLaunchEvent = readTaskTimelineEvents(repoRoot, taskId)
-            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
-        assert.ok(failedLaunchEvent?.integrity);
+        assert.equal(preservedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(preservedLaunchArtifact.launch_failure_stage, undefined);
+        const correctionArtifact = JSON.parse(fs.readFileSync(
+            path.join(fixture.reviewsRoot, `${taskId}-code-output-correction.json`),
+            'utf8'
+        )) as {
+            state: string;
+            binding: { reviewer_attempt_id: string; original_output_path: string };
+        };
+        assert.equal(correctionArtifact.state, 'REVIEW_OUTPUT_CORRECTION_REQUIRED');
         assert.equal(
-            (failedLaunchEvent.details as Record<string, unknown>).reviewer_launch_attempt_id,
+            correctionArtifact.binding.reviewer_attempt_id,
             'receipt-rejected-attempt'
         );
         assert.equal(
-            (failedLaunchEvent.details as Record<string, unknown>).reviewer_launch_artifact_sha256,
-            createHash('sha256').update(fs.readFileSync(fixture.launchArtifactPath)).digest('hex')
+            fs.readFileSync(correctionArtifact.binding.original_output_path, 'utf8'),
+            fs.readFileSync(artifactPath, 'utf8')
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
         );
         assert.equal(
             fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)),
@@ -3017,11 +4434,12 @@ describe('gates command review result - normalization', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         const outputPath = path.join(outputDir, 'review-output.md');
         fs.writeFileSync(outputPath, `${JSON.stringify({
-            schema_version: 1,
+            schema_version: 2,
             task_id: taskId,
             review_type: 'code',
             review_context_sha256: reviewContextSha256,
             tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            review_execution: buildReviewExecutionEvidenceFixture(fixture.reviewContextPath),
             validation_notes: [{
                 id: 'N-001',
                 topic: 'complete-scope-sweep',
@@ -3439,6 +4857,7 @@ describe('gates command review result - normalization', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -3483,6 +4902,13 @@ describe('gates command review result - normalization', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -3507,11 +4933,11 @@ describe('gates command review result - normalization', () => {
         assert.equal(fs.existsSync(rawReviewOutputPath), false);
         assert.ok(capturedErrors.some((line) => line.includes('trivial or obviously synthetic')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
         const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
         const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
-        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3720,6 +5146,7 @@ describe('gates command review result - normalization', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -3767,6 +5194,13 @@ describe('gates command review result - normalization', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',

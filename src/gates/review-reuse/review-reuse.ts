@@ -52,6 +52,9 @@ export interface ReviewRelevantScopeFingerprint {
 export interface ReviewContextReuseContractBindings {
     coverageContractSha256: string | null;
     ruleContextSha256: string | null;
+    reviewExecutionContractSha256: string | null;
+    reviewExecutionMode: 'FULL' | 'DELTA' | null;
+    reviewExecutionFullScopeSha256: string | null;
 }
 
 export function isNonTestReviewScope(reviewType: string): boolean {
@@ -152,10 +155,23 @@ export function computeReviewRuleContextReuseHash(
     const rolePrompt = toRecord(reviewerHandoff.role_prompt);
     const promptTemplate = toRecord(reviewerHandoff.prompt_template);
     const outputTemplate = toRecord(reviewerHandoff.output_template);
+    const reviewLane = toRecord(reviewContext.review_lane);
+    const reviewLaneBindingSha256 = toLowerHash(reviewLane.binding_sha256);
     const selectedSkill = Object.keys(toRecord(ruleContext.selected_skill)).length > 0
         ? toRecord(ruleContext.selected_skill)
         : toRecord(rolePrompt.selected_skill);
     const sourceFiles = toSourceFileSummary(ruleContext.source_files);
+    const instructionContractSha256 = toLowerHash(ruleContext.instruction_contract_sha256);
+    const legacyPromptBindings = instructionContractSha256
+        ? {}
+        : {
+            role_prompt_sha256: toLowerHash(ruleContext.role_prompt_sha256)
+                || toLowerHash(rolePrompt.artifact_sha256),
+            prompt_template_sha256: toLowerHash(ruleContext.prompt_template_sha256)
+                || toLowerHash(promptTemplate.artifact_sha256),
+            output_template_sha256: toLowerHash(ruleContext.output_template_sha256)
+                || toLowerHash(outputTemplate.artifact_sha256)
+        };
     const snapshot = {
         source_file_count: typeof ruleContext.source_file_count === 'number'
             ? ruleContext.source_file_count
@@ -170,18 +186,15 @@ export function computeReviewRuleContextReuseHash(
             skill_entrypoint_exists: selectedSkill.skill_entrypoint_exists === true,
             candidate_skill_ids: toStringList(selectedSkill.candidate_skill_ids)
         },
-        role_prompt_sha256: toLowerHash(ruleContext.role_prompt_sha256)
-            || toLowerHash(rolePrompt.artifact_sha256),
-        prompt_template_sha256: toLowerHash(ruleContext.prompt_template_sha256)
-            || toLowerHash(promptTemplate.artifact_sha256),
-        output_template_sha256: toLowerHash(ruleContext.output_template_sha256)
-            || toLowerHash(outputTemplate.artifact_sha256)
+        ...(instructionContractSha256
+            ? { instruction_contract_sha256: instructionContractSha256 }
+            : legacyPromptBindings),
+        ...(reviewLaneBindingSha256 ? { review_lane_binding_sha256: reviewLaneBindingSha256 } : {})
     };
     const hasInstructionBinding = sourceFiles.length > 0
         || !!snapshot.selected_skill.skill_sha256
-        || !!snapshot.role_prompt_sha256
-        || !!snapshot.prompt_template_sha256
-        || !!snapshot.output_template_sha256;
+        || !!instructionContractSha256
+        || Object.values(legacyPromptBindings).some(Boolean);
     return hasInstructionBinding ? stringSha256(JSON.stringify(snapshot)) : null;
 }
 
@@ -189,9 +202,16 @@ export function resolveReviewContextReuseContractBindings(
     reviewContext: Record<string, unknown>
 ): ReviewContextReuseContractBindings {
     const coverageContract = toRecord(reviewContext.coverage_contract);
+    const reviewExecution = toRecord(reviewContext.review_execution);
+    const reviewExecutionMode = String(reviewExecution.mode || '').trim().toUpperCase();
     return {
         coverageContractSha256: toLowerHash(coverageContract.contract_sha256),
-        ruleContextSha256: computeReviewRuleContextReuseHash(reviewContext)
+        ruleContextSha256: computeReviewRuleContextReuseHash(reviewContext),
+        reviewExecutionContractSha256: toLowerHash(reviewExecution.contract_sha256),
+        reviewExecutionMode: reviewExecutionMode === 'FULL' || reviewExecutionMode === 'DELTA'
+            ? reviewExecutionMode
+            : null,
+        reviewExecutionFullScopeSha256: toLowerHash(reviewExecution.full_review_scope_sha256)
     };
 }
 
@@ -200,11 +220,28 @@ export function resolveReviewReceiptReuseContractBindings(
 ): ReviewContextReuseContractBindings {
     const reviewCoverage = toRecord(receipt.review_coverage);
     const reviewOutputContract = toRecord(receipt.review_output_contract);
+    const findingsReport = toRecord(receipt.review_findings_report);
+    const reportReviewExecution = toRecord(findingsReport.review_execution);
+    const reviewExecutionMode = String(
+        receipt.review_execution_mode
+        || reviewOutputContract.review_execution_mode
+        || reportReviewExecution.mode
+        || ''
+    ).trim().toUpperCase();
     return {
         coverageContractSha256: toLowerHash(receipt.review_coverage_contract_sha256)
             || toLowerHash(reviewCoverage.coverage_contract_sha256)
             || toLowerHash(reviewOutputContract.coverage_contract_sha256),
-        ruleContextSha256: toLowerHash(receipt.review_rule_context_sha256)
+        ruleContextSha256: toLowerHash(receipt.review_rule_context_sha256),
+        reviewExecutionContractSha256: toLowerHash(receipt.review_execution_contract_sha256)
+            || toLowerHash(reviewOutputContract.review_execution_contract_sha256)
+            || toLowerHash(reportReviewExecution.contract_sha256),
+        reviewExecutionMode: reviewExecutionMode === 'FULL' || reviewExecutionMode === 'DELTA'
+            ? reviewExecutionMode
+            : null,
+        reviewExecutionFullScopeSha256: toLowerHash(receipt.review_execution_full_scope_sha256)
+            || toLowerHash(reviewOutputContract.review_execution_full_scope_sha256)
+            || toLowerHash(reportReviewExecution.full_review_scope_sha256)
     };
 }
 
@@ -233,6 +270,57 @@ export function getReviewContextReuseContractBindingMismatch(
             'reused review rule context does not match the current review context: ' +
             `historical rule_context_sha256=${historicalBindings.ruleContextSha256 || 'missing'}; ` +
             `current rule_context_sha256=${currentBindings.ruleContextSha256 || 'missing'}`
+        );
+    }
+    if (!currentBindings.reviewExecutionMode) {
+        mismatches.push('current review context is missing a valid FULL/DELTA review execution mode');
+    } else if (
+        historicalBindings.reviewExecutionMode
+        && historicalBindings.reviewExecutionMode !== currentBindings.reviewExecutionMode
+    ) {
+        mismatches.push(
+            'reused review execution mode does not match the current review context: '
+            + `historical mode=${historicalBindings.reviewExecutionMode}; `
+            + `current mode=${currentBindings.reviewExecutionMode}`
+        );
+    } else if (
+        currentBindings.reviewExecutionMode === 'DELTA'
+        && !historicalBindings.reviewExecutionMode
+    ) {
+        mismatches.push('reused review execution mode is missing for a current DELTA review context');
+    }
+    if (!currentBindings.reviewExecutionFullScopeSha256) {
+        mismatches.push('current review context is missing its review execution full-scope binding');
+    } else if (
+        currentBindings.reviewExecutionMode === 'DELTA'
+        && historicalBindings.reviewExecutionFullScopeSha256
+        && historicalBindings.reviewExecutionFullScopeSha256
+            !== currentBindings.reviewExecutionFullScopeSha256
+    ) {
+        mismatches.push(
+            'reused review execution full scope does not match the current review context: '
+            + `historical full_review_scope_sha256=${historicalBindings.reviewExecutionFullScopeSha256}; `
+            + `current full_review_scope_sha256=${currentBindings.reviewExecutionFullScopeSha256}`
+        );
+    } else if (
+        currentBindings.reviewExecutionMode === 'DELTA'
+        && !historicalBindings.reviewExecutionFullScopeSha256
+    ) {
+        mismatches.push('reused review execution full-scope binding is missing for a current DELTA review context');
+    }
+    if (
+        currentBindings.reviewExecutionMode === 'DELTA'
+        && (
+            !historicalBindings.reviewExecutionContractSha256
+            || !currentBindings.reviewExecutionContractSha256
+            || historicalBindings.reviewExecutionContractSha256
+                !== currentBindings.reviewExecutionContractSha256
+        )
+    ) {
+        mismatches.push(
+            'reused DELTA review execution contract does not match the current review context: '
+            + `historical contract_sha256=${historicalBindings.reviewExecutionContractSha256 || 'missing'}; `
+            + `current contract_sha256=${currentBindings.reviewExecutionContractSha256 || 'missing'}`
         );
     }
     return mismatches.length > 0 ? mismatches.join('; ') : null;
@@ -734,11 +822,11 @@ export function computeReviewRelevantScopeFingerprint(
     };
 }
 
-export function computeReviewContextReuseHash(reviewContext: Record<string, unknown>): string | null {
-    if (!reviewContext || typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
-        return null;
-    }
-
+function buildReviewContextReuseHashSnapshot(
+    reviewContext: Record<string, unknown>,
+    schemaVersion: number | null,
+    includeReviewExecution: boolean
+): Record<string, unknown> {
     const rulePack = toRecord(reviewContext.rule_pack);
     const tokenEconomy = toRecord(reviewContext.token_economy);
     const ruleContext = toRecord(reviewContext.rule_context);
@@ -747,8 +835,8 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
     const plan = toRecord(reviewContext.plan);
     const contractBindings = resolveReviewContextReuseContractBindings(reviewContext);
 
-    const snapshot = {
-        schema_version: typeof reviewContext.schema_version === 'number' ? reviewContext.schema_version : null,
+    return {
+        schema_version: schemaVersion,
         review_type: String(reviewContext.review_type || '').trim().toLowerCase() || null,
         depth: typeof reviewContext.depth === 'number' ? reviewContext.depth : null,
         token_economy_active: reviewContext.token_economy_active === true,
@@ -774,6 +862,16 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
         coverage_contract: {
             contract_sha256: contractBindings.coverageContractSha256
         },
+        ...(includeReviewExecution
+            ? {
+                review_execution: {
+                    mode: contractBindings.reviewExecutionMode,
+                    ...(contractBindings.reviewExecutionMode === 'DELTA'
+                        ? { full_review_scope_sha256: contractBindings.reviewExecutionFullScopeSha256 }
+                        : {})
+                }
+            }
+            : {}),
         scoped_diff: {
             expected: scopedDiff.expected === true,
             metadata: buildScopedDiffReuseMetadata(scopedDiff.metadata)
@@ -803,6 +901,30 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
             plan_summary: String(plan.plan_summary || '').trim() || null
         }
     };
+}
 
-    return stringSha256(JSON.stringify(snapshot));
+export function computeSchema3ReviewContextReuseCompatibilityHash(
+    reviewContext: Record<string, unknown>
+): string | null {
+    if (!reviewContext || typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
+        return null;
+    }
+    return stringSha256(JSON.stringify(buildReviewContextReuseHashSnapshot(reviewContext, 3, false)));
+}
+
+export function computeReviewContextReuseHash(reviewContext: Record<string, unknown>): string | null {
+    if (!reviewContext || typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
+        return null;
+    }
+
+    const schemaVersion = typeof reviewContext.schema_version === 'number'
+        ? reviewContext.schema_version
+        : null;
+    if (schemaVersion === 3) {
+        return computeSchema3ReviewContextReuseCompatibilityHash(reviewContext);
+    }
+
+    return stringSha256(JSON.stringify(
+        buildReviewContextReuseHashSnapshot(reviewContext, schemaVersion, true)
+    ));
 }

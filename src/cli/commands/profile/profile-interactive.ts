@@ -94,7 +94,8 @@ async function promptForDepth(defaultDepth: number, inheritSource: string): Prom
 
 export async function resolveInteractiveCreateInput(
     data: ProfilesData,
-    options: ParsedOptionsRecord
+    options: ParsedOptionsRecord,
+    allowedReviewTypeIds?: readonly string[]
 ): Promise<{ name: string; entry: ProfileEntry }> {
     const name = await promptForProfileName(data);
 
@@ -114,7 +115,7 @@ export async function resolveInteractiveCreateInput(
 
     const sourceEntry = copyFrom
         ? buildPromptReadyProfileEntry(cloneProfileEntry(getProfileEntry(data, copyFrom)!))
-        : buildDefaultProfileEntry(`User profile: ${name}`, 2);
+        : buildDefaultProfileEntry(`User profile: ${name}`, 2, allowedReviewTypeIds);
 
     let description = typeof options.description === 'string'
         ? options.description.trim()

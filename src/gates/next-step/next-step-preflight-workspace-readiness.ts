@@ -48,6 +48,9 @@ import {
     buildCurrentDomainScopeFingerprints,
     onlyNeutralCloseoutDomainChanged
 } from './next-step-readiness-domain-scope';
+import {
+    readGitIgnoredPathSet
+} from './next-step-protected-scope';
 import { isPlainRecord } from '../../core/records';
 
 export interface PreflightWorkspaceReadiness {
@@ -394,7 +397,9 @@ export function readPreflightWorkspaceReadiness(
                 && (currentPlannedScopeGitFiles.length > 0 || currentRelatedPlannedScopeGitFiles.length > 0);
             const currentGitChangedFiles = currentGitSnapshotFilesWithMetadata.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
-                    && (!includeFullFailedReviewRemediationScope || !unchangedDirtyBaselineSet.has(entry))
+                    && (!includeFullFailedReviewRemediationScope
+                        || !unchangedDirtyBaselineSet.has(entry)
+                        || plannedSet.has(entry))
                     && (!compareOnlyPlannedScope
                         || plannedSet.has(entry)
                         || !unchangedDirtyBaselineSet.has(entry))
@@ -450,16 +455,27 @@ export function readPreflightWorkspaceReadiness(
             const currentComparableChangedFileSet = new Set(currentComparableChangedFiles);
             const expectedGitScopeFiles = hasActualChangedFiles ? expectedActualChangedFiles : authorizedFiles;
             const expectedGitScopeFileSet = new Set(expectedGitScopeFiles);
+            // Explicit classification can authenticate intentionally generated files that Git ignores
+            // (for example source-checkout dist/src launcher output). Their content freshness was already
+            // checked against currentScope above, so their absence from the ordinary Git snapshot is expected.
+            const ignoredExplicitGitFiles = [...readGitIgnoredPathSet(repoRoot, expectedGitScopeFiles)]
+                .filter((entry) => !currentComparableChangedFileSet.has(entry));
             const ignoredWorkflowConfigGitFiles = expectedGitScopeFiles.filter((entry) => (
                 isWorkflowConfigControlPlanePath(entry) && !currentComparableChangedFileSet.has(entry)
             ));
+            const ignoredExpectedGitFileSet = new Set([
+                ...ignoredExplicitGitFiles,
+                ...ignoredWorkflowConfigGitFiles
+            ]);
             const gitComparableChangedFiles = expectedGitScopeFiles.filter((entry) => (
-                !ignoredWorkflowConfigGitFiles.includes(entry)
+                !ignoredExpectedGitFileSet.has(entry)
             ));
-            const ignoredWorkflowConfigOnlyGitDelta = ignoredWorkflowConfigGitFiles.length > 0
+            const ignoredExpectedOnlyGitDelta = ignoredExpectedGitFileSet.size > 0
                 && sameSortedStringList(gitComparableChangedFiles, currentComparableChangedFiles);
+            const ignoredWorkflowConfigOnlyGitDelta = ignoredWorkflowConfigGitFiles.length > 0
+                && ignoredExpectedOnlyGitDelta;
             const currentFileSetHash = stringSha256(currentComparableChangedFiles.join('\n'));
-            const expectedGitComparableChangedFilesSha256 = ignoredWorkflowConfigOnlyGitDelta
+            const expectedGitComparableChangedFilesSha256 = ignoredExpectedOnlyGitDelta
                 ? stringSha256(gitComparableChangedFiles.join('\n'))
                 : stringSha256(expectedGitScopeFiles.join('\n'));
             if (ignoredWorkflowConfigOnlyGitDelta && expectedDomainScopeFingerprints) {
@@ -492,7 +508,7 @@ export function readPreflightWorkspaceReadiness(
             if (currentFileSetHash !== expectedGitComparableChangedFilesSha256) {
                 const currentSet = new Set(currentComparableChangedFiles);
                 const missingFromPreflight = currentComparableChangedFiles.filter((entry) => !expectedGitScopeFileSet.has(entry));
-                const noLongerCurrent = (ignoredWorkflowConfigOnlyGitDelta ? gitComparableChangedFiles : expectedGitScopeFiles)
+                const noLongerCurrent = (ignoredExpectedOnlyGitDelta ? gitComparableChangedFiles : expectedGitScopeFiles)
                     .filter((entry) => !currentSet.has(entry));
                 const ignoredProtectedNote = unchangedProtectedFiles.size > 0
                     ? `; ignored unchanged dirty-baseline files: ${describePathList([...unchangedProtectedFiles])}`
@@ -500,10 +516,13 @@ export function readPreflightWorkspaceReadiness(
                 const ignoredWorkflowConfigNote = ignoredWorkflowConfigOnlyGitDelta
                     ? `; ignored workflow-config-only local baseline files: ${describePathList(ignoredWorkflowConfigGitFiles)}`
                     : '';
+                const ignoredExplicitGitNote = ignoredExplicitGitFiles.length > 0
+                    ? `; ignored explicitly authorized Git-ignored files: ${describePathList(ignoredExplicitGitFiles)}`
+                    : '';
                 violations.push(
                     `stale preflight ${hasActualChangedFiles ? 'actual-diff' : 'authorized'} file set ${describePathList(expectedGitScopeFiles)} differs from current git snapshot ${describePathList(currentComparableChangedFiles)}` +
                     `; missing from preflight: ${describePathList(missingFromPreflight)}` +
-                    `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}${ignoredWorkflowConfigNote}`
+                    `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}${ignoredWorkflowConfigNote}${ignoredExplicitGitNote}`
                 );
             }
         }

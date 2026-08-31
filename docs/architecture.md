@@ -191,6 +191,23 @@ as needed, launches a new clean-context delegated reviewer for any invalidated
 review lane, records the new verdict, and only then retries
 `required-reviews-check`.
 
+### Authenticated remediation review modes
+
+The remediation review boundary has one gate-owned `REUSE | DELTA | FULL`
+decision. `REUSE` consumes unchanged authenticated evidence, `DELTA` verifies a
+bounded repair against complete prior-scope lineage, and `FULL` re-runs the
+exhaustive lane. The first lane review is always `FULL`. A profile must contain
+an explicit valid `review_remediation_mode_policy` before `DELTA` is available;
+missing legacy policy snapshots remain `FULL`-only. Protected, ambiguous,
+oversized, stale, tampered, dependency-invalidated, or periodic-full cases fail
+closed to `FULL`.
+
+The immutable task-profile snapshot freezes this policy. Review contexts,
+findings validation, receipts, recovery routing, completion, and task audit all
+consume the same authenticated execution contract. CLI status/profile output,
+stats, and reports expose policy readiness and observed modes, but never make an
+independent routing decision.
+
 All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-chain integrity.
 
 ## Validation Contract

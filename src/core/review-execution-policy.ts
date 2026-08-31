@@ -3,6 +3,7 @@ import { resolveBundleName } from './constants';
 import { pathExists } from './filesystem';
 import { readJsonFile } from './json';
 import { isPlainRecord } from './records';
+import type { CompiledReviewDependencyGraph } from './review-dependency-graph';
 
 export const REVIEW_EXECUTION_POLICY_MODES = Object.freeze([
     'parallel_all',
@@ -139,8 +140,12 @@ export function getReviewExecutionPreparationOrder(
 
 export function getReviewExecutionPreparationBatches(
     requiredReviewRecord: Record<string, boolean>,
-    mode: EffectiveReviewExecutionPolicyMode
+    mode: EffectiveReviewExecutionPolicyMode,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[][] {
+    if (dependencyGraph) {
+        return dependencyGraph.preparation_batches.map((batch) => [...batch]);
+    }
     const orderedRequiredReviewTypes = Object.entries(requiredReviewRecord)
         .filter(([, required]) => required)
         .map(([reviewType]) => normalizeReviewType(reviewType))
@@ -180,9 +185,19 @@ export function computeReviewLaunchPlan(params: {
     requiredReviewTypes: readonly string[];
     requiredReviews: Record<string, boolean>;
     policyMode: EffectiveReviewExecutionPolicyMode;
+    dependencyGraph?: CompiledReviewDependencyGraph | null;
     reviewStates: readonly ReviewLaunchEvidenceState[];
 }): ReviewLaunchPlan {
-    const requiredReviewTypes = params.requiredReviewTypes.map(normalizeReviewType);
+    const normalizedRequiredReviewTypes = params.requiredReviewTypes.map(normalizeReviewType);
+    const requiredReviewTypeSet = new Set(normalizedRequiredReviewTypes);
+    const graphOrderedReviewTypes = params.dependencyGraph?.preparation_order
+        .map(normalizeReviewType)
+        .filter((reviewType) => requiredReviewTypeSet.has(reviewType)) || [];
+    const graphOrderedReviewTypeSet = new Set(graphOrderedReviewTypes);
+    const requiredReviewTypes = [
+        ...graphOrderedReviewTypes,
+        ...normalizedRequiredReviewTypes.filter((reviewType) => !graphOrderedReviewTypeSet.has(reviewType))
+    ];
     const stateByType = new Map(
         params.reviewStates.map((state) => [normalizeReviewType(state.review_type), state])
     );
@@ -195,7 +210,12 @@ export function computeReviewLaunchPlan(params: {
         if (cached) {
             return cached;
         }
-        const blockedBy = getReviewExecutionDependencies(reviewType, params.requiredReviews, params.policyMode)
+        const blockedBy = getReviewExecutionDependencies(
+            reviewType,
+            params.requiredReviews,
+            params.policyMode,
+            params.dependencyGraph
+        )
             .filter((dependency) => !satisfiedReviews.has(normalizeReviewType(dependency)))
             .map(normalizeReviewType);
         dependenciesByReviewType.set(reviewType, blockedBy);
@@ -303,9 +323,13 @@ function validateConfiguredReviewExecutionPolicySection(
 export function getReviewExecutionDependencies(
     reviewType: string,
     requiredReviewRecord: Record<string, boolean>,
-    mode: EffectiveReviewExecutionPolicyMode
+    mode: EffectiveReviewExecutionPolicyMode,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
 ): string[] {
     const normalizedReviewType = normalizeReviewType(reviewType);
+    if (dependencyGraph) {
+        return [...(dependencyGraph.dependencies[normalizedReviewType] || [])];
+    }
     switch (mode) {
         case LEGACY_REVIEW_EXECUTION_POLICY_MODE:
             return normalizedReviewType === 'test'

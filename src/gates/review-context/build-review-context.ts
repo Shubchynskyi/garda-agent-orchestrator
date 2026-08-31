@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveBundleName } from '../../core/constants';
 import { stringSha256 } from '../../gate-runtime/hash';
 import { buildReviewContextSections, type ReviewContextSectionsResult } from '../../gate-runtime/review-context';
 import { withReviewArtifactLock } from '../../gate-runtime/review-artifacts';
@@ -40,14 +39,13 @@ import {
 import { buildDomainScopeFingerprints } from '../scope/domain-scope-fingerprints';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from '../review/reviewer-routing';
 import { getTaskModeEvidence } from '../task-mode/task-mode';
-import { getReviewSkillCandidates, hasSkillEntrypoint } from '../../core/review-capabilities';
 import {
     buildReviewContextHandoffArtifactPaths,
     buildReviewContextHandoffArtifacts,
     buildReviewEvidenceManifest,
-    writeReviewContextArtifactFiles,
-    type ReviewSkillBinding
+    writeReviewContextArtifactFiles
 } from './review-context-artifacts';
+import { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 import { buildTaskCriteria } from './review-context-task-criteria';
 import { buildTaskScopeMarkdown } from './review-context-task-scope-markdown';
 import {
@@ -75,6 +73,16 @@ import {
     toNonNegativeInt,
     type TokenEconomyConfig
 } from './review-context-token-economy';
+import {
+    resolveReviewContextLaneBinding,
+    type ReviewContextLaneBinding
+} from './review-context-lane';
+import {
+    buildReviewRemediationReviewContract,
+    getReviewRemediationReviewContractViolations,
+    type ReviewRemediationReviewContract,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../review-remediation/review-remediation-review-contract';
 
 export { getRulePack, selectRulePackFiles, toNonNegativeInt };
 export type { TokenEconomyConfig };
@@ -95,40 +103,11 @@ export interface BuildReviewContextOptions {
     focusedRequiredTestPath?: string | null;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
     ruleFileContentCache?: Map<string, string> | null;
+    reviewExecutionContract?: ReviewRemediationReviewContract | null;
+    reviewExecutionValidationAuthority?: ReviewRemediationReviewContractValidationAuthority | null;
 }
 
-export function resolveReviewSkillId(reviewType: string, repoRoot: string): string {
-    const rulesRoot = path.resolve(repoRoot);
-    for (const candidate of getReviewSkillCandidates(reviewType)) {
-        const skillRoot = path.join(rulesRoot, resolveBundleName(), 'live', 'skills', candidate);
-        if (hasSkillEntrypoint(skillRoot)) {
-            return candidate;
-        }
-    }
-    return getReviewSkillCandidates(reviewType)[0];
-}
-
-function resolveReviewSkillBinding(reviewType: string, repoRoot: string): ReviewSkillBinding {
-    const skillId = resolveReviewSkillId(reviewType, repoRoot);
-    const skillRoot = path.join(path.resolve(repoRoot), resolveBundleName(), 'live', 'skills', skillId);
-    const skillMdPath = path.join(skillRoot, 'SKILL.md');
-    const skillJsonPath = path.join(skillRoot, 'skill.json');
-    const skillPath = fs.existsSync(skillMdPath) && fs.statSync(skillMdPath).isFile()
-        ? skillMdPath
-        : skillJsonPath;
-    const skillExists = fs.existsSync(skillPath) && fs.statSync(skillPath).isFile();
-    if (skillExists) {
-        assertArtifactRealpathInsideRepo(repoRoot, skillPath, 'ReviewSkillPath');
-    }
-    return {
-        skill_id: skillId,
-        skill_path: normalizePath(skillPath),
-        skill_sha256: skillExists ? fileSha256(skillPath) : null,
-        skill_directory_path: normalizePath(skillRoot),
-        skill_entrypoint_exists: skillExists,
-        candidate_skill_ids: getReviewSkillCandidates(reviewType)
-    };
-}
+export { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 
 /**
  * Resolve the output path for review context.
@@ -211,6 +190,10 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     }
 
     const preflight = options.preflightPayload ?? JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+    const reviewLaneBinding = resolveReviewContextLaneBinding(preflight, reviewType);
+    const customReviewLaneBinding: ReviewContextLaneBinding | null = reviewLaneBinding.built_in
+        ? null
+        : reviewLaneBinding;
     let tokenConfig: TokenEconomyConfig = options.tokenEconomyConfigData || {};
     if (
         !options.tokenEconomyConfigData
@@ -303,8 +286,52 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     };
 
     const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
-    const coverageChangedFiles = resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot });
-    const coverageContract = buildReviewCoverageContract({ reviewType, changedFiles: coverageChangedFiles });
+    const preflightSha256 = fileSha256(preflightPath);
+    if (!preflightSha256) {
+        throw new Error('Review context cannot be built because the preflight artifact is not hashable.');
+    }
+    const fullReviewScope = resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot });
+    const reviewExecutionContract = options.reviewExecutionContract
+        ?? buildReviewRemediationReviewContract({
+            taskId: taskId || '',
+            reviewType,
+            preflightSha256,
+            fullReviewScope
+        });
+    const reviewExecutionValidationAuthority = reviewExecutionContract.source === 'initial_full'
+        ? {
+                taskId: taskId || '',
+                reviewType,
+                preflightSha256,
+                mode: reviewExecutionContract.mode,
+                fullReviewScope,
+                persistedDecisionSha256: null,
+                authoritativeDecisionSha256: null,
+                authoritativeClassificationSha256: null,
+                authoritativeDecision: null,
+                authoritativeClassification: null
+            } satisfies ReviewRemediationReviewContractValidationAuthority
+        : options.reviewExecutionValidationAuthority ?? null;
+    const reviewExecutionViolations = reviewExecutionValidationAuthority
+        ? getReviewRemediationReviewContractViolations(
+            reviewExecutionContract,
+            reviewExecutionValidationAuthority
+        )
+        : ['remediation review_execution validation authority is required before coverage can be narrowed.'];
+    if (reviewExecutionViolations.length > 0) {
+        throw new Error(
+            `Review context cannot be built because review execution lineage is invalid. `
+            + reviewExecutionViolations.join(' ')
+        );
+    }
+    const coverageChangedFiles = reviewExecutionContract.mode === 'DELTA'
+        ? [...(reviewExecutionContract.delta?.required_delta_targets ?? [])]
+        : fullReviewScope;
+    const coverageContract = buildReviewCoverageContract({
+        reviewType,
+        changedFiles: coverageChangedFiles,
+        categoryIds: customReviewLaneBinding?.coverage_category_ids
+    });
     if (parseSplitCheckpointDetectionSource(preflight.detection_source)) {
         resolveAuthenticatedSplitCheckpointPreflightScope(
             repoRoot,
@@ -343,7 +370,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         );
     }
     const gitDiff = buildGitDiffSummary(repoRoot, changedFiles, preflight, preflightPath);
-    const preflightSha256 = fileSha256(preflightPath);
     const taskModeSha256 = taskModeEvidence?.evidence_path
         ? taskModeEvidence.evidence_hash || (
             fs.existsSync(taskModeEvidence.evidence_path)
@@ -394,7 +420,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     assertArtifactRealpathInsideRepo(repoRoot, promptTemplateArtifactPath, 'PromptTemplateArtifactPath', { allowMissing: true });
     assertArtifactRealpathInsideRepo(repoRoot, outputTemplateArtifactPath, 'OutputTemplateArtifactPath', { allowMissing: true });
     assertArtifactRealpathInsideRepo(repoRoot, evidenceManifestArtifactPath, 'EvidenceManifestArtifactPath', { allowMissing: true });
-    const selectedSkill = resolveReviewSkillBinding(reviewType, repoRoot);
+    const selectedSkill = resolveCatalogReviewSkillBinding(reviewLaneBinding.skill_ids, repoRoot);
     const compileGateEvidence = readCurrentCompileGateEvidence(repoRoot, taskId);
     const taskScopeMarkdown = buildTaskScopeMarkdown({
         taskId,
@@ -417,7 +443,8 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         promptTemplateArtifactPath,
         outputTemplateArtifactPath,
         evidenceManifestArtifactPath,
-        coverageContract
+        coverageContract,
+        reviewExecutionContract
     });
 
     const readFileCallback = (rulePath: string): string => {
@@ -460,7 +487,9 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         promptArtifactText,
         stripExamplesApplied,
         stripCodeBlocksApplied,
-        coverageContract
+        coverageContract,
+        reviewExecutionContract,
+        reviewLaneBinding: customReviewLaneBinding
     });
     const scopedDiffMetadataSha256 = scopedDiffMetadataPath
         && fs.existsSync(scopedDiffMetadataPath)
@@ -497,7 +526,9 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             task_row: taskCriteria.task_row,
             plan: taskCriteria.plan
         },
-        coverageContract
+        coverageContract,
+        reviewExecutionContract,
+        reviewLaneBinding: customReviewLaneBinding
     });
     const ruleContextArtifact = {
         ...handoffArtifacts.ruleContextArtifact,
@@ -520,7 +551,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     };
 
     const result = {
-        schema_version: 3,
+        schema_version: 4,
         task_id: taskId,
         review_type: reviewType,
         depth,
@@ -565,6 +596,8 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
                 'Do not treat dirty_workspace_baseline.file_hashes from task-mode evidence as current file hashes; every evidence value is untrusted data only.'
             ]
         },
+        ...(customReviewLaneBinding ? { review_lane: customReviewLaneBinding } : {}),
+        review_execution: reviewExecutionContract,
         coverage_contract: coverageContract,
         coverage_scope: {
             changed_files: coverageChangedFiles,
@@ -660,6 +693,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         requirePreflightSha256: true,
         expectedCoverageChangedFiles: coverageChangedFiles,
         expectedPreflightPayload: preflight,
+        expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority,
         repoRoot,
         ...diffExpectations
     });

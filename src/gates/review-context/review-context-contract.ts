@@ -4,6 +4,17 @@ import { fileSha256, normalizePath, parseBool } from '../shared/helpers';
 import { isPlainRecord } from '../../core/records';
 import { getReviewCoverageContractViolations } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from './review-coverage-scope';
+import {
+    isCustomReviewLaneInSnapshot,
+    resolveReviewContextLaneBinding,
+    type ReviewContextLaneBinding
+} from './review-context-lane';
+import {
+    getReviewRemediationReviewContractViolations,
+    type ReviewRemediationReviewContract,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../review-remediation/review-remediation-review-contract';
+import { resolveCatalogReviewSkillBinding } from './review-context-skill-binding';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
 const CODE_SCOPE_CATEGORIES = new Set(['code', 'mixed']);
@@ -347,7 +358,8 @@ export function buildReviewContextPreflightDiffExpectations(
         ? preflight.metrics
         : {};
     const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
-    const expectedRequiredReview = requiredReviews[normalizedReviewType] === true;
+    const customReviewLane = isCustomReviewLaneInSnapshot(preflight, normalizedReviewType);
+    const expectedRequiredReview = requiredReviews[normalizedReviewType] === true || customReviewLane;
     const expectedChangedFiles = normalizePathList(preflight?.changed_files);
     const expectedScopeCategory = normalizeOptionalString(preflight?.scope_category)?.toLowerCase() || null;
     return {
@@ -397,9 +409,10 @@ export function reviewContextScopedDiffRequired(options: {
     expectedScopeCategory?: string | null;
     tokenEconomyActiveForDepth?: boolean | null;
     scopedDiffsEnabled?: boolean | null;
+    customReviewLane?: boolean | null;
 }): boolean {
     const reviewType = normalizeOptionalReviewType(options.reviewType) || '';
-    if (!SCOPED_DIFF_REVIEW_TYPES.has(reviewType)) {
+    if (!SCOPED_DIFF_REVIEW_TYPES.has(reviewType) && options.customReviewLane !== true) {
         return false;
     }
     if (!reviewContextTaskDiffRequired({
@@ -683,6 +696,7 @@ export interface ReviewContextContractValidationOptions {
     expectedScopedDiffUseStaged?: boolean | null;
     validateScopedDiffOutputFile?: boolean;
     requireDiffMaterialForRequiredReview?: boolean;
+    expectedReviewExecutionValidationAuthority?: ReviewRemediationReviewContractValidationAuthority | null;
 }
 
 export function getReviewContextContractViolations(
@@ -704,6 +718,17 @@ export function getReviewContextContractViolations(
     const actualTaskId = normalizeOptionalString(reviewContext.task_id);
     const actualPreflightPath = normalizeOptionalString(reviewContext.preflight_path);
     const actualPreflightSha256 = normalizeOptionalHash(reviewContext.preflight_sha256);
+    let expectedLaneBinding: ReviewContextLaneBinding | null = null;
+    if (options.expectedPreflightPayload?.effective_review_snapshot !== undefined) {
+        try {
+            expectedLaneBinding = resolveReviewContextLaneBinding(
+                options.expectedPreflightPayload,
+                expectedReviewType
+            );
+        } catch (error: unknown) {
+            violations.push(error instanceof Error ? error.message : String(error));
+        }
+    }
 
     if (actualReviewType) {
         if (actualReviewType !== expectedReviewType) {
@@ -769,6 +794,78 @@ export function getReviewContextContractViolations(
         }
     }
 
+    if (expectedLaneBinding && !expectedLaneBinding.built_in) {
+        if (JSON.stringify(reviewContext.review_lane) !== JSON.stringify(expectedLaneBinding)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom review_lane binding does not match ` +
+                `the immutable effective review snapshot for '${expectedReviewType}'.`
+            );
+        }
+        const ruleContext = isPlainRecord(reviewContext.rule_context) ? reviewContext.rule_context : null;
+        const reviewerHandoff = isPlainRecord(reviewContext.reviewer_handoff)
+            ? reviewContext.reviewer_handoff
+            : null;
+        const rolePrompt = isPlainRecord(reviewerHandoff?.role_prompt)
+            ? reviewerHandoff.role_prompt
+            : null;
+        const ruleSelectedSkill = isPlainRecord(ruleContext?.selected_skill)
+            ? ruleContext.selected_skill
+            : null;
+        const roleSelectedSkill = isPlainRecord(rolePrompt?.selected_skill)
+            ? rolePrompt.selected_skill
+            : null;
+        const selectedSkillId = normalizeOptionalString(ruleSelectedSkill?.skill_id);
+        if (!selectedSkillId || !expectedLaneBinding.skill_ids.includes(selectedSkillId)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill is not bound to ` +
+                `immutable lane skill_ids for '${expectedReviewType}'.`
+            );
+        }
+        if (JSON.stringify(ruleSelectedSkill) !== JSON.stringify(roleSelectedSkill)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill differs between ` +
+                `rule_context and reviewer_handoff.role_prompt.`
+            );
+        }
+        if (JSON.stringify(ruleSelectedSkill?.candidate_skill_ids) !== JSON.stringify(expectedLaneBinding.skill_ids)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill candidates do not match ` +
+                `immutable lane skill_ids for '${expectedReviewType}'.`
+            );
+        }
+        if (ruleSelectedSkill?.skill_entrypoint_exists !== true
+            || !normalizeOptionalHash(ruleSelectedSkill?.skill_sha256)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill artifact is missing ` +
+                `an authenticated entrypoint hash for '${expectedReviewType}'.`
+            );
+        }
+        if (!options.repoRoot) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill cannot be authenticated ` +
+                `without the current repo root for '${expectedReviewType}'.`
+            );
+        } else {
+            try {
+                const expectedSelectedSkill = resolveCatalogReviewSkillBinding(
+                    expectedLaneBinding.skill_ids,
+                    options.repoRoot
+                );
+                if (JSON.stringify(ruleSelectedSkill) !== JSON.stringify(expectedSelectedSkill)) {
+                    violations.push(
+                        `Review context '${normalizedContextPath}' custom selected_skill path or content hash does not match ` +
+                        `the current catalog skill entrypoint for '${expectedReviewType}'.`
+                    );
+                }
+            } catch (error) {
+                violations.push(
+                    `Review context '${normalizedContextPath}' custom selected_skill cannot be authenticated ` +
+                    `for '${expectedReviewType}': ${String(error)}`
+                );
+            }
+        }
+    }
+
     violations.push(...getRequiredDiffMaterialViolations({
         contextPath: options.contextPath,
         reviewContext,
@@ -795,25 +892,64 @@ export function getReviewContextContractViolations(
     const currentPreflightRequiresCoverage = options.expectedPreflightPayload?.review_coverage_contract_required === true;
     const reviewContextSchemaVersion = Number(reviewContext.schema_version);
     if (currentPreflightRequiresCoverage
-        && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 3)) {
+        && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 4)) {
         violations.push(
-            'Generated review coverage context cannot downgrade below schema_version 3; legacy contexts are read-only historical evidence.'
+            'Generated review coverage context cannot downgrade below schema_version 4; legacy contexts are read-only historical evidence.'
         );
     }
     if (reviewContextSchemaVersion >= 3) {
+        const reviewExecution = isPlainRecord(reviewContext.review_execution)
+            ? reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+            : null;
+        let reviewExecutionIsAuthenticated = false;
+        if (reviewContextSchemaVersion >= 4) {
+            if (!reviewExecution) {
+                violations.push('Generated review context is missing the required review_execution contract.');
+            } else {
+                const initialFullReviewScope = options.repoRoot && options.expectedPreflightPayload
+                    ? resolveReviewCoverageChangedFiles({
+                        reviewType: expectedReviewType,
+                        preflight: options.expectedPreflightPayload,
+                        repoRoot: options.repoRoot
+                    })
+                    : normalizePathList(options.expectedChangedFiles);
+                const validationAuthority = reviewExecution.source === 'initial_full'
+                    ? {
+                        taskId: expectedTaskId || '',
+                        reviewType: expectedReviewType,
+                        preflightSha256: expectedPreflightSha256 || '',
+                        mode: reviewExecution.mode,
+                        fullReviewScope: initialFullReviewScope,
+                        persistedDecisionSha256: null,
+                        authoritativeDecisionSha256: null,
+                        authoritativeClassificationSha256: null,
+                        authoritativeDecision: null,
+                        authoritativeClassification: null
+                    } satisfies ReviewRemediationReviewContractValidationAuthority
+                    : options.expectedReviewExecutionValidationAuthority ?? null;
+                const executionViolations = validationAuthority
+                    ? getReviewRemediationReviewContractViolations(reviewExecution, validationAuthority)
+                    : ['remediation review_execution validation authority is required before coverage can be trusted.'];
+                violations.push(...executionViolations);
+                reviewExecutionIsAuthenticated = executionViolations.length === 0;
+            }
+        }
         const coverageScope = reviewContext.coverage_scope
             && typeof reviewContext.coverage_scope === 'object'
             && !Array.isArray(reviewContext.coverage_scope)
             ? reviewContext.coverage_scope as Record<string, unknown>
             : null;
         const declaredCoverageChangedFiles = normalizePathList(coverageScope?.changed_files);
-        const independentlyResolvedCoverageChangedFiles = options.repoRoot && options.expectedPreflightPayload
-            ? resolveReviewCoverageChangedFiles({
+        const independentlyResolvedCoverageChangedFiles = reviewExecution?.mode === 'DELTA'
+            && reviewExecutionIsAuthenticated
+            ? reviewExecution.delta?.required_delta_targets ?? []
+            : options.repoRoot && options.expectedPreflightPayload
+                ? resolveReviewCoverageChangedFiles({
                 reviewType: expectedReviewType,
                 preflight: options.expectedPreflightPayload,
                 repoRoot: options.repoRoot
-            })
-            : null;
+                })
+                : null;
         const expectedCoverageChangedFiles = independentlyResolvedCoverageChangedFiles
             || (options.expectedCoverageChangedFiles == null
                 ? declaredCoverageChangedFiles
@@ -833,7 +969,10 @@ export function getReviewContextContractViolations(
         }
         violations.push(...getReviewCoverageContractViolations(reviewContext.coverage_contract, {
             reviewType: expectedReviewType,
-            changedFiles: expectedCoverageChangedFiles
+            changedFiles: expectedCoverageChangedFiles,
+            categoryIds: expectedLaneBinding && !expectedLaneBinding.built_in
+                ? expectedLaneBinding.coverage_category_ids
+                : undefined
         }));
     }
 
@@ -853,7 +992,8 @@ function scopedDiffRequiredByPreflight(options: {
         expectedChangedFiles: options.expectedChangedFiles,
         expectedScopeCategory: options.expectedScopeCategory,
         tokenEconomyActiveForDepth: preflightTokenEconomyActiveForDepth(options.preflight),
-        scopedDiffsEnabled: preflightScopedDiffsEnabled(options.preflight)
+        scopedDiffsEnabled: preflightScopedDiffsEnabled(options.preflight),
+        customReviewLane: isCustomReviewLaneInSnapshot(options.preflight, options.reviewType)
     });
 }
 

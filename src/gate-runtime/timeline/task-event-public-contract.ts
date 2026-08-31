@@ -1,31 +1,17 @@
+import { TASK_LIFECYCLE_PHASE_IDS } from '../../schemas/task-lifecycle-phase-manifest';
+import type { TaskLifecyclePhaseId } from '../../schemas/task-lifecycle-phase-manifest';
+
 export const TASK_EVENT_PUBLIC_SCHEMA_VERSION = 2 as const;
 export const TASK_EVENT_LEGACY_SCHEMA_VERSION = 1 as const;
 export const TASK_EVENT_PUBLIC_EVENT_SOURCE = 'task-events' as const;
 
-export type TaskEventLifecyclePhase =
-    | 'startup'
-    | 'preflight'
-    | 'implementation'
-    | 'validation'
-    | 'review'
-    | 'closeout'
-    | 'terminal'
-    | 'unknown';
+export type TaskEventLifecyclePhase = TaskLifecyclePhaseId | 'unknown';
 
 export type TaskEventStatusSignal = 'pass' | 'fail' | 'blocked' | 'attention' | 'info';
 export type TaskEventHealthState = 'healthy' | 'failed' | 'blocked' | 'attention' | 'neutral';
 export type TaskEventTerminalOutcome = 'none' | 'done' | 'failed';
 
-const TASK_EVENT_LIFECYCLE_PHASES = [
-    'startup',
-    'preflight',
-    'implementation',
-    'validation',
-    'review',
-    'closeout',
-    'terminal',
-    'unknown'
-] as const;
+const TASK_EVENT_LIFECYCLE_PHASES = [...TASK_LIFECYCLE_PHASE_IDS, 'unknown'] as const;
 const TASK_EVENT_STATUS_SIGNALS = ['pass', 'fail', 'blocked', 'attention', 'info'] as const;
 const TASK_EVENT_HEALTH_STATES = ['healthy', 'failed', 'blocked', 'attention', 'neutral'] as const;
 const TASK_EVENT_TERMINAL_OUTCOMES = ['none', 'done', 'failed'] as const;

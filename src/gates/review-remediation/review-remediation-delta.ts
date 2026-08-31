@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto';
 import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { DEFAULT_REVIEW_TRIGGER_POLICY } from '../../policy/review-trigger-policy';
 import type { ReviewRemediationDeltaCategory } from '../../policy/review-remediation-rerun-policy';
+import {
+    evaluateReviewRemediationMode,
+    type ReviewRemediationModeAssessment,
+    type ReviewRemediationModePolicy,
+    type ReviewRemediationProtectedBoundarySignal
+} from '../../policy/review-remediation-mode-policy';
 import { normalizePath } from '../shared/helpers';
 import { isTestLikeRemediationPath } from './review-remediation-scope-boundary';
 import {
@@ -12,12 +18,30 @@ import {
     type ReviewRemediationDeltaBaseEntry
 } from './review-remediation-delta-contract';
 import {
+    buildReviewRemediationLineDelta,
+    buildReviewRemediationReadableDiffEvidence,
+    getLcsLength,
+    REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS,
+    type ReviewRemediationLineComparisonBudget,
+    type ReviewRemediationReadableDiffEvidence,
+    type ReviewRemediationReadableDiffLine
+} from './review-remediation-readable-diff';
+import {
     validateReviewRemediationBaselineArtifact,
     type ReviewRemediationBaselineArtifact
 } from './review-remediation-baseline';
 
 export const REVIEW_REMEDIATION_DELTA_SCHEMA_VERSION = 1;
-export const REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS = 250000;
+export {
+    REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES,
+    REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS
+} from './review-remediation-readable-diff';
+export type {
+    ReviewRemediationReadableDiffEvidence,
+    ReviewRemediationReadableDiffLine,
+    ReviewRemediationReadableDiffOperation,
+    ReviewRemediationReadableDiffPage
+} from './review-remediation-readable-diff';
 
 export type { ReviewRemediationDeltaCategory } from '../../policy/review-remediation-rerun-policy';
 
@@ -41,6 +65,16 @@ export interface ReviewRemediationFileDelta {
     changed_lines: number | null;
 }
 
+export interface ReviewRemediationDeltaScope {
+    full_review_scope: string[];
+    full_review_scope_sha256: string;
+    required_delta_targets: string[];
+    required_delta_targets_sha256: string;
+    optional_context_files: string[];
+    optional_context_files_sha256: string;
+    membership_unchanged: boolean;
+}
+
 export interface ReviewRemediationDeltaClassification {
     schema_version: typeof REVIEW_REMEDIATION_DELTA_SCHEMA_VERSION;
     task_id: string;
@@ -55,12 +89,17 @@ export interface ReviewRemediationDeltaClassification {
         delta_base_snapshot_sha256: string;
     };
     current_snapshot_sha256: string;
+    full_review_required: boolean;
+    full_review_reasons: string[];
+    scope: ReviewRemediationDeltaScope;
     changed_files: string[];
     unchanged_files: string[];
     file_deltas: ReviewRemediationFileDelta[];
     additions_total: number | null;
     deletions_total: number | null;
     changed_lines_total: number | null;
+    readable_diff: ReviewRemediationReadableDiffEvidence;
+    mode_policy_assessment?: ReviewRemediationModeAssessment;
     classification_sha256: string;
 }
 
@@ -74,6 +113,13 @@ export interface ClassifyReviewRemediationDeltaOptions {
     testPathRegexes?: readonly string[];
     structuralTestPathRegexes?: readonly string[];
     structuralTestChangedLinesThreshold?: number;
+    modePolicy?: ReviewRemediationModePolicy;
+    modePolicyLegacyFallback?: boolean;
+    consecutiveDeltaReviews?: number;
+    protectedBoundarySignals?: readonly ReviewRemediationProtectedBoundarySignal[];
+    taskCriteriaChanged?: boolean;
+    policyChanged?: boolean;
+    uncertainCrossFileImpact?: boolean;
 }
 
 const GENERATED_PATH_PATTERN = /(?:^|\/)(?:\.node-build|\.scripts-build|coverage|dist|generated|snapshots?)(?:\/|$)|\.snap$|\.generated\.[^/]+$/iu;
@@ -122,97 +168,12 @@ function missingEntry(filePath: string): ReviewRemediationDeltaBaseEntry {
         content_sha256: null,
         link_sha256: null,
         line_hashes: [],
+        redacted_lines: [],
+        redacted_lines_sha256: sha256Text(''),
+        redaction_applied: false,
         line_count: 0,
         line_analysis: 'available'
     };
-}
-
-type LineComparisonBudget = { remainingWorkUnits: number };
-
-function consumeLineComparisonWork(budget: LineComparisonBudget): boolean {
-    if (budget.remainingWorkUnits <= 0) {
-        return false;
-    }
-    budget.remainingWorkUnits -= 1;
-    return true;
-}
-
-function getLcsLength(
-    left: readonly string[],
-    right: readonly string[],
-    budget: LineComparisonBudget = {
-        remainingWorkUnits: REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS
-    }
-): number | null {
-    const leftLength = left.length;
-    const rightLength = right.length;
-    const maxDistance = leftLength + rightLength;
-    const furthest = new Map<number, number>([[1, 0]]);
-    for (let distance = 0; distance <= maxDistance; distance += 1) {
-        for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
-            if (!consumeLineComparisonWork(budget)) {
-                return null;
-            }
-            const down = furthest.get(diagonal + 1) ?? -1;
-            const rightward = (furthest.get(diagonal - 1) ?? -1) + 1;
-            let x = diagonal === -distance || (diagonal !== distance && down > rightward)
-                ? down
-                : rightward;
-            if (x < 0) {
-                x = 0;
-            }
-            let y = x - diagonal;
-            while (x < leftLength && y < rightLength && left[x] === right[y]) {
-                if (!consumeLineComparisonWork(budget)) {
-                    return null;
-                }
-                x += 1;
-                y += 1;
-            }
-            furthest.set(diagonal, x);
-            if (x >= leftLength && y >= rightLength) {
-                return (leftLength + rightLength - distance) / 2;
-            }
-        }
-    }
-    return 0;
-}
-
-function getLineDelta(
-    baseline: ReviewRemediationDeltaBaseEntry,
-    current: ReviewRemediationDeltaBaseEntry,
-    budget: LineComparisonBudget
-): {
-    additions: number | null;
-    deletions: number | null;
-    changedLines: number | null;
-    unavailableReason: string | null;
-} {
-    if (!baseline.line_hashes || !current.line_hashes) {
-        return {
-            additions: null,
-            deletions: null,
-            changedLines: null,
-            unavailableReason: `line evidence unavailable (baseline=${baseline.line_analysis}, current=${current.line_analysis})`
-        };
-    }
-    if (baseline.line_hashes.length === 0 || current.line_hashes.length === 0) {
-        const additions = current.line_hashes.length;
-        const deletions = baseline.line_hashes.length;
-        return { additions, deletions, changedLines: additions + deletions, unavailableReason: null };
-    }
-    const lcsLength = getLcsLength(baseline.line_hashes, current.line_hashes, budget);
-    if (lcsLength === null) {
-        return {
-            additions: null,
-            deletions: null,
-            changedLines: null,
-            unavailableReason: `line comparison exceeded ${REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS} work units`
-        };
-    }
-    const additions = current.line_hashes.length - lcsLength;
-    const deletions = baseline.line_hashes.length - lcsLength;
-    return { additions, deletions, changedLines: additions + deletions, unavailableReason: null };
 }
 
 function getOperation(
@@ -322,6 +283,9 @@ function classifyFromBaseline(options: {
             `Review remediation delta accepts at most ${REVIEW_REMEDIATION_DELTA_MAX_SNAPSHOT_FILES} current changed files.`
         );
     }
+    const baselineReviewScope = normalizeChangedFiles(deltaBase.changed_files);
+    const currentReviewScope = normalizeChangedFiles(options.currentChangedFiles);
+    const membershipUnchanged = JSON.stringify(baselineReviewScope) === JSON.stringify(currentReviewScope);
     const allFiles = normalizeChangedFiles([
         ...deltaBase.changed_files,
         ...options.currentChangedFiles
@@ -346,7 +310,12 @@ function classifyFromBaseline(options: {
     );
     const fileDeltas: ReviewRemediationFileDelta[] = [];
     const unchangedFiles: string[] = [];
-    const lineComparisonBudget: LineComparisonBudget = {
+    const readableDiffFiles: Array<{ path: string; lines: ReviewRemediationReadableDiffLine[] }> = [];
+    const fullReviewReasons: string[] = [];
+    if (!membershipUnchanged) {
+        fullReviewReasons.push('full review scope membership changed after the authenticated baseline');
+    }
+    const lineComparisonBudget: ReviewRemediationLineComparisonBudget = {
         remainingWorkUnits: REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS
     };
     for (const filePath of allFiles) {
@@ -364,9 +333,10 @@ function classifyFromBaseline(options: {
                 additions: null,
                 deletions: null,
                 changedLines: null,
-                unavailableReason: 'path entered the current task scope after the baseline and is now missing'
+                unavailableReason: 'path entered the current task scope after the baseline and is now missing',
+                readableLines: null
             }
-            : getLineDelta(baselineEntry, currentEntry, lineComparisonBudget);
+            : buildReviewRemediationLineDelta(baselineEntry, currentEntry, lineComparisonBudget);
         const classification = currentOnlyMissing
             ? { category: 'ambiguous' as const, reason: lineDelta.unavailableReason as string }
             : categorizeFile({
@@ -397,18 +367,36 @@ function classifyFromBaseline(options: {
             deletions: lineDelta.deletions,
             changed_lines: lineDelta.changedLines
         });
+        if (lineDelta.readableLines) {
+            readableDiffFiles.push({ path: filePath, lines: lineDelta.readableLines });
+        }
+        if (operation !== 'modified') {
+            fullReviewReasons.push(`${filePath}: ${operation} paths require FULL review`);
+        }
+        if (baselineEntry.status !== 'text' || currentEntry.status !== 'text') {
+            fullReviewReasons.push(
+                `${filePath}: ${baselineEntry.status} -> ${currentEntry.status} content is not an ordinary text modification`
+            );
+        }
+        if (lineDelta.unavailableReason) {
+            fullReviewReasons.push(`${filePath}: ${lineDelta.unavailableReason}`);
+        }
     }
     const categories = [...new Set(fileDeltas.map((entry) => entry.category))].sort();
     const category: ReviewRemediationDeltaCategory = fileDeltas.length === 0 || categories.length !== 1
         ? 'ambiguous'
         : categories[0];
-    const reason = fileDeltas.length === 0
+    const baseReason = fileDeltas.length === 0
         ? 'no post-baseline file content changes were detected'
         : category === 'ambiguous' && categories.length === 1
             ? `ambiguous remediation delta: ${fileDeltas.map((entry) => `${entry.path}: ${entry.reason}`).join('; ')}`
         : categories.length === 1
             ? `all changed files classify as ${categories[0]}`
             : `mixed remediation delta classes: ${categories.join(', ')}`;
+    const normalizedFullReviewReasons = [...new Set(fullReviewReasons)].sort();
+    const reason = normalizedFullReviewReasons.length > 0
+        ? `${baseReason}; FULL review required: ${normalizedFullReviewReasons.join('; ')}`
+        : baseReason;
     const allLineStatsAvailable = fileDeltas.every((entry) => entry.changed_lines !== null);
     const additionsTotal = allLineStatsAvailable
         ? fileDeltas.reduce((total, entry) => total + (entry.additions || 0), 0)
@@ -416,6 +404,18 @@ function classifyFromBaseline(options: {
     const deletionsTotal = allLineStatsAvailable
         ? fileDeltas.reduce((total, entry) => total + (entry.deletions || 0), 0)
         : null;
+    const requiredDeltaTargets = fileDeltas.map((entry) => entry.path);
+    const optionalContextFiles = unchangedFiles;
+    const scope: ReviewRemediationDeltaScope = {
+        full_review_scope: allFiles,
+        full_review_scope_sha256: sha256Text(allFiles.join('\n')),
+        required_delta_targets: requiredDeltaTargets,
+        required_delta_targets_sha256: sha256Text(requiredDeltaTargets.join('\n')),
+        optional_context_files: optionalContextFiles,
+        optional_context_files_sha256: sha256Text(optionalContextFiles.join('\n')),
+        membership_unchanged: membershipUnchanged
+    };
+    const readableDiff = buildReviewRemediationReadableDiffEvidence(readableDiffFiles);
     const baseResult: Omit<ReviewRemediationDeltaClassification, 'classification_sha256'> = {
         schema_version: REVIEW_REMEDIATION_DELTA_SCHEMA_VERSION,
         task_id: options.taskId,
@@ -430,14 +430,18 @@ function classifyFromBaseline(options: {
             delta_base_snapshot_sha256: deltaBase.snapshot_sha256
         },
         current_snapshot_sha256: currentSnapshot.snapshot_sha256,
-        changed_files: fileDeltas.map((entry) => entry.path),
+        full_review_required: normalizedFullReviewReasons.length > 0,
+        full_review_reasons: normalizedFullReviewReasons,
+        scope,
+        changed_files: requiredDeltaTargets,
         unchanged_files: unchangedFiles,
         file_deltas: fileDeltas,
         additions_total: additionsTotal,
         deletions_total: deletionsTotal,
         changed_lines_total: additionsTotal === null || deletionsTotal === null
             ? null
-            : additionsTotal + deletionsTotal
+            : additionsTotal + deletionsTotal,
+        readable_diff: readableDiff
     };
     return {
         ...baseResult,
@@ -470,7 +474,7 @@ export function classifyReviewRemediationDelta(
     if (!Number.isInteger(structuralThreshold) || structuralThreshold < 1) {
         throw new Error('Review remediation delta structural test changed-lines threshold must be a positive integer.');
     }
-    return classifyFromBaseline({
+    const delta = classifyFromBaseline({
         repoRoot: options.repoRoot,
         taskId: options.taskId,
         reviewType,
@@ -483,6 +487,44 @@ export function classifyReviewRemediationDelta(
             ?? DEFAULT_REVIEW_TRIGGER_POLICY.test_refactor_structural_path_regexes,
         structuralTestChangedLinesThreshold: structuralThreshold
     });
+    if (!options.modePolicy) {
+        return delta;
+    }
+    const assessment = evaluateReviewRemediationMode({
+        policy: options.modePolicy,
+        legacyFallback: options.modePolicyLegacyFallback,
+        reviewType,
+        category: delta.category,
+        changedFilesCount: delta.changed_files.length,
+        changedLinesTotal: delta.changed_lines_total,
+        consecutiveDeltaReviews: options.consecutiveDeltaReviews ?? 0,
+        protectedBoundarySignals: options.protectedBoundarySignals,
+        taskCriteriaChanged: options.taskCriteriaChanged,
+        policyChanged: options.policyChanged,
+        scopeMembershipChanged: !delta.scope.membership_unchanged,
+        uncertainCrossFileImpact: options.uncertainCrossFileImpact,
+        existingFullReviewReasons: delta.full_review_reasons
+    });
+    const deltaWithoutHash = { ...delta } as Omit<ReviewRemediationDeltaClassification, 'classification_sha256'>
+        & { classification_sha256?: string };
+    delete deltaWithoutHash.classification_sha256;
+    const fullReviewReasons = [...new Set([
+        ...delta.full_review_reasons,
+        ...assessment.full_review_reasons
+    ])].sort();
+    const classified = {
+        ...deltaWithoutHash,
+        reason: fullReviewReasons.length > 0
+            ? `${delta.reason}; conservative mode policy requires FULL: ${fullReviewReasons.join('; ')}`
+            : delta.reason,
+        full_review_required: fullReviewReasons.length > 0,
+        full_review_reasons: fullReviewReasons,
+        mode_policy_assessment: assessment
+    };
+    return {
+        ...classified,
+        classification_sha256: sha256RedactedJsonPayload(classified)
+    };
 }
 
 export const reviewRemediationDeltaInternals = {

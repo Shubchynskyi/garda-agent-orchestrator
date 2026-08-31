@@ -164,7 +164,11 @@ export function getRulePackEvidence(
             result.evidence_status = 'EVIDENCE_PREFLIGHT_REQUIRED';
             return result;
         }
-        const validatedPreflight = validatePreflightForReview(resolvedPreflightPath, resolvedTaskId);
+        const validatedPreflight = validatePreflightForReview(
+            resolvedPreflightPath,
+            resolvedTaskId,
+            String(options.taskModePath || '')
+        );
         const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
         if (getTaskModeEvidenceViolations(taskModeEvidence).length > 0) {
             result.evidence_status = 'EVIDENCE_TASK_MODE_INVALID';

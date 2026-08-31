@@ -30,7 +30,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 - After opening downstream workflow files (`40-commands.md`, `80-task-workflow.md`, `90-skill-catalog.md`, and any risk-specific rule pack), record them via `node bin/garda.js gate load-rule-pack ...` in a self-hosted source checkout, or `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack ...` inside a materialized/deployed workspace.
 - If provider-native agent directories are available, execute through provider bridge profiles (`.github/agents/orchestrator.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
-- Provider bridge profiles must resolve skills from `garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` and `garda-agent-orchestrator/live/config/review-capabilities.json` (including skills added after init).
+- Provider bridge profiles must resolve skills and lanes from `garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`, `garda-agent-orchestrator/live/config/review-capabilities.json`, and the immutable current-task review snapshot (including skills added after init). They must not load the full optional `review-catalog.json` during normal task or reviewer execution.
 
 ## Rule Routing
 | Task context | File to read |

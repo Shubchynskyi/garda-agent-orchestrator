@@ -5,6 +5,9 @@
     "balanced": {
       "description": "Default profile: moderate depth, standard reviews, and token economy enabled for shallow depths.",
       "depth": 2,
+      "task_decomposition": {
+        "enabled": true
+      },
       "review_policy": {
         "code": true,
         "db": "auto",
@@ -29,7 +32,35 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "grouped_by_parent"
+        "materialization_mode": "grouped_by_parent",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
+      },
+      "review_remediation_mode_policy": {
+        "schema_version": 2,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "api",
+          "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
+          "refactor",
+          "security",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
       },
       "token_economy": {
         "enabled": true,
@@ -45,6 +76,9 @@
     "fast": {
       "description": "Speed-optimised profile: shallow depth, only code/test reviews by trigger, aggressive token economy.",
       "depth": 1,
+      "task_decomposition": {
+        "enabled": false
+      },
       "review_policy": {
         "code": "auto",
         "db": false,
@@ -58,10 +92,10 @@
       },
       "review_finding_policy": {
         "schema_version": 1,
-        "policy_id": "soft",
+        "policy_id": "custom",
         "findings": {
           "critical": "fix_now",
-          "high": "create_follow_up",
+          "high": "fix_now",
           "medium": "ignore",
           "low": "ignore"
         },
@@ -69,7 +103,35 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "per_finding"
+        "materialization_mode": "grouped_by_parent",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
+      },
+      "review_remediation_mode_policy": {
+        "schema_version": 2,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "api",
+          "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
+          "refactor",
+          "security",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
       },
       "token_economy": {
         "enabled": true,
@@ -85,6 +147,9 @@
     "strict": {
       "description": "Maximum rigour: deep depth, core reviews enabled, and domain reviews kept evidence-aware.",
       "depth": 3,
+      "task_decomposition": {
+        "enabled": true
+      },
       "review_policy": {
         "code": true,
         "db": "auto",
@@ -109,7 +174,35 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "per_finding"
+        "materialization_mode": "per_finding",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
+      },
+      "review_remediation_mode_policy": {
+        "schema_version": 2,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "api",
+          "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
+          "refactor",
+          "security",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
       },
       "token_economy": {
         "enabled": true,
@@ -125,6 +218,9 @@
     "docs-only": {
       "description": "Documentation-focused profile: shallow depth, no code reviews, aggressive token economy.",
       "depth": 1,
+      "task_decomposition": {
+        "enabled": false
+      },
       "review_policy": {
         "code": false,
         "db": false,
@@ -149,7 +245,35 @@
       },
       "review_follow_up_policy": {
         "schema_version": 1,
-        "materialization_mode": "per_finding"
+        "materialization_mode": "per_finding",
+        "task_profile": {
+          "mode": "one_level_lighter",
+          "fixed_profile": null
+        }
+      },
+      "review_remediation_mode_policy": {
+        "schema_version": 2,
+        "policy_id": "conservative_review_remediation_mode_v1",
+        "initial_review_mode": "FULL",
+        "delta_eligible_review_types": [
+          "api",
+          "code",
+          "db",
+          "dependency",
+          "infra",
+          "performance",
+          "refactor",
+          "security",
+          "test"
+        ],
+        "force_full_categories": [
+          "ambiguous",
+          "generated_churn",
+          "global"
+        ],
+        "max_delta_changed_files": 4,
+        "max_delta_changed_lines": 240,
+        "max_consecutive_delta_reviews": 3
       },
       "token_economy": {
         "enabled": true,

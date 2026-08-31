@@ -202,6 +202,123 @@ function normalizeEventPathList(value: unknown): string[] {
         .sort();
 }
 
+function readProtectedPreflightAuthorizedScope(
+    event: NonNullable<ReturnType<typeof findLatestTimelineEvent>>
+): string[] {
+    if (String(event.details?.preflight_failure_reason_code || '').trim() !== 'protected_scope_requires_orchestrator_work') {
+        return [];
+    }
+    const authorizedFiles = normalizeEventPathList(event.details?.authorized_scope_changed_files);
+    const protectedFiles = normalizeEventPathList(event.details?.changed_protected_files);
+    if (
+        authorizedFiles.length === 0
+        || protectedFiles.length === 0
+        || protectedFiles.some((entry) => !authorizedFiles.includes(entry))
+    ) {
+        return [];
+    }
+    return authorizedFiles;
+}
+
+function readLegacyProtectedPreflightAuthorizedScope(
+    repoRoot: string,
+    taskId: string,
+    errorText: string
+): string[] {
+    const failureMarker = 'Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work:';
+    const recoveryMarker = '. Restart task mode as orchestrator work before preflight classification. Suggested command:';
+    const failureStart = errorText.indexOf(failureMarker);
+    const recoveryStart = errorText.indexOf(recoveryMarker, failureStart + failureMarker.length);
+    if (failureStart < 0 || recoveryStart < 0) {
+        return [];
+    }
+    const protectedFiles = normalizeEventPathList(
+        errorText
+            .slice(failureStart + failureMarker.length, recoveryStart)
+            .split(',')
+    );
+    const suggestedCommand = errorText.slice(recoveryStart + recoveryMarker.length).trim();
+    const normalizedPlannedFiles = readCanonicalProtectedRestartCommandScope(
+        repoRoot,
+        taskId,
+        suggestedCommand
+    );
+    return protectedFiles.length > 0
+        && protectedFiles.every((entry) => normalizedPlannedFiles.includes(entry))
+        ? normalizedPlannedFiles
+        : [];
+}
+
+function readProtectedManifestDriftAuthorizedScope(
+    repoRoot: string,
+    taskId: string,
+    errorText: string
+): string[] {
+    const failureMarker = 'Trusted protected control-plane manifest drift detected before preflight classification:';
+    const recoveryMarker = '. Restart task mode with:';
+    const failureStart = errorText.indexOf(failureMarker);
+    const recoveryStart = errorText.indexOf(recoveryMarker, failureStart + failureMarker.length);
+    if (failureStart < 0 || recoveryStart < 0) {
+        return [];
+    }
+    const driftFiles = normalizeEventPathList(
+        errorText
+            .slice(failureStart + failureMarker.length, recoveryStart)
+            .split(',')
+    );
+    if (driftFiles.length === 0) {
+        return [];
+    }
+    return readCanonicalProtectedRestartCommandScope(
+        repoRoot,
+        taskId,
+        errorText.slice(recoveryStart + recoveryMarker.length).trim()
+    );
+}
+
+function readCanonicalProtectedRestartCommandScope(
+    repoRoot: string,
+    taskId: string,
+    suggestedCommand: string
+): string[] {
+    if (
+        !/^node (?:bin|garda-agent-orchestrator\/bin)\/garda\.js gate enter-task-mode\b/.test(normalizePath(suggestedCommand))
+        || /[;&|`\r\n]/.test(suggestedCommand)
+        || suggestedCommand.includes('$(')
+        || !suggestedCommand.includes('--orchestrator-work')
+    ) {
+        return [];
+    }
+    const taskMatches = [...suggestedCommand.matchAll(/--task-id\s+"([^"\r\n]+)"/g)];
+    if (taskMatches.length !== 1 || taskMatches[0][1] !== taskId) {
+        return [];
+    }
+    const plannedFiles = [...suggestedCommand.matchAll(/--planned-changed-file\s+"([^"\r\n]+)"/g)]
+        .map((match) => normalizePath(match[1]))
+        .filter(Boolean);
+    if (plannedFiles.length === 0 || new Set(plannedFiles).size !== plannedFiles.length) {
+        return [];
+    }
+    for (const plannedFile of plannedFiles) {
+        if (path.isAbsolute(plannedFile)) {
+            return [];
+        }
+        try {
+            const resolvedPath = resolvePathInsideRepo(plannedFile, repoRoot, {
+                allowMissing: true,
+                enforceInside: true
+            });
+            if (!resolvedPath || normalizePath(path.relative(repoRoot, resolvedPath)) !== plannedFile) {
+                return [];
+            }
+        } catch {
+            return [];
+        }
+    }
+    const normalizedPlannedFiles = [...plannedFiles].sort();
+    return normalizedPlannedFiles;
+}
+
 function parseDirtyBaselineFilesFromError(errorText: string): string[] {
     const marker = 'Workspace already contained modified files before task-mode entry:';
     const start = errorText.indexOf(marker);
@@ -637,7 +754,20 @@ export function readFailedGateRecovery(
                 'Do not recover with the full current workspace scope.'
         };
     }
-    const currentWorkspace = splitCheckpointScope
+    const structuredAuthorizedScope = splitCheckpointScope
+        ? []
+        : readProtectedPreflightAuthorizedScope(latestPreflightFailure);
+    const legacyAuthorizedScope = splitCheckpointScope || structuredAuthorizedScope.length > 0
+        ? []
+        : readLegacyProtectedPreflightAuthorizedScope(repoRoot, taskId, errorText);
+    const reportedAuthorizedScope = structuredAuthorizedScope.length > 0
+        ? structuredAuthorizedScope
+        : splitCheckpointScope
+            ? []
+            : legacyAuthorizedScope.length > 0
+                ? legacyAuthorizedScope
+                : readProtectedManifestDriftAuthorizedScope(repoRoot, taskId, errorText);
+    const currentWorkspace = splitCheckpointScope || reportedAuthorizedScope.length > 0
         ? null
         : readCurrentGitWorkspaceSnapshot(repoRoot, true);
     const reportedWorkflowConfigFiles = hasWorkflowConfigRecoverySignal
@@ -645,6 +775,8 @@ export function readFailedGateRecovery(
         : [];
     const currentChangedFiles = splitCheckpointScope
         ? splitCheckpointScope.changedFiles
+        : reportedAuthorizedScope.length > 0
+            ? reportedAuthorizedScope
         : filterProtectedRestartScopeGeneratedRuntimeArtifacts(repoRoot, [
             ...(Array.isArray(currentWorkspace?.changed_files) ? currentWorkspace.changed_files : []),
             ...reportedWorkflowConfigFiles
@@ -657,7 +789,9 @@ export function readFailedGateRecovery(
             : 'Recover failed classify-change as orchestrator work.',
         reason:
             `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected ${hasWorkflowConfigRecoverySignal ? 'workflow-config' : 'control-plane'} recovery signal. ` +
-            'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying, after fresh operator approval for protected task-mode entry.',
+            (reportedAuthorizedScope.length > 0
+                ? 'Run the deterministic recovery command rebuilt from the authenticated failed-classification scope before reclassifying, after fresh operator approval for protected task-mode entry.'
+                : 'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying, after fresh operator approval for protected task-mode entry.'),
         label: hasWorkflowConfigRecoverySignal
             ? 'Restart task mode with workflow-config work'
             : 'Restart task mode with orchestrator work',

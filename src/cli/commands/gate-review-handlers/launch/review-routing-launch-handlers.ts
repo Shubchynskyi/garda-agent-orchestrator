@@ -222,6 +222,9 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
         if (getStringField(details || {}, 'review_type', 'reviewType').toLowerCase() !== reviewType) {
             continue;
         }
+        if (getStringField(details || {}, 'invocation_role', 'invocationRole') === 'review_output_correction') {
+            continue;
+        }
         const artifactPathValue = getStringField(
             details || {},
             'reviewer_launch_artifact_path',

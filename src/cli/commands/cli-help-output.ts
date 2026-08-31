@@ -26,7 +26,7 @@ export function buildCommandSummaryLines(): string[] {
     return lines;
 }
 
-export type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow';
+export type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'review-catalog' | 'templates' | 'profile' | 'workflow';
 export type CommandHelpName =
     | GuardedCommandHelpName
     | 'stats'
@@ -35,6 +35,7 @@ export type CommandHelpName =
     | 'ui'
     | 'off'
     | 'on'
+    | 'uninstall'
     | 'status'
     | 'doctor'
     | 'debug'
@@ -100,6 +101,40 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         hints: Object.freeze([
             'Default mode: review-capabilities with no subcommand behaves like review-capabilities show.',
             'The list alias behaves like review-capabilities show.'
+        ])
+    }),
+    'review-catalog': Object.freeze({
+        summary: 'Inspect and safely manage review lanes, profile policy, and review dependencies.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} review-catalog [list|validate] [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} review-catalog <show|explain> <review-id> [--profile NAME] [--json]`,
+            `${PRIMARY_CLI_NAME} review-catalog create <review-id> --display-label LABEL --skill-id ID --trigger-mode <manual|signals> --coverage-category ID --role-id ID [--signal-id ID] [--focus-tag TAG]`,
+            `${PRIMARY_CLI_NAME} review-catalog update <review-id> [--display-label LABEL] [--skill-id ID] [--trigger-mode <manual|signals>] [--signal-id ID] [--coverage-category ID] [--role-id ID] [--focus-tag TAG]`,
+            `${PRIMARY_CLI_NAME} review-catalog <enable|disable> <review-id>`,
+            `${PRIMARY_CLI_NAME} review-catalog profile-bind <review-id> --profile NAME --state <disabled|auto|required>`,
+            `${PRIMARY_CLI_NAME} review-catalog dependency <review-id> --profile NAME (--depends-on ID | --clear-dependencies)`,
+            `${PRIMARY_CLI_NAME} review-catalog migrate [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} review-catalog migrate --confirm --expected-state-sha256 SHA256 --expected-plan-sha256 SHA256 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} review-catalog migrate --apply --expected-state-sha256 SHA256 --expected-plan-sha256 SHA256 --confirmation-receipt-sha256 SHA256`,
+            `${PRIMARY_CLI_NAME} review-catalog <mutation> <review-id> <same mutation options> --confirm --expected-state-sha256 SHA256 --expected-plan-sha256 SHA256 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} review-catalog <mutation> <review-id> <same mutation options> --apply --expected-state-sha256 SHA256 --expected-plan-sha256 SHA256 --confirmation-receipt-sha256 SHA256`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} review-catalog list --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog explain architecture --profile balanced --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog migrate --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog create architecture --display-label "Architecture review" --skill-id architecture-review --trigger-mode signals --signal-id architecture --coverage-category maintainability --role-id architecture-reviewer --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog enable architecture --confirm --expected-state-sha256 "<state-sha256>" --expected-plan-sha256 "<plan-sha256>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."`,
+            `${PRIMARY_CLI_NAME} review-catalog enable architecture --apply --expected-state-sha256 "<state-sha256>" --expected-plan-sha256 "<plan-sha256>" --confirmation-receipt-sha256 "<receipt-sha256>" --target-root "."`
+        ]),
+        hints: Object.freeze([
+            'A missing catalog remains legacy-compatible: the built-in review lanes and canonical verdict tokens still apply.',
+            'Migration is explicit and preview-only by default. It materializes normalized catalog/profile/capability config only after a separate confirmation and apply.',
+            'Migration retains legacy capability choices and review execution mode, proves behavioral parity, and is idempotent after normalization.',
+            'Custom lanes are disabled by default. Raw prompt bodies and verdict-token overrides are not accepted.',
+            'Mutation commands default to preview and affect future task snapshots only. Repeat the same mutation options for each later phase.',
+            'The separate --confirm phase requires fresh operator confirmation and the preview state/plan hashes; it returns a one-time confirmation receipt.',
+            'The separate --apply phase requires the same preview hashes and confirmation receipt; self-confirmation flags are rejected during apply.'
         ])
     }),
     templates: Object.freeze({
@@ -305,6 +340,23 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             'Conflicts fail closed without overwriting user files; run --dry-run first when checking a workspace.'
         ])
     }),
+    uninstall: Object.freeze({
+        summary: 'Remove the deployed orchestrator while preserving TASK.md by default.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} uninstall [--target-root PATH] [--no-prompt] [--dry-run] [--skip-backups] [--keep-primary-entrypoint yes|no] [--keep-task-file yes|no] [--keep-runtime-artifacts yes|no] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} uninstall --target-root "."`,
+            `${PRIMARY_CLI_NAME} uninstall --target-root "." --no-prompt`,
+            `${PRIMARY_CLI_NAME} uninstall --target-root "." --no-prompt --keep-task-file no`
+        ]),
+        hints: Object.freeze([
+            'TASK.md is preserved by default, including in --no-prompt mode.',
+            '--keep-task-file no is the explicit destructive override that removes the managed queue.',
+            'Without --skip-backups, explicit TASK.md removal reports TaskFileRecoveryPath for the exact pre-removal copy.',
+            'Combining --keep-task-file no with --skip-backups intentionally removes the managed queue without a recovery copy.'
+        ])
+    }),
     status: Object.freeze({
         summary: 'Show current project status without changing files.',
         usage: Object.freeze([
@@ -467,7 +519,7 @@ function styleHelpToken(token: string): string {
         || [
             'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'ui', 'off', 'on', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'backup', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
-            'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
+            'review-capabilities', 'review-catalog', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
             'inspect', 'rebuild-indexes', 'protected-manifest', 'locks', 'catalog', 'health', 'drift', 'rebuild',
             'events'
@@ -645,7 +697,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  update git    Apply update from a git repo or local git clone.',
             '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  backup        Create a manual rollback backup snapshot.',
-            '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  uninstall     Remove the deployed orchestrator bundle and managed files; preserve TASK.md by default (--keep-task-file no removes it).',
             '  cleanup       Remove stale runtime artifacts and manage review-artifact storage policy.',
             '  repair        Inspect and rebuild runtime indexes, protected manifests, and stale lock state.',
             '  gc            Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox (alias: clean).',
@@ -653,6 +705,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
             '  review-capabilities  Show, enable, and disable repo-local optional review capabilities.',
+            '  review-catalog  Inspect and safely manage review lanes, profiles, and dependencies.',
             '  templates     Show, validate, and manage user-owned message template overrides.',
             '  workflow      Show and set repo-local workflow config.',
             '  profile       List, use, create, delete, validate, and manage finding policy for workspace profiles.',

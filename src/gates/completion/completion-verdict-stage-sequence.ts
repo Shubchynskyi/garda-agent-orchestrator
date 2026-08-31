@@ -5,18 +5,30 @@ import {
     findLatestStageOccurrenceInRange
 } from './completion-evidence';
 import type { TimelineEventEntry } from './completion-evidence';
+import { TASK_LIFECYCLE_PHASE_IDS } from '../../schemas/task-lifecycle-phase-manifest';
+import type { TaskLifecyclePhaseId } from '../../schemas/task-lifecycle-phase-manifest';
 
-export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
-    'TASK_MODE_ENTERED',
-    'HANDSHAKE_DIAGNOSTICS_RECORDED',
-    'SHELL_SMOKE_PREFLIGHT_RECORDED',
-    'PREFLIGHT_CLASSIFIED',
-    'IMPLEMENTATION_STARTED',
-    'COMPILE_GATE_PASSED',
-    'REVIEW_PHASE_STARTED',
-    'REVIEW_RECORDED',
-    'REVIEW_GATE_PASSED'
-]);
+const COMPLETION_STAGE_EVENTS_BY_PHASE: Readonly<Record<TaskLifecyclePhaseId, readonly string[]>> = Object.freeze({
+    startup: Object.freeze([
+        'TASK_MODE_ENTERED',
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'SHELL_SMOKE_PREFLIGHT_RECORDED'
+    ]),
+    preflight: Object.freeze(['PREFLIGHT_CLASSIFIED']),
+    implementation: Object.freeze(['IMPLEMENTATION_STARTED']),
+    validation: Object.freeze(['COMPILE_GATE_PASSED']),
+    review: Object.freeze([
+        'REVIEW_PHASE_STARTED',
+        'REVIEW_RECORDED',
+        'REVIEW_GATE_PASSED'
+    ]),
+    closeout: Object.freeze([]),
+    terminal: Object.freeze([])
+});
+
+export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze(
+    TASK_LIFECYCLE_PHASE_IDS.flatMap((phaseId) => COMPLETION_STAGE_EVENTS_BY_PHASE[phaseId])
+);
 
 export const NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze(
     STAGE_SEQUENCE_ORDER.filter((stage) => stage !== 'REVIEW_RECORDED' && stage !== 'REVIEW_PHASE_STARTED')

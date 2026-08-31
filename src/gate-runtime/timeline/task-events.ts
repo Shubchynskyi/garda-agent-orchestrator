@@ -34,6 +34,7 @@ export {
 export {
     inspectTaskEventFile,
     normalizeIntegrityValue,
+    type InspectTaskEventOptions,
     type InspectTaskEventResult
 } from './task-events-integrity';
 export {

@@ -187,7 +187,11 @@ export function buildReviewCoverageContract(options: {
 
 export function getReviewCoverageContractViolations(
     value: unknown,
-    expected: { reviewType: string; changedFiles: readonly string[] }
+    expected: {
+        reviewType: string;
+        changedFiles: readonly string[];
+        categoryIds?: readonly string[];
+    }
 ): string[] {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return ['Review context is missing the required coverage_contract object.'];

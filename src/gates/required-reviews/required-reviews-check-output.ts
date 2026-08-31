@@ -9,6 +9,11 @@ import {
     resolveRuntimeReviewerIdentity
 } from '../review/reviewer-routing';
 import { resolveBundleName } from '../../core/constants';
+import { resolveReviewExecutionPolicyModeFromPreflight } from '../../core/review-execution-policy';
+import {
+    getReviewDependencyTimelineOrderViolations,
+    resolveCompiledReviewDependencyGraphFromPreflight
+} from '../../core/review-dependency-graph';
 import { REVIEW_CONTRACTS, resolveExpectedReviewVerdicts, testExpectedVerdict } from './required-reviews-check-contracts';
 import { readReviewDependencyTimelineEvents } from './required-reviews-check-dependencies';
 import {
@@ -42,12 +47,13 @@ export interface ReviewAuthorshipAttestation {
 
 function getRequiredReviewTypesForAuthorshipAttestation(
     requiredReviews: Record<string, boolean>,
-    skipReviews: string[]
+    skipReviews: string[],
+    reviewContracts: readonly (readonly [string, string])[] = REVIEW_CONTRACTS
 ): { requiredTypes: string[]; skippedTypes: string[] } {
     const skipSet = new Set(skipReviews.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean));
     const requiredTypes: string[] = [];
     const skippedTypes: string[] = [];
-    for (const [reviewType] of REVIEW_CONTRACTS) {
+    for (const [reviewType] of reviewContracts) {
         if (requiredReviews[reviewType] !== true) {
             continue;
         }
@@ -193,6 +199,7 @@ export interface CheckRequiredReviewsOptions {
         errors: string[];
         resolved_task_id: string | null;
         required_reviews: Record<string, boolean>;
+        review_contracts?: readonly (readonly [string, string])[];
         preflight_path: string;
         preflight_hash: string | null;
     };
@@ -227,8 +234,20 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const errors = [...validatedPreflight.errors];
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const requiredReviews = validatedPreflight.required_reviews;
-    const requiredReviewTypes = getRequiredReviewTypesForAuthorshipAttestation(requiredReviews, skipReviews).requiredTypes;
-    const verdicts = resolveExpectedReviewVerdicts(requiredReviews, options.verdicts, skipReviews);
+    const reviewContracts = Array.isArray(validatedPreflight.review_contracts)
+        ? validatedPreflight.review_contracts
+        : REVIEW_CONTRACTS;
+    const requiredReviewTypes = getRequiredReviewTypesForAuthorshipAttestation(
+        requiredReviews,
+        skipReviews,
+        reviewContracts
+    ).requiredTypes;
+    const verdicts = resolveExpectedReviewVerdicts(
+        requiredReviews,
+        options.verdicts,
+        skipReviews,
+        reviewContracts
+    );
     const preflightPayload = resolvePreflightPayloadForReviewValidation({
         preflightPayload: options.preflightPayload,
         preflightPath: validatedPreflight.preflight_path
@@ -247,6 +266,51 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         errors.push(
             `Task timeline missing or unreadable for '${resolvedTaskId}': ${normalizePath(String(timelinePath || ''))}.`
         );
+    }
+    let reviewDependencyGraphSha256: string | null = null;
+    if (preflightPayload) {
+        try {
+            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(preflightPayload);
+            const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+                preflightPayload,
+                reviewExecutionPolicyMode
+            );
+            reviewDependencyGraphSha256 = reviewDependencyGraph?.graph_sha256 || null;
+            if (reviewDependencyGraph) {
+                const dependencyOrderTimeline = timelineEvents.map((event) => ({
+                    ...event,
+                    sequence: event.integrity?.task_sequence ?? event.sequence
+                }));
+                for (const violation of getReviewDependencyTimelineOrderViolations(
+                    reviewDependencyGraph,
+                    dependencyOrderTimeline
+                )) {
+                    if (violation.code === 'missing_upstream_record') {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' cannot start before upstream review ` +
+                            `'${violation.upstream_review_id}' is recorded for the current cycle.`
+                        );
+                    } else if (violation.code === 'unaccepted_upstream_record') {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' depends on upstream review ` +
+                            `'${violation.upstream_review_id}', but the latest recorded result is not accepted.`
+                        );
+                    } else if (violation.code === 'stale_upstream_record') {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' depends on upstream review ` +
+                            `'${violation.upstream_review_id}', but its evidence predates COMPILE_GATE_PASSED.`
+                        );
+                    } else {
+                        errors.push(
+                            `Required review '${violation.downstream_review_id}' started before upstream review ` +
+                            `'${violation.upstream_review_id}' completed. Downstream review dependency order is invalid.`
+                        );
+                    }
+                }
+            }
+        } catch (error) {
+            errors.push(error instanceof Error ? error.message : String(error));
+        }
     }
 
     if (compileGateEvidence) {
@@ -286,7 +350,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const treeStateFreshnessCache = options.repoRoot
         ? createReviewTreeStateFreshnessCache()
         : null;
-    for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
+    for (const [reviewKey, passToken] of reviewContracts) {
         const required = !!requiredReviews[reviewKey];
         const skippedByOverride = skipReviews.includes(reviewKey);
         const actualVerdict = verdicts[reviewKey] || 'NOT_REQUIRED';
@@ -367,6 +431,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         skip_reviews: skipReviews,
         verdicts,
         review_checks: reviewChecks,
+        review_dependency_graph_sha256: reviewDependencyGraphSha256,
         violations: errors
     };
 }

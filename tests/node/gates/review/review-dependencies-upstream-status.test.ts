@@ -9,6 +9,7 @@ import {
     assessUpstreamReviewDependencyStatus,
     type ReviewDependencyTimelineEvent
 } from '../../../../src/gates/review/review-dependencies';
+import { writeSchema4ReviewPackage } from './review-execution-lineage-test-fixture';
 
 function writeJson(filePath: string, value: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -130,6 +131,13 @@ function createReviewDependencyTaxonomyFixture(options: {
     const preflightPath = path.join(reviewsRoot, `${options.taskId}-preflight.json`);
     const preflightPayload = {
         task_id: options.taskId,
+        detection_source: 'git_auto',
+        include_untracked: true,
+        changed_files: ['src/gates/review/review-dependencies.ts'],
+        metrics: {
+            scope_sha256: 'd'.repeat(64),
+            changed_files_sha256: 'd'.repeat(64)
+        },
         required_reviews: {
             code: true,
             test: true
@@ -278,30 +286,14 @@ test('assessUpstreamReviewDependencyStatus accepts verdict-free JSON artifacts w
         taskId: 'T-979-json-pass'
     });
     try {
-        const coverageContract = {
-            schema_version: 1,
-            required: true,
-            review_type: 'code',
-            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/review/review-dependencies.ts' }],
-            obligation_count: 1,
-            contract_sha256: 'c'.repeat(64)
-        };
-        writeJson(fixture.reviewContextPath, {
-            task_id: 'T-979-json-pass',
-            review_type: 'code',
-            tree_state: {
-                tree_state_sha256: 'b'.repeat(64)
-            },
-            coverage_contract: coverageContract
+        writeSchema4ReviewPackage({
+            reviewsRoot: path.dirname(fixture.preflightPath),
+            repoRoot: fixture.repoRoot,
+            taskId: 'T-979-json-pass',
+            reviewType: 'code',
+            preflightPath: fixture.preflightPath,
+            preflight: fixture.preflightPayload
         });
-        writeReviewArtifactAndRefreshReceipt(
-            fixture,
-            buildReviewFindingsJsonArtifact({
-                taskId: 'T-979-json-pass',
-                reviewContextSha256: sha256Buffer(fs.readFileSync(fixture.reviewContextPath)),
-                coverageContractSha256: coverageContract.contract_sha256
-            })
-        );
 
         const result = assessUpstreamReviewDependencyStatus({
             taskId: 'T-979-json-pass',
@@ -356,31 +348,15 @@ test('assessUpstreamReviewDependencyStatus treats verdict-free JSON residual ris
         taskId: 'T-979-json-residual-risk'
     });
     try {
-        const coverageContract = {
-            schema_version: 1,
-            required: true,
-            review_type: 'code',
-            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/review/review-dependencies.ts' }],
-            obligation_count: 1,
-            contract_sha256: 'c'.repeat(64)
-        };
-        writeJson(fixture.reviewContextPath, {
-            task_id: 'T-979-json-residual-risk',
-            review_type: 'code',
-            tree_state: {
-                tree_state_sha256: 'b'.repeat(64)
-            },
-            coverage_contract: coverageContract
+        writeSchema4ReviewPackage({
+            reviewsRoot: path.dirname(fixture.preflightPath),
+            repoRoot: fixture.repoRoot,
+            taskId: 'T-979-json-residual-risk',
+            reviewType: 'code',
+            preflightPath: fixture.preflightPath,
+            preflight: fixture.preflightPayload,
+            residualRisks: ['Residual risk requires implementation follow-up before dependent reviews.']
         });
-        writeReviewArtifactAndRefreshReceipt(
-            fixture,
-            buildReviewFindingsJsonArtifact({
-                taskId: 'T-979-json-residual-risk',
-                reviewContextSha256: sha256Buffer(fs.readFileSync(fixture.reviewContextPath)),
-                coverageContractSha256: coverageContract.contract_sha256,
-                residualRisks: ['Residual risk requires implementation follow-up before dependent reviews.']
-            })
-        );
 
         const result = assessUpstreamReviewDependencyStatus({
             taskId: 'T-979-json-residual-risk',

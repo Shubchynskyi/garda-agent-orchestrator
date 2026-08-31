@@ -21,8 +21,12 @@ import {
 } from '../../../../src/gates/completion/completion-verdict';
 import type { TimelineEventEntry } from '../../../../src/gates/completion/completion-evidence';
 import { buildReviewFindingsValidationArtifact } from '../../../../src/gates/review/review-findings-validation-artifact';
-import type { ReviewFindingsSeverity } from '../../../../src/gates/review/review-findings-schema';
+import {
+    REVIEW_FINDINGS_SCHEMA_VERSION,
+    type ReviewFindingsSeverity
+} from '../../../../src/gates/review/review-findings-schema';
 import type { LockedReviewFindingPolicyResolution } from '../../../../src/gates/review/review-finding-disposition';
+import { buildLegacyReviewFollowUpTaskClosurePolicySnapshot } from '../../../../src/core/review-follow-up-task-closure-policy';
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -49,7 +53,7 @@ function buildAcceptedValidationArtifactWithFinding(severity: ReviewFindingsSeve
             violations: [],
             coverage_validation: null,
             report: {
-                schema_version: 1,
+                schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
                 task_id: 'T-979-policy',
                 review_type: 'code',
                 review_context_sha256: 'a'.repeat(64),
@@ -108,7 +112,7 @@ function buildAcceptedValidationArtifactWithResidualRisk() {
             violations: [],
             coverage_validation: null,
             report: {
-                schema_version: 1,
+                schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
                 task_id: 'T-979-policy',
                 review_type: 'code',
                 review_context_sha256: 'a'.repeat(64),
@@ -180,7 +184,20 @@ const BALANCED_RECEIPT_POLICY: LockedReviewFindingPolicyResolution = {
         },
         residual_risk: 'create_follow_up'
     },
+    base_policy: {
+        schema_version: 1,
+        policy_id: 'balanced',
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'create_follow_up',
+            low: 'create_follow_up'
+        },
+        residual_risk: 'create_follow_up'
+    },
     source: 'receipt_review_findings_disposition',
+    follow_up_task_closure_policy: buildLegacyReviewFollowUpTaskClosurePolicySnapshot(),
+    follow_up_task_closure_policy_source: 'legacy_default',
     diagnostics: []
 };
 
@@ -196,7 +213,20 @@ const SOFT_RECEIPT_POLICY: LockedReviewFindingPolicyResolution = {
         },
         residual_risk: 'ignore'
     },
+    base_policy: {
+        schema_version: 1,
+        policy_id: 'soft',
+        findings: {
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        },
+        residual_risk: 'ignore'
+    },
     source: 'receipt_review_findings_disposition',
+    follow_up_task_closure_policy: buildLegacyReviewFollowUpTaskClosurePolicySnapshot(),
+    follow_up_task_closure_policy_source: 'legacy_default',
     diagnostics: []
 };
 
@@ -616,13 +646,13 @@ describe('gates/completion-verdict', () => {
                 '- None'
             ].join('\n');
             const result = getReviewArtifactFindingsEvidence('/review.md', content);
-            assert.equal(result.status, 'PASS');
+            assert.equal(result.status, 'PASS', result.violations.join('\n'));
             assert.equal(result.violations.length, 0);
         });
 
         it('accepts findings JSON artifacts with no active findings or residual risks', () => {
             const content = JSON.stringify({
-                schema_version: 1,
+                schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
                 task_id: 'T-979-2',
                 review_type: 'code',
                 review_context_sha256: 'a'.repeat(64),
@@ -655,6 +685,12 @@ describe('gates/completion-verdict', () => {
                         }
                     ]
                 },
+                review_execution: {
+                    mode: 'FULL',
+                    contract_sha256: 'd'.repeat(64),
+                    covered_delta_targets: [],
+                    inspected_prior_finding_ids: []
+                },
                 findings: { critical: [], high: [], medium: [], low: [] },
                 residual_risks: [],
                 reviewer_notes: []
@@ -662,7 +698,7 @@ describe('gates/completion-verdict', () => {
 
             const result = getReviewArtifactFindingsEvidence('/review.md', content);
 
-            assert.equal(result.status, 'PASS');
+            assert.equal(result.status, 'PASS', result.violations.join('\n'));
             assert.equal(result.findings_section_present, true);
             assert.equal(result.residual_risks_section_present, true);
             assert.deepEqual(result.findings_by_severity, { critical: [], high: [], medium: [], low: [] });
@@ -671,7 +707,7 @@ describe('gates/completion-verdict', () => {
 
         it('rejects malformed findings JSON instead of treating it as a clean pass', () => {
             const content = JSON.stringify({
-                schema_version: 1,
+                schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
                 findings: {}
             });
 
@@ -689,7 +725,7 @@ describe('gates/completion-verdict', () => {
 
         it('keeps active findings visible in findings JSON artifacts', () => {
             const content = JSON.stringify({
-                schema_version: 1,
+                schema_version: REVIEW_FINDINGS_SCHEMA_VERSION,
                 task_id: 'T-979-2',
                 review_type: 'code',
                 review_context_sha256: 'a'.repeat(64),
@@ -722,6 +758,12 @@ describe('gates/completion-verdict', () => {
                         }
                     ]
                 },
+                review_execution: {
+                    mode: 'FULL',
+                    contract_sha256: 'd'.repeat(64),
+                    covered_delta_targets: [],
+                    inspected_prior_finding_ids: []
+                },
                 findings: {
                     critical: [],
                     high: [
@@ -748,7 +790,11 @@ describe('gates/completion-verdict', () => {
             const result = getReviewArtifactFindingsEvidence('/review.md', content);
 
             assert.equal(result.status, 'FAILED');
-            assert.equal(result.findings_by_severity.high.length, 1);
+            assert.equal(
+                result.findings_by_severity.high.length,
+                1,
+                result.violations.join('\n')
+            );
             assert.match(result.findings_by_severity.high[0], /F-001/u);
             assert.match(result.violations.join('\n'), /active High findings/u);
         });

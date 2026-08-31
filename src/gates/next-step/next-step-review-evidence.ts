@@ -450,6 +450,7 @@ export function findReviewGateStaleUpstreamRecovery(params: {
     )) {
         return null;
     }
+    const timelineEvents = readTaskTimelineEventLikes(params.eventsRoot, params.taskId);
     const stateByReviewType = new Map(params.reviewStates.map((state) => [state.reviewType, state]));
     for (const downstreamReviewType of params.requiredReviewTypes) {
         const downstreamState = stateByReviewType.get(downstreamReviewType);
@@ -469,6 +470,16 @@ export function findReviewGateStaleUpstreamRecovery(params: {
                 || !upstreamState.domainScopeCurrent
                 || upstreamState.reusedExistingReview
                 || !reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, upstreamState)
+            ) {
+                continue;
+            }
+            const acceptedContextSequence = getLatestReviewContextReuseAcceptedSequence(
+                timelineEvents,
+                upstreamState
+            );
+            if (
+                acceptedContextSequence != null
+                && acceptedContextSequence > latestReviewGateFailureSequence
             ) {
                 continue;
             }

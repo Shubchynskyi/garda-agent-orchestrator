@@ -4,7 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { syncWorkflowConfigWithTemplate } from '../../../src/core/workflow-config';
+import {
+    buildDefaultWorkflowConfig,
+    isExactLegacyReviewCycleGuardGeneratedDefault,
+    mergeWorkflowConfigWithTemplate,
+    syncWorkflowConfigWithTemplate
+} from '../../../src/core/workflow-config';
 
 function mkTmpBundle(): string {
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-workflow-config-'));
@@ -72,5 +77,41 @@ describe('workflow config template diagnostics', () => {
         } finally {
             fs.rmSync(bundleRoot, { recursive: true, force: true });
         }
+    });
+});
+
+describe('workflow config review cycle guard defaults', () => {
+    it('migrates the exact previous generated default to ten failed reviews', () => {
+        const previousGeneratedDefault = {
+            enabled: true,
+            action: 'BLOCK_FOR_OPERATOR_DECISION',
+            max_failed_non_test_reviews: 15,
+            max_total_non_test_reviews: 30,
+            excluded_review_types: ['test'],
+            auto_split_enabled: true
+        };
+
+        assert.equal(isExactLegacyReviewCycleGuardGeneratedDefault(previousGeneratedDefault), true);
+
+        const merged = mergeWorkflowConfigWithTemplate(buildDefaultWorkflowConfig(), {
+            review_cycle_guard: previousGeneratedDefault
+        });
+        const reviewCycleGuard = merged.review_cycle_guard as Record<string, unknown>;
+        assert.equal(reviewCycleGuard.max_failed_non_test_reviews, 10);
+    });
+
+    it('preserves a custom failed-review limit', () => {
+        const merged = mergeWorkflowConfigWithTemplate(buildDefaultWorkflowConfig(), {
+            review_cycle_guard: {
+                enabled: true,
+                action: 'BLOCK_FOR_OPERATOR_DECISION',
+                max_failed_non_test_reviews: 12,
+                max_total_non_test_reviews: 30,
+                excluded_review_types: ['test'],
+                auto_split_enabled: true
+            }
+        });
+        const reviewCycleGuard = merged.review_cycle_guard as Record<string, unknown>;
+        assert.equal(reviewCycleGuard.max_failed_non_test_reviews, 12);
     });
 });

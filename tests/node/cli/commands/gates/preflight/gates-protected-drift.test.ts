@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { writeBudgetOutputFilters } from '../../gate-test-helpers';
+import {
+    bindFixtureEffectiveReviewSnapshot,
+    writeBudgetOutputFilters
+} from '../../gate-test-helpers';
 import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
@@ -86,8 +89,14 @@ function createTempRepo(): string {
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'skills', 'code-review'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    fs.writeFileSync(
+        path.join(root, 'garda-agent-orchestrator', 'live', 'skills', 'code-review', 'SKILL.md'),
+        '# code-review fixture\n',
+        'utf8'
+    );
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
     workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
@@ -813,6 +822,7 @@ function loadPostPreflightRulePack(
     artifactPath = '',
     taskModePath = ''
 ) {
+    bindFixtureEffectiveReviewSnapshot(repoRoot, taskId, 'code', preflightPath, taskModePath);
     if (ensurePreflightClassified) {
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
     }
@@ -959,6 +969,63 @@ describe('cli/commands/gates', () => {
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.some((event) => event.event_type === 'PREFLIGHT_CLASSIFIED'), false);
         assert.equal(events.some((event) => event.event_type === 'PREFLIGHT_FAILED'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('preserves explicit planned scope when protected recovery differs from the dirty workspace', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-explicit-protected-scope';
+        const protectedFile = 'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md';
+        const nonProtectedFile = 'src/app.ts';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve explicit protected recovery scope'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        let error: Error | null = null;
+        try {
+            runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Preserve explicit protected recovery scope',
+                changedFiles: [protectedFile, nonProtectedFile],
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
+        } catch (caught: unknown) {
+            error = caught instanceof Error ? caught : new Error(String(caught));
+        }
+
+        assert.ok(error);
+        assert.ok(error.message.includes('Suggested command:'));
+        assert.ok(error.message.includes(`--planned-changed-file "${protectedFile}"`));
+        assert.ok(error.message.includes(`--planned-changed-file "${nonProtectedFile}"`));
+        assert.equal(fs.existsSync(preflightPath), false);
+
+        const failedEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'PREFLIGHT_FAILED');
+        assert.ok(failedEvent);
+        const failedDetails = failedEvent.details as Record<string, unknown>;
+        assert.equal(
+            failedDetails.preflight_failure_reason_code,
+            'protected_scope_requires_orchestrator_work'
+        );
+        assert.deepEqual(
+            failedDetails.authorized_scope_changed_files,
+            [protectedFile, nonProtectedFile].sort()
+        );
+        assert.deepEqual(failedDetails.changed_protected_files, [protectedFile]);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

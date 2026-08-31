@@ -16,6 +16,10 @@ import type { ReviewContextSectionsResult } from '../../../../gate-runtime/revie
 import type { ReviewDependencyTimelineEvent } from '../../../../gates/review/review-dependencies';
 import type { TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION } from '../../../../gate-runtime/reviewer-session-contract';
+import type {
+    ReviewRemediationReviewContract,
+    ReviewRemediationReviewContractValidationAuthority
+} from '../../../../gates/review-remediation/review-remediation-review-contract';
 import {
     normalizePathValue,
     ensureDirectoryExists,
@@ -93,6 +97,7 @@ export interface BuildReviewContextCommandResult {
     ruleContextArtifactPath: string;
     tokenEconomyActive: boolean;
     reusedReviewEvidence: boolean;
+    acceptedReviewEvidenceKind: 'REUSED' | 'FRESH' | null;
     reusedReceiptPath: string | null;
     reusedReviewerExecutionMode: string | null;
     reusedReviewerIdentity: string | null;
@@ -116,6 +121,9 @@ export interface BuildReviewContextCommandOptions {
     focusedRequiredTestPath?: unknown;
     reviewReuseBlockedReason?: unknown;
     remediationPreservedScopeMismatchReason?: unknown;
+    reviewExecutionContract?: ReviewRemediationReviewContract | null;
+    reviewExecutionValidationAuthority?: ReviewRemediationReviewContractValidationAuthority | null;
+    persistedRemediationReuseRequired?: boolean;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
     ruleFileContentCache?: Map<string, string> | null;
     telemetryLockTimeoutMs?: unknown;
@@ -139,6 +147,9 @@ export interface ResolvedBuildReviewContextCommandInputs {
     scopedDiffMetadataPath: string;
     focusedRequiredTestPath: string | null;
     reviewReuseBlockedReason: string;
+    reviewExecutionContract: ReviewRemediationReviewContract | null;
+    reviewExecutionValidationAuthority: ReviewRemediationReviewContractValidationAuthority | null;
+    persistedRemediationReuseRequired: boolean;
 }
 
 export function resolveBuildReviewContextCommandInputs(
@@ -226,7 +237,10 @@ export function resolveBuildReviewContextCommandInputs(
         outputPath,
         scopedDiffMetadataPath,
         focusedRequiredTestPath,
-        reviewReuseBlockedReason: String(options.reviewReuseBlockedReason || '').trim()
+        reviewReuseBlockedReason: String(options.reviewReuseBlockedReason || '').trim(),
+        reviewExecutionContract: options.reviewExecutionContract || null,
+        reviewExecutionValidationAuthority: options.reviewExecutionValidationAuthority || null,
+        persistedRemediationReuseRequired: options.persistedRemediationReuseRequired === true
     };
 }
 
@@ -278,6 +292,7 @@ export function buildAcceptedCurrentPassReviewContextCommandResult(options: {
         ruleContextArtifactPath: options.ruleContextArtifactPath || '',
         tokenEconomyActive: options.tokenEconomyActive,
         reusedReviewEvidence: options.reusedExistingReview,
+        acceptedReviewEvidenceKind: options.reusedExistingReview ? 'REUSED' : 'FRESH',
         reusedReceiptPath: options.reusedExistingReview ? options.receiptPath : null,
         reusedReviewerExecutionMode: options.reusedExistingReview ? options.reviewerExecutionMode : null,
         reusedReviewerIdentity: options.reusedExistingReview ? options.reviewerIdentity : null,
@@ -343,6 +358,7 @@ export function buildGeneratedReviewContextCommandResult(options: {
         ruleContextArtifactPath: options.ruleContextArtifactPath,
         tokenEconomyActive: options.tokenEconomyActive,
         reusedReviewEvidence: options.reviewReuseResult.reused,
+        acceptedReviewEvidenceKind: options.reviewReuseResult.reused ? 'REUSED' : null,
         reusedReceiptPath: options.reviewReuseResult.receiptPath,
         reusedReviewerExecutionMode: options.reviewReuseResult.reviewerExecutionMode,
         reusedReviewerIdentity: options.reviewReuseResult.reviewerIdentity,

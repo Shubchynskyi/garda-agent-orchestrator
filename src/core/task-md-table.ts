@@ -1,3 +1,5 @@
+import { formatCanonicalTaskQueueStatusCell } from './task-queue/task-queue-status';
+
 export interface TaskMdTableCell {
     raw: string;
     trimmed: string;
@@ -277,7 +279,9 @@ export function formatActiveTaskQueueTable(content: string): string {
         if (cells.length !== CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT) {
             return content;
         }
-        parsedRows.push(cells.map((cell) => cell.trimmed));
+        const row = cells.map((cell) => cell.trimmed);
+        row[1] = formatCanonicalTaskQueueStatusCell(row[1]);
+        parsedRows.push(row);
     }
 
     const headerValues = headerCells.map((cell) => cell.trimmed);

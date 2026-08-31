@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     LOCAL_UI_LANGUAGES,
+    LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
     LOCAL_UI_TEXT,
     assertLocalUiLanguagePacksComplete,
     getLocalUiText,
@@ -55,5 +56,25 @@ test('local UI renders Russian chrome while preserving machine surfaces', () => 
     assert.match(html, /safe\(action\.command\)/u);
     assert.match(html, /Память проекта/u);
     assert.match(html, /Проверка качества/u);
+    assert.match(html, /Профиль для F-задач/u);
+    assert.match(html, /Контролируемая декомпозиция задач/u);
+    assert.match(html, /Фактический источник/u);
+    assert.match(html, /profileFollowUpTaskProfileOneLevelLighter/u);
+    assert.match(html, /profile-follow-up-task-profile/u);
     assert.doesNotMatch(html, /JSON\.stringify\(audit, null, 2\)/u);
+});
+
+test('F-task closure controls expose complete English and Russian text catalogs', () => {
+    const english = LOCAL_UI_TASK_CLOSURE_POLICY_TEXT.en;
+    const russian = LOCAL_UI_TASK_CLOSURE_POLICY_TEXT.ru;
+
+    assert.deepEqual(Object.keys(russian).sort(), Object.keys(english).sort());
+    assert.equal(english.title, 'F-task closure policy');
+    assert.equal(russian.title, 'Политика закрытия F-задачи');
+    assert.equal(russian.skipLowFindings, 'Пропускать принятые находки низкой важности');
+    assert.equal(russian.forbidChildTasks, 'Запретить создание дочерних задач');
+    assert.match(russian.pendingNextCycle, /следующем входе в режим задачи/iu);
+    for (const key of Object.keys(english)) {
+        assert.notEqual(russian[key as keyof typeof russian], english[key as keyof typeof english], key);
+    }
 });

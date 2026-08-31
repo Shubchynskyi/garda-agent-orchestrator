@@ -3,6 +3,10 @@ import {
     getReviewExecutionPreparationOrder,
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
+import {
+    resolveReviewDependencyDownstreamReachability,
+    type CompiledReviewDependencyGraph
+} from '../core/review-dependency-graph';
 import { REVIEW_CAPABILITY_KEYS, type ReviewCapabilityKey } from '../core/review-capabilities';
 import { isPlainRecord } from '../core/records';
 
@@ -78,10 +82,7 @@ const DEFAULT_POLICY: ReviewRemediationRerunPolicy = {
             strategy: 'affected_dependent_reviews',
             ordered_rerun_lanes: ['code', 'refactor', 'test']
         },
-        production: {
-            strategy: 'affected_dependent_reviews',
-            ordered_rerun_lanes: REVIEW_REMEDIATION_ALL_REQUIRED_LANES
-        },
+        production: { strategy: 'current_review_only' },
         global: {
             strategy: 'affected_dependent_reviews',
             ordered_rerun_lanes: REVIEW_REMEDIATION_ALL_REQUIRED_LANES
@@ -259,12 +260,26 @@ export function resolveReviewRemediationRerunPolicyFromSnapshot(
     };
 }
 
-function normalizeRequiredReviewTypes(requiredReviews: Record<string, boolean>): string[] {
-    const canonicalOrder = getReviewExecutionPreparationOrder('strict_sequential');
-    return Object.entries(requiredReviews)
+function normalizeRequiredReviewTypes(
+    requiredReviews: Record<string, boolean>,
+    dependencyGraph?: CompiledReviewDependencyGraph | null
+): string[] {
+    const normalizedRequiredReviewTypes = Object.entries(requiredReviews)
         .filter(([, required]) => required === true)
         .map(([reviewType]) => String(reviewType).trim().toLowerCase())
-        .filter(Boolean)
+        .filter(Boolean);
+    if (dependencyGraph) {
+        const requiredSet = new Set(normalizedRequiredReviewTypes);
+        const missingFromGraph = normalizedRequiredReviewTypes.filter((reviewType) => !dependencyGraph.nodes.includes(reviewType));
+        if (missingFromGraph.length > 0) {
+            throw new Error(
+                `Required remediation rerun lanes are missing from the frozen dependency graph: ${missingFromGraph.join(', ')}.`
+            );
+        }
+        return dependencyGraph.preparation_order.filter((reviewType) => requiredSet.has(reviewType));
+    }
+    const canonicalOrder = getReviewExecutionPreparationOrder('strict_sequential');
+    return normalizedRequiredReviewTypes
         .sort((left, right) => {
             const leftRank = canonicalOrder.indexOf(left);
             const rightRank = canonicalOrder.indexOf(right);
@@ -282,12 +297,16 @@ export function resolveReviewRemediationRerunLanes(options: {
     currentReviewType: string;
     requiredReviews: Record<string, boolean>;
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
+    reviewDependencyGraph?: CompiledReviewDependencyGraph | null;
 }): ReviewRemediationRerunSelection {
     const policy = validateReviewRemediationRerunPolicy(options.policy);
     if (!REVIEW_REMEDIATION_DELTA_CATEGORIES.includes(options.category)) {
         throw new Error(`Unknown review remediation delta category '${String(options.category)}'.`);
     }
-    const requiredReviewTypes = normalizeRequiredReviewTypes(options.requiredReviews);
+    const requiredReviewTypes = normalizeRequiredReviewTypes(
+        options.requiredReviews,
+        options.reviewDependencyGraph
+    );
     if (requiredReviewTypes.length === 0) {
         throw new Error('Review remediation rerun policy requires at least one currently required review lane.');
     }
@@ -317,6 +336,13 @@ export function resolveReviewRemediationRerunLanes(options: {
             fallbackToAllRequired = true;
         }
     }
+    if (options.reviewDependencyGraph && orderedRerunLanes.length < requiredReviewTypes.length) {
+        const requiredSet = new Set(requiredReviewTypes);
+        orderedRerunLanes = resolveReviewDependencyDownstreamReachability(
+            options.reviewDependencyGraph,
+            orderedRerunLanes
+        ).affected_review_ids.filter((reviewType) => requiredSet.has(reviewType));
+    }
     const selectedReviewRecord = Object.fromEntries(
         orderedRerunLanes.map((reviewType) => [reviewType, true])
     );
@@ -325,7 +351,8 @@ export function resolveReviewRemediationRerunLanes(options: {
         depends_on: getReviewExecutionDependencies(
             reviewType,
             selectedReviewRecord,
-            options.reviewExecutionPolicyMode
+            options.reviewExecutionPolicyMode,
+            options.reviewDependencyGraph
         ).filter((dependency) => orderedRerunLanes.includes(dependency))
     }));
     return {
@@ -341,7 +368,9 @@ export function resolveReviewRemediationRerunLanes(options: {
             : omittedConfiguredLanes.length > 0
                 ? `selected configured affected lanes; omitted non-required lanes: ${omittedConfiguredLanes.join(', ')}`
                 : rule.strategy === 'current_review_only'
-                    ? `leaf remediation remains on current review '${currentReviewType}'`
+                    ? options.reviewDependencyGraph && orderedRerunLanes.length > 1
+                        ? `remediation starts at '${currentReviewType}' and expands through affected downstream graph lanes`
+                        : `leaf remediation remains on current review '${currentReviewType}'`
                     : rule.ordered_rerun_lanes === REVIEW_REMEDIATION_ALL_REQUIRED_LANES
                         ? 'broad or uncertain remediation expands to every currently required review lane'
                         : 'selected the configured affected dependent review lanes'

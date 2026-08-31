@@ -13,6 +13,7 @@ describe('next-step closeout routing helpers', () => {
             zeroDiffNoReviewCloseout: false,
             requiredReviewsCommand: 'garda gate required-reviews-check',
             docImpactGatePassed: false,
+            docImpactRequiresProjectMemoryBeforeAssessment: true,
             docImpactCompatibilityHint: 'No compatibility issue.',
             docImpactCommand: 'garda gate doc-impact-gate --project-memory-updated true',
             fullSuiteEnabled: false,
@@ -45,6 +46,7 @@ describe('next-step closeout routing helpers', () => {
             zeroDiffNoReviewCloseout: false,
             requiredReviewsCommand: 'garda gate required-reviews-check',
             docImpactGatePassed: false,
+            docImpactRequiresProjectMemoryBeforeAssessment: true,
             docImpactCompatibilityHint: 'No compatibility issue.',
             docImpactCommand: 'garda gate doc-impact-gate --project-memory-updated true',
             fullSuiteEnabled: true,
@@ -108,6 +110,7 @@ describe('next-step closeout routing helpers', () => {
             zeroDiffNoReviewCloseout: false,
             requiredReviewsCommand: 'garda gate required-reviews-check',
             docImpactGatePassed: false,
+            docImpactRequiresProjectMemoryBeforeAssessment: true,
             docImpactCompatibilityHint: 'No compatibility issue.',
             docImpactCommand: 'garda gate doc-impact-gate --project-memory-update-not-needed true',
             fullSuiteEnabled: true,
@@ -135,7 +138,7 @@ describe('next-step closeout routing helpers', () => {
         assert.match(route.reason, /evidence_status=STALE/);
     });
 
-    it('routes to doc-impact first when doc-impact command does not claim project-memory evidence', () => {
+    it('routes doc-impact before project-memory when doc-impact does not claim project-memory evidence', () => {
         const route = resolvePostReviewCloseoutRouteFromState({
             requiredReviewsGatePassed: true,
             zeroDiffNoReviewCloseout: false,

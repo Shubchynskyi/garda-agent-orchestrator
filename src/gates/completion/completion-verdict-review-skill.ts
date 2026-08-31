@@ -11,6 +11,7 @@ import {
     DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
+import type { CompiledReviewDependencyGraph } from '../../core/review-dependency-graph';
 import { getReviewSkillCandidates } from '../../core/review-capabilities';
 import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../core/orchestration-constants';
 import { fileSha256, normalizePath } from '../shared';
@@ -40,6 +41,7 @@ import { isTrivialReview } from './completion-verdict-findings';
 import {
     createEmptyReviewSkillEvidenceResult,
     getRequiredReviewKeys,
+    type ReviewSkillCandidatesByType,
     type ReviewSkillEvidenceResult
 } from './completion-review-skill-contracts';
 
@@ -106,7 +108,9 @@ export function validateReviewSkillEvidence(
     allowLegacyReviewContextIdentityFallback = false,
     executionProviderSource: string | null = null,
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
-    repoRoot: string | null = null
+    repoRoot: string | null = null,
+    reviewSkillCandidatesByType: ReviewSkillCandidatesByType | null = null,
+    reviewDependencyGraph: CompiledReviewDependencyGraph | null = null
 ): ReviewSkillEvidenceResult {
     const result = createEmptyReviewSkillEvidenceResult();
     if (!codeChanged) return result;
@@ -151,7 +155,10 @@ export function validateReviewSkillEvidence(
     const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
 
     for (const key of requiredKeys) {
-        const candidateSkillIds = getReviewSkillCandidates(key);
+        const snapshotCandidates = reviewSkillCandidatesByType?.[key] || [];
+        const candidateSkillIds = snapshotCandidates.length > 0
+            ? [...new Set(snapshotCandidates.map((candidate) => String(candidate).trim().toLowerCase()).filter(Boolean))]
+            : getReviewSkillCandidates(key);
         const reviewPhaseSequenceForKey = getReviewPhaseSequenceForKey(key);
         reviewPhaseSequenceByKey.set(key, reviewPhaseSequenceForKey);
         const selectionEvent = findLatestTimelineEvent(events, (entry) => (
@@ -288,7 +295,12 @@ export function validateReviewSkillEvidence(
     for (const key of requiredKeys) {
         upstreamRequiredReviewsByKey.set(
             key,
-            getRequiredUpstreamReviewsFromRecord(key, normalizedRequiredReviewRecord, reviewExecutionPolicyMode)
+            getRequiredUpstreamReviewsFromRecord(
+                key,
+                normalizedRequiredReviewRecord,
+                reviewExecutionPolicyMode,
+                reviewDependencyGraph
+            )
         );
     }
 
@@ -495,7 +507,8 @@ export function validateReviewSkillEvidence(
                         contextSha256: fileSha256(expectedReviewContextPath),
                         contextReviewTreeStateSha256,
                         contextExecutionMode: actualExecutionMode,
-                        contextReviewerIdentity: reviewerSessionId
+                        contextReviewerIdentity: reviewerSessionId,
+                        reviewContext
                     });
                     for (const violation of receiptEvidenceContract.violations) {
                         result.violations.push(`Required review '${key}' receipt evidence contract violation: ${violation}.`);

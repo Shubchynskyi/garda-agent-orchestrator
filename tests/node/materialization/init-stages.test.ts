@@ -10,6 +10,7 @@ import {
 } from '../../../src/materialization/init';
 import { getProjectDiscovery } from '../../../src/materialization/project-discovery';
 import {
+    mergeProfilesConfigWithTemplate,
     runInitConfigStage
 } from '../../../src/materialization/init/init-config-stage';
 import {
@@ -19,6 +20,7 @@ import {
     runInitRuleStage
 } from '../../../src/materialization/init/init-rule-stage';
 import { RULE_FILES } from '../../../src/materialization/rule-materialization';
+import { buildDefaultReviewRemediationModePolicy } from '../../../src/policy/review-remediation-mode-policy';
 
 function findRepoRoot(): string {
     let current = __dirname;
@@ -46,6 +48,114 @@ function copyDirectoryRecursive(source: string, destination: string): void {
         }
     }
 }
+
+describe('profile config materialization migration', () => {
+    it('preserves legacy remediation policy omission while applying explicit policy to fresh profiles', () => {
+        const template = {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_remediation_mode_policy: { policy_id: 'conservative_review_remediation_mode_v1' }
+                }
+            },
+            user_profiles: {}
+        };
+        const legacy = structuredClone(template) as unknown as Record<string, unknown>;
+        const legacyBuiltIns = legacy.built_in_profiles as Record<string, Record<string, unknown>>;
+        legacyBuiltIns.BALANCED = legacyBuiltIns.balanced;
+        delete legacyBuiltIns.balanced;
+        delete legacyBuiltIns.BALANCED.review_remediation_mode_policy;
+
+        const migrated = mergeProfilesConfigWithTemplate(template, legacy, {
+            allowedReviewTypeIds: ['architecture-boundary']
+        });
+        assert.equal(
+            Object.hasOwn(
+                (migrated.built_in_profiles as Record<string, Record<string, unknown>>).balanced,
+                'review_remediation_mode_policy'
+            ),
+            false
+        );
+        const fresh = mergeProfilesConfigWithTemplate(template, null);
+        assert.equal(
+            ((fresh.built_in_profiles as Record<string, Record<string, unknown>>)
+                .balanced.review_remediation_mode_policy as Record<string, unknown>).policy_id,
+            'conservative_review_remediation_mode_v1'
+        );
+    });
+
+    it('migrates schema-1 lane defaults once and preserves schema-2 per-lane disables', () => {
+        const currentPolicy = buildDefaultReviewRemediationModePolicy();
+        const template = {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_remediation_mode_policy: currentPolicy
+                }
+            },
+            user_profiles: {}
+        };
+        const legacyPolicy = {
+            ...currentPolicy,
+            schema_version: 1,
+            delta_eligible_review_types: ['code']
+        };
+        const legacy = structuredClone(template) as unknown as Record<string, unknown>;
+        (legacy.built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy = legacyPolicy;
+        legacy.USER_PROFILES = {
+            custom: {
+                description: 'Custom',
+                depth: 2,
+                review_remediation_mode_policy: structuredClone(legacyPolicy)
+            }
+        };
+        delete legacy.user_profiles;
+
+        const migrated = mergeProfilesConfigWithTemplate(template, legacy, {
+            allowedReviewTypeIds: ['architecture-boundary']
+        });
+        const migratedPolicy = (migrated.built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy as Record<string, unknown>;
+        assert.equal(migratedPolicy.schema_version, 2);
+        assert.deepEqual(migratedPolicy.delta_eligible_review_types, [
+            'api',
+            'architecture-boundary',
+            'code',
+            'db',
+            'dependency',
+            'infra',
+            'performance',
+            'security'
+        ]);
+        const migratedCustomPolicy = (migrated.user_profiles as Record<string, Record<string, unknown>>)
+            .custom.review_remediation_mode_policy as Record<string, unknown>;
+        assert.equal(migratedCustomPolicy.schema_version, 2);
+        assert.deepEqual(
+            migratedCustomPolicy.delta_eligible_review_types,
+            migratedPolicy.delta_eligible_review_types
+        );
+
+        const configured = structuredClone(template) as unknown as Record<string, unknown>;
+        const configuredPolicy = (configured.built_in_profiles as Record<string, Record<string, unknown>>)
+            .balanced.review_remediation_mode_policy as Record<string, unknown>;
+        configuredPolicy.delta_eligible_review_types = [];
+        const preserved = mergeProfilesConfigWithTemplate(template, configured, {
+            allowedReviewTypeIds: ['architecture-boundary']
+        });
+        assert.deepEqual(
+            ((preserved.built_in_profiles as Record<string, Record<string, unknown>>)
+                .balanced.review_remediation_mode_policy as Record<string, unknown>).delta_eligible_review_types,
+            []
+        );
+    });
+});
 
 function createStageWorkspace(repoRoot: string): {
     projectRoot: string;

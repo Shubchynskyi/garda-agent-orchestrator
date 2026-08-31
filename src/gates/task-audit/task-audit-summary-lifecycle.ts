@@ -7,6 +7,10 @@ import {
 } from '../task-events-summary/task-events-summary';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../../gate-runtime/lifecycle-event-types';
 import {
+    getReviewDependencyTimelineOrderViolations,
+    type CompiledReviewDependencyGraph
+} from '../../core/review-dependency-graph';
+import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     PROJECT_MEMORY_IMPACT_BLOCKED_EVENT
 } from '../project-memory-impact';
@@ -246,10 +250,32 @@ export function buildCompletionReviewOrderBlocker(
     requiredReviews: Record<string, boolean>,
     events: TaskAuditEvent[],
     currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string
+    repoRoot: string,
+    reviewDependencyGraph: CompiledReviewDependencyGraph | null = null
 ): BlockerEntry | null {
     if (!Object.values(requiredReviews).some((required) => required === true)) {
         return null;
+    }
+    if (reviewDependencyGraph) {
+        const dependencyOrderViolation = getReviewDependencyTimelineOrderViolations(
+            reviewDependencyGraph,
+            events.map((event, index) => ({
+                event_type: String(event.event_type || '').trim().toUpperCase(),
+                sequence: readTaskEventSequence(event) ?? index + 1,
+                details: event.details && typeof event.details === 'object'
+                    ? event.details as Record<string, unknown>
+                    : null
+            }))
+        )[0];
+        if (dependencyOrderViolation) {
+            return {
+                gate: 'required-reviews-check',
+                reason:
+                    `Review dependency order is invalid: '${dependencyOrderViolation.downstream_review_id}' ` +
+                    `started without a current dependency-safe '${dependencyOrderViolation.upstream_review_id}' PASS ` +
+                    `(${dependencyOrderViolation.code}).`
+            };
+        }
     }
     const reviewGatePass = findLatestEventForTypes(
         ['REVIEW_GATE_PASSED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE'],

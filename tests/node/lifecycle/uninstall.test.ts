@@ -110,9 +110,10 @@ describe('parseBooleanAnswer', () => {
 describe('runUninstall', () => {
     const repoRoot = findRepoRoot();
 
-    it('removes deployed orchestrator files', () => {
+    it('backs up TASK.md before explicit removal to prevent missing recovery evidence', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
+            const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
             const result = runUninstall({
                 targetRoot: projectRoot,
                 bundleRoot,
@@ -128,8 +129,120 @@ describe('runUninstall', () => {
             assert.ok(!fs.existsSync(path.join(projectRoot, 'TASK.md')));
             assert.ok(result.itemsBackedUp >= 1);
             assert.ok(!fs.existsSync(path.join(result.backupRoot, 'garda-agent-orchestrator')));
+            assert.equal(result.taskFileDecision, 'REMOVE_EXPLICIT');
+            assert.equal(
+                fs.readFileSync(result.taskFileRecoveryPath, 'utf8'),
+                taskContent,
+                'explicit TASK.md removal must retain an exact recovery copy'
+            );
         } finally {
             removePathRecursive(projectRoot);
+        }
+    });
+
+    it('does not restore a stale initialization backup during explicit TASK.md removal', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const taskPath = path.join(projectRoot, 'TASK.md');
+            const currentTaskContent = [
+                MANAGED_START,
+                '# Current operator task queue',
+                MANAGED_END,
+                '',
+                '# Operator notes',
+                '',
+                'Keep this current suffix.',
+                ''
+            ].join('\n');
+            fs.writeFileSync(taskPath, currentTaskContent, 'utf8');
+
+            const initializationBackupDir = path.join(bundleRoot, 'runtime', 'backups', '20250101-120000');
+            fs.mkdirSync(initializationBackupDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(initializationBackupDir, 'TASK.md'),
+                '# Stale initialization queue\n\nThis content must not be restored.\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(initializationBackupDir, '_install-backup.manifest.json'),
+                JSON.stringify({ PreExistingFiles: ['TASK.md'] }),
+                'utf8'
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.equal(result.taskFileDecision, 'REMOVE_EXPLICIT');
+            assert.ok(fs.existsSync(taskPath), 'operator suffix should keep TASK.md present');
+            const remainingTaskContent = fs.readFileSync(taskPath, 'utf8');
+            assert.ok(remainingTaskContent.includes('Keep this current suffix.'));
+            assert.ok(!remainingTaskContent.includes('Stale initialization queue'));
+            assert.ok(!remainingTaskContent.includes(MANAGED_START));
+            assert.equal(fs.readFileSync(result.taskFileRecoveryPath, 'utf8'), currentTaskContent);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('rejects an external TASK.md symlink before explicit removal snapshots or backups', (t) => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-uninstall-task-external-'));
+        const taskPath = path.join(projectRoot, 'TASK.md');
+        const externalTaskPath = path.join(externalRoot, 'external-TASK.md');
+        const externalTaskContent = [
+            MANAGED_START,
+            '# External managed-looking content',
+            MANAGED_END,
+            '',
+            'External content must remain unchanged.',
+            ''
+        ].join('\n');
+        try {
+            fs.writeFileSync(externalTaskPath, externalTaskContent, 'utf8');
+            fs.rmSync(taskPath, { force: true });
+            try {
+                fs.symlinkSync(externalTaskPath, taskPath, 'file');
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+                    t.skip('Creating file symlinks requires an unavailable Windows privilege.');
+                    return;
+                }
+                throw error;
+            }
+
+            assert.throws(
+                () => runUninstall({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    noPrompt: true,
+                    keepPrimaryEntrypoint: 'no',
+                    keepTaskFile: 'no',
+                    keepRuntimeArtifacts: 'no'
+                }),
+                /GARDA_UNINSTALL_BLOCKED: TASK\.md must be a regular file inside target root before explicit removal/
+            );
+            assert.equal(fs.readFileSync(externalTaskPath, 'utf8'), externalTaskContent);
+            assert.ok(fs.existsSync(bundleRoot), 'uninstall must stop before deleting the bundle');
+            assert.equal(
+                fs.existsSync(path.join(projectRoot, 'garda-agent-orchestrator-uninstall-journal')),
+                false,
+                'unsafe TASK.md must be rejected before rollback snapshot creation'
+            );
+            assert.equal(
+                fs.existsSync(path.join(projectRoot, 'garda-agent-orchestrator-uninstall-backups')),
+                false,
+                'unsafe TASK.md must be rejected before user-facing backup creation'
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+            removePathRecursive(externalRoot);
         }
     });
 
@@ -225,9 +338,62 @@ describe('runUninstall', () => {
 
             assert.equal(result.result, 'SUCCESS');
             assert.equal(result.keepTaskFile, true);
+            assert.equal(result.taskFileDecision, 'PRESERVE_EXPLICIT');
+            assert.equal(result.taskFileRecoveryPath, '<none>');
             assert.ok(fs.existsSync(path.join(projectRoot, 'TASK.md')));
         } finally {
             removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves TASK.md by default when destructive choice is missing in no-prompt mode', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const taskPath = path.join(projectRoot, 'TASK.md');
+            const originalContent = fs.readFileSync(taskPath, 'utf8');
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.equal(result.keepTaskFile, true);
+            assert.equal(result.taskFileDecision, 'PRESERVE_DEFAULT');
+            assert.equal(result.taskFileRecoveryPath, '<none>');
+            assert.equal(fs.readFileSync(taskPath, 'utf8'), originalContent);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves markerless and incomplete TASK.md content by default', () => {
+        const cases = [
+            '# Operator TASK queue\n\n| ID | Status | Notes |\n|---|---|---|\n| T-77 | TODO | no markers |\n',
+            `${MANAGED_START}\n# TASK.md\n\n## Active Queue\n| ID | Status | Notes |\n|---|---|---|\n| T-78 | IN_PROGRESS | incomplete managed block |\n\nOperator suffix\n`
+        ];
+
+        for (const taskContent of cases) {
+            const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+            try {
+                const taskPath = path.join(projectRoot, 'TASK.md');
+                fs.writeFileSync(taskPath, taskContent, 'utf8');
+
+                const result = runUninstall({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    noPrompt: true,
+                    keepPrimaryEntrypoint: 'no',
+                    keepRuntimeArtifacts: 'no'
+                });
+
+                assert.equal(result.taskFileDecision, 'PRESERVE_DEFAULT');
+                assert.equal(fs.readFileSync(taskPath, 'utf8'), taskContent);
+            } finally {
+                removePathRecursive(projectRoot);
+            }
         }
     });
 

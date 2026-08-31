@@ -34,8 +34,97 @@ import {
     buildReviewerFindingsPromptContractMarkdown
 } from '../../../../src/gates/review/reviewer-findings-prompt-contract';
 import { buildReviewerTerminalContractLines } from '../../../../src/gates/review/reviewer-execution-contract';
+import { sha256RedactedJsonPayload } from '../../../../src/core/redaction';
+import {
+    buildReviewRemediationReviewContract,
+    type ReviewRemediationAuthoritativeDecisionBinding,
+    type ReviewRemediationReviewContractValidationAuthority
+} from '../../../../src/gates/review-remediation/review-remediation-review-contract';
+import type {
+    ReviewRemediationDecisionClassification
+} from '../../../../src/gates/review-remediation/review-remediation-recovery-routing';
 
 type SubprocessModule = typeof import('../../../../src/core/process/subprocess');
+
+function buildRemediationFullExecution(options: {
+    taskId: string;
+    reviewType: string;
+    preflightSha256: string;
+    fullReviewScope: readonly string[];
+}) {
+    const classification: ReviewRemediationDecisionClassification = {
+        source: 'runtime_fix',
+        classification: {
+            category: 'production',
+            reason: 'Authenticated review-context regression fixture.',
+            blocked_before_reuse: true,
+            invalidated_review_types: [options.reviewType]
+        }
+    };
+    const laneWithoutHash = {
+        review_type: options.reviewType,
+        mode: 'FULL' as const,
+        reuse_eligible: false,
+        satisfied: false,
+        satisfaction_source: null,
+        invalidated: true,
+        depends_on: [],
+        invalidated_downstream_review_types: [],
+        reason_code: 'remediation-required',
+        reason: 'Current review evidence must be regenerated.'
+    };
+    const decisionWithoutHash = {
+        schema_version: 1 as const,
+        status: 'READY' as const,
+        task_id: options.taskId,
+        current_review_type: options.reviewType,
+        preflight_sha256: options.preflightSha256,
+        classification_source: 'runtime_fix' as const,
+        classification_sha256: sha256RedactedJsonPayload(classification.classification),
+        category: 'production',
+        profile_policy_snapshot_sha256: null,
+        policy_id: 'test-policy',
+        policy_legacy_fallback: false,
+        invalidated_review_types: [options.reviewType],
+        preserved_review_types: [],
+        reused_review_types: [],
+        satisfied_review_types: [],
+        rejected_reuse_review_types: [],
+        dependency_edges: [{ review_type: options.reviewType, depends_on: [] }],
+        lane_decisions: [{
+            ...laneWithoutHash,
+            reason_sha256: sha256RedactedJsonPayload(laneWithoutHash)
+        }],
+        blocked_reasons: []
+    };
+    const decision: ReviewRemediationAuthoritativeDecisionBinding = {
+        ...decisionWithoutHash,
+        decision_sha256: sha256RedactedJsonPayload(decisionWithoutHash)
+    };
+    const authority: ReviewRemediationReviewContractValidationAuthority = {
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: options.preflightSha256,
+        mode: 'FULL',
+        fullReviewScope: options.fullReviewScope,
+        persistedDecisionSha256: decision.decision_sha256,
+        authoritativeDecisionSha256: decision.decision_sha256,
+        authoritativeClassificationSha256: decision.classification_sha256,
+        authoritativeDecision: decision,
+        authoritativeClassification: classification
+    };
+    return {
+        contract: buildReviewRemediationReviewContract({
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            preflightSha256: options.preflightSha256,
+            fullReviewScope: options.fullReviewScope,
+            authoritativeDecision: decision,
+            classification
+        }),
+        authority
+    };
+}
 
 describe('gates/build-review-context prompt artifacts and scoped hashes', () => {
         it('builds a verdict-free findings-only prompt contract and JSON output template', () => {
@@ -215,7 +304,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
             assert.ok(promptArtifact.includes('Return exactly one JSON object'));
             assert.ok(promptArtifact.includes('findings-only JSON contract'));
-            assert.ok(promptArtifact.includes('"schema_version": 1'));
+            assert.ok(promptArtifact.includes('"schema_version": 2'));
             assert.ok(promptArtifact.includes('"coverage_ledger"'));
             assert.ok(promptArtifact.includes('"obligation_id": "FILE-001"'));
             assert.ok(promptArtifact.includes('"findings"'));
@@ -313,7 +402,10 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             const manifest = JSON.parse(fs.readFileSync(result.reviewer_handoff.evidence_manifest.artifact_path, 'utf8'));
             assert.equal(manifest.task_id, 'T-901-scope');
             assert.equal(manifest.review_type, 'code');
-            assert.equal(result.schema_version, 3);
+            assert.equal(result.schema_version, 4);
+            assert.deepEqual(result.rule_context.instruction_contract_modes, ['FULL', 'DELTA']);
+            assert.deepEqual(result.review_execution.mode, 'FULL');
+            assert.deepEqual(result.review_execution.full_review_scope, ['src/app.ts']);
             assert.equal(result.coverage_contract.required, true);
             assert.equal(result.coverage_contract.obligation_count, 9);
             assert.equal(result.coverage_contract.obligations[0]?.id, 'FILE-001');
@@ -374,7 +466,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(forgedCoverageViolations.some((entry) =>
                 entry.includes('does not match the independently resolved current preflight scope')
             ));
-            forgedCoverageScope.schema_version = 2;
+            forgedCoverageScope.schema_version = 3;
             const downgradedCoverageViolations = getReviewContextContractViolations({
                 contextPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
                 reviewContext: forgedCoverageScope,
@@ -387,7 +479,26 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 repoRoot
             });
             assert.ok(downgradedCoverageViolations.some((entry) =>
-                entry.includes('cannot downgrade below schema_version 3')
+                entry.includes('cannot downgrade below schema_version 4')
+            ));
+            const unauthenticatedDeltaContext = cloneJson(result);
+            unauthenticatedDeltaContext.review_execution.source = 'remediation_delta';
+            unauthenticatedDeltaContext.review_execution.mode = 'DELTA';
+            (unauthenticatedDeltaContext.review_execution as unknown as Record<string, unknown>).delta = {
+                required_delta_targets: ['src/app.ts']
+            };
+            const unauthenticatedDeltaViolations = getReviewContextContractViolations({
+                contextPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
+                reviewContext: unauthenticatedDeltaContext,
+                expectedTaskId: 'T-901-scope',
+                expectedReviewType: 'code',
+                expectedPreflightSha256: result.preflight_sha256,
+                expectedChangedFiles: ['src/app.ts', 'tests/app.test.ts'],
+                expectedPreflightPayload: JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
+                repoRoot
+            });
+            assert.ok(unauthenticatedDeltaViolations.some((entry) =>
+                entry.includes('remediation review_execution validation authority is required')
             ));
             const initialPromptSha256 = result.rule_context.artifact_sha256;
             const initialEvidenceManifestSha256 = result.reviewer_handoff.evidence_manifest.artifact_sha256;
@@ -405,6 +516,25 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(rebuilt.focused_intermediate_validation.warnings.some((warning: string) => warning.includes('size or sha256')));
             assert.notEqual(rebuilt.rule_context.artifact_sha256, initialPromptSha256);
             assert.notEqual(rebuilt.reviewer_handoff.evidence_manifest.artifact_sha256, initialEvidenceManifestSha256);
+            const remediationExecution = buildRemediationFullExecution({
+                taskId: 'T-901-scope',
+                reviewType: 'code',
+                preflightSha256,
+                fullReviewScope: ['src/app.ts', 'tests/app.test.ts']
+            });
+            const remediationContext = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-scope-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-scope-code-remediation-review-context.json'),
+                repoRoot,
+                reviewExecutionContract: remediationExecution.contract,
+                reviewExecutionValidationAuthority: remediationExecution.authority
+            });
+            assert.equal(remediationContext.review_execution.source, 'remediation_full');
+            assert.equal(remediationContext.review_execution.contract_sha256, remediationExecution.contract.contract_sha256);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -1736,6 +1866,8 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
 
             const reuseHash = computeReviewContextReuseHash(result as Record<string, unknown>);
             assert.match(String(reuseHash || ''), /^[0-9a-f]{64}$/);
+            const ruleContext = (result as unknown as Record<string, unknown>).rule_context as Record<string, unknown>;
+            assert.match(String(ruleContext.instruction_contract_sha256 || ''), /^[0-9a-f]{64}$/);
             const pathOnlyMutation = cloneJson(result as Record<string, unknown>);
             pathOnlyMutation.preflight_path = 'garda-agent-orchestrator/runtime/reviews/other-preflight.json';
             pathOnlyMutation.preflight_sha256 = '9'.repeat(64);

@@ -190,10 +190,13 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         sharedSideEffectActions: ['invalidate-reviews-index'],
         notes: [
             'This area stores preflight, compile, review, doc-impact, full-suite, completion, audit, and final user report artifacts.',
+            'Authenticated remediation cycle, decision, delta, validation, baseline, and hash-suffixed snapshot artifacts are task-owned review evidence.',
             'Task purge removes only artifacts owned by the selected task id; shared review indexes are rebuilt separately.'
         ],
         examples: [
             'runtime/reviews/<task-id>-preflight.json',
+            'runtime/reviews/<task-id>-review-remediation-cycle.json',
+            'runtime/reviews/<task-id>-<review-type>-remediation-baseline.json',
             'runtime/reviews/<task-id>-final-closeout.json'
         ]
     },

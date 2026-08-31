@@ -126,6 +126,8 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     profileName: 'Profile name',
     profileCopyFrom: 'Copy from',
     profileDepth: 'Depth',
+    profileTaskDecomposition: 'Guarded task decomposition',
+    profileTaskDecompositionSource: 'Effective source',
     profilePolicyRequired: 'Required',
     profilePolicyAuto: 'By trigger',
     profilePolicyDisabled: 'Disabled',
@@ -157,6 +159,13 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     profileFindingMedium: 'Medium',
     profileFindingLow: 'Low',
     profileFindingResidualRisk: 'Residual risk',
+    profileFollowUpTaskProfileTitle: 'Follow-up task profile',
+    profileFollowUpTaskProfileHelp: 'Choose the profile for generated F tasks. One level lighter uses strict → balanced → fast; fast stays fast. Custom and docs-only profiles safely inherit the parent.',
+    profileFollowUpTaskProfileMode: 'Selection mode',
+    profileFollowUpTaskProfileOneLevelLighter: 'One level lighter',
+    profileFollowUpTaskProfileInheritParent: 'Same as parent',
+    profileFollowUpTaskProfileFixed: 'Fixed profile',
+    profileFollowUpTaskProfileFixedProfile: 'Profile to use',
     noWorkflowSettings: 'No workflow settings available.',
     initBlockTitle: 'Init',
     agentInitBlockTitle: 'Agent init',
@@ -640,6 +649,32 @@ export const LOCAL_UI_TEXT: Readonly<Record<string, Readonly<Record<LocalUiTextK
         en: ENGLISH_LOCAL_UI_TEXT
     },
     (pack) => pack.LOCAL_UI_TEXT as Readonly<Record<LocalUiTextKey, string>>
+);
+
+export const ENGLISH_LOCAL_UI_TASK_CLOSURE_POLICY_TEXT = Object.freeze({
+    title: 'F-task closure policy',
+    help: 'These task-level values are persisted in TASK.md. An active task cycle keeps its frozen effective values until the next task-mode entry.',
+    skipLowFindings: 'Skip accepted low findings',
+    forbidChildTasks: 'Forbid generated child tasks',
+    inapplicable: 'Available only for review-generated follow-up tasks with valid provenance.',
+    completed: 'Completed tasks cannot be changed retroactively.',
+    invalid: 'Policy metadata is invalid and fails closed.',
+    pendingNextCycle: 'Stored values differ from the frozen current-cycle policy and apply on the next task-mode entry.',
+    previewRequired: 'Preview the selected values before applying them.',
+    storedValues: 'Stored values',
+    effectiveValues: 'Effective values'
+} as const);
+
+export type LocalUiTaskClosurePolicyTextKey = keyof typeof ENGLISH_LOCAL_UI_TASK_CLOSURE_POLICY_TEXT;
+
+export const LOCAL_UI_TASK_CLOSURE_POLICY_TEXT: Readonly<
+    Record<string, Readonly<Record<LocalUiTaskClosurePolicyTextKey, string>>>
+> = buildImportedLanguageMap(
+    { en: ENGLISH_LOCAL_UI_TASK_CLOSURE_POLICY_TEXT },
+    (pack) => Object.freeze({
+        ...ENGLISH_LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
+        ...pack.LOCAL_UI_TASK_CLOSURE_POLICY_TEXT
+    })
 );
 
 export function formatLocalUiLanguageCliChoices(): string {

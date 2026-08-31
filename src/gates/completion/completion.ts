@@ -40,6 +40,9 @@ import {
 } from './completion-evidence';
 import {
     REVIEW_CONTRACTS,
+    REVIEW_SKILL_CANDIDATES,
+    resolveCompletionReviewContracts,
+    resolveCompletionReviewSkillCandidates,
     validateStageSequence,
     validateZeroDiffCompletionEvidence,
     validateReviewSkillEvidence,
@@ -67,6 +70,16 @@ import {
     getWorkflowConfigWorkViolations
 } from '../workflow-config';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../../core/review-execution-policy';
+import {
+    bindFullSuiteValidationBarrier,
+    resolveCompiledReviewDependencyGraphFromPreflight
+} from '../../core/review-dependency-graph';
+import {
+    assertEffectiveReviewSnapshotExecutionPolicyBinding,
+    hasCurrentReviewDependencyGraphContract,
+    type EffectiveReviewSnapshot,
+    type FrozenReviewExecutionPolicyBinding
+} from '../../policy/effective-review-snapshot';
 import { validateProjectMemoryImpactForCompletion } from './completion-project-memory';
 import {
     collectRequiredReviewEvidence,
@@ -171,7 +184,28 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         preflightPath,
         taskModePath: options.taskModePath || ''
     });
-    const fullSuiteValidationConfig = loadFullSuiteValidationConfig(repoRoot);
+    const preflight = validatedPreflight.preflight || {};
+    const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(preflight);
+    const frozenReviewPolicy = taskModeEvidence.profile_policy_snapshot?.review_execution_policy as
+        FrozenReviewExecutionPolicyBinding | undefined;
+    const frozenGraphContractRequired = !!frozenReviewPolicy
+        && hasCurrentReviewDependencyGraphContract(frozenReviewPolicy);
+    const frozenReviewDependencyGraph = frozenGraphContractRequired && preflight.effective_review_snapshot
+        ? assertEffectiveReviewSnapshotExecutionPolicyBinding(
+            preflight.effective_review_snapshot as EffectiveReviewSnapshot,
+            frozenReviewPolicy
+        )
+        : null;
+    const reviewDependencyGraph = resolveCompiledReviewDependencyGraphFromPreflight(
+        preflight,
+        reviewExecutionPolicyMode,
+        frozenReviewDependencyGraph,
+        frozenGraphContractRequired
+    );
+    const fullSuiteValidationConfig = bindFullSuiteValidationBarrier(
+        loadFullSuiteValidationConfig(repoRoot),
+        reviewDependencyGraph
+    );
     const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '', preflightPath);
     const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
         artifactPath: options.handshakePath || '',
@@ -183,7 +217,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         timelinePath
     });
 
-    const preflight = validatedPreflight.preflight || {};
     const fullSuiteNotRequiredForDocsOnly = isFullSuiteNotRequiredForDocsOnlyScope(preflight);
     const fullSuiteNotRequiredForZeroDiffNoReviewableScope = isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight);
     const fullSuiteValidationRequired = fullSuiteValidationConfig.enabled
@@ -426,6 +459,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
         ? validatedPreflight.preflight.required_reviews
         : {};
+    let effectiveReviewContracts = REVIEW_CONTRACTS;
+    let effectiveReviewSkillCandidates = REVIEW_SKILL_CANDIDATES;
+    try {
+        effectiveReviewContracts = resolveCompletionReviewContracts(preflight);
+        effectiveReviewSkillCandidates = resolveCompletionReviewSkillCandidates(preflight);
+    } catch (error: unknown) {
+        errors.push(error instanceof Error ? error.message : String(error));
+    }
     const profileSelection = preflight.profile_selection && typeof preflight.profile_selection === 'object' && !Array.isArray(preflight.profile_selection)
         ? preflight.profile_selection as Record<string, unknown>
         : {};
@@ -489,8 +530,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         runtimeIdentity.canonical_source_of_truth,
         runtimeIdentity.task_mode_identity_backfilled,
         runtimeIdentity.execution_provider_source,
-        resolveReviewExecutionPolicyModeFromPreflight(preflight),
-        repoRoot
+        reviewExecutionPolicyMode,
+        repoRoot,
+        effectiveReviewSkillCandidates,
+        reviewDependencyGraph
     );
     errors.push(...reviewSkillEvidence.violations);
 
@@ -601,7 +644,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         && (
             reviewSkillEvidence.violations.length > 0
             || (!timelineEventTypes.has('REVIEW_GATE_PASSED') && !timelineEventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE'))
-            || REVIEW_CONTRACTS.some(([reviewKey]) => {
+            || effectiveReviewContracts.some(([reviewKey]) => {
                 if (!requiredReviews[reviewKey]) {
                     return false;
                 }

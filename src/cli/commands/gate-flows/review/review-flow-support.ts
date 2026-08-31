@@ -55,6 +55,14 @@ type ReviewCompactionAudit = ReturnType<typeof auditReviewArtifactCompaction>;
 
 const reviewContracts = REVIEW_CONTRACTS as Array<[string, string]>;
 
+export function hasRequiredSpecializedReviews(
+    requiredReviews: Readonly<Record<string, boolean>>
+): boolean {
+    return Object.entries(requiredReviews).some(
+        ([reviewId, required]) => reviewId !== 'code' && required === true
+    );
+}
+
 function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> | undefined): string | null {
     const treeState = reviewContext?.tree_state;
     if (!treeState || typeof treeState !== 'object' || Array.isArray(treeState)) {

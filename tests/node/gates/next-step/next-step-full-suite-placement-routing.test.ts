@@ -543,7 +543,7 @@ describe('gates/next-step', () => {
 
     });
 
-    it('reruns after-compile full-suite when workflow config placement changes after evidence was recorded', () => {
+    it('keeps the frozen before-test placement when live workflow config placement changes', () => {
 
         const repoRoot = makeTempRepo();
 
@@ -596,13 +596,11 @@ describe('gates/next-step', () => {
 
 
 
-        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.next_gate, 'build-review-context');
 
-        assert.match(result.title, /after compile before reviews/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
 
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-
-        assert.ok(!result.commands[0].command.includes('record-review-routing'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
 
     });
 

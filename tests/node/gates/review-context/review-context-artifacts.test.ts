@@ -7,12 +7,14 @@ import * as path from 'node:path';
 
 import {
     buildReviewContextHandoffArtifactPaths,
+    buildReviewContextHandoffArtifacts,
     buildReviewEvidenceManifest,
     resolveReviewHandoffArtifactPath,
     type ReviewSkillBinding
 } from '../../../../src/gates/review-context/review-context-artifacts';
 import type { GitDiffSummary } from '../../../../src/gates/review-context/review-context-diff';
 import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
+import type { ReviewContextLaneBinding } from '../../../../src/gates/review-context/review-context-lane';
 
 function sha256Text(text: string): string {
     return crypto.createHash('sha256').update(text).digest('hex');
@@ -44,6 +46,60 @@ function sampleGitDiff(): GitDiffSummary {
 }
 
 describe('gates/review-context-artifacts', () => {
+    it('adds only normalized custom-lane role bindings while retaining the shared findings output contract', () => {
+        const outputPath = path.join('runtime', 'reviews', 'T-001-architecture-boundary-review-context.json');
+        const paths = buildReviewContextHandoffArtifactPaths(outputPath);
+        const coverageContract = buildReviewCoverageContract({
+            reviewType: 'architecture-boundary',
+            changedFiles: ['src/example.ts'],
+            categoryIds: ['maintainability']
+        });
+        const binding: ReviewContextLaneBinding = {
+            schema_version: 1,
+            review_type: 'architecture-boundary',
+            selection: 'required',
+            built_in: false,
+            catalog_sha256: 'a'.repeat(64),
+            profile_policy_sha256: 'b'.repeat(64),
+            profile_snapshot_sha256: 'c'.repeat(64),
+            effective_review_snapshot_sha256: 'd'.repeat(64),
+            lane_definition_sha256: 'e'.repeat(64),
+            skill_ids: ['architecture-review'],
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: {
+                role_id: 'architecture-reviewer',
+                focus_tags: ['maintainability']
+            },
+            verdict_tokens: {
+                pass: 'ARCHITECTURE BOUNDARY REVIEW PASSED',
+                fail: 'ARCHITECTURE BOUNDARY REVIEW FAILED'
+            },
+            binding_sha256: 'f'.repeat(64)
+        };
+
+        const artifacts = buildReviewContextHandoffArtifacts({
+            reviewType: 'architecture-boundary',
+            selectedSkill: {
+                ...sampleSelectedSkill(),
+                skill_id: 'architecture-review',
+                candidate_skill_ids: ['architecture-review']
+            },
+            paths,
+            ruleContextSections: { source_file_count: 0, summary: {}, source_files: [] },
+            promptArtifactText: '# Reviewer context\n',
+            stripExamplesApplied: false,
+            stripCodeBlocksApplied: false,
+            coverageContract,
+            reviewLaneBinding: binding
+        });
+
+        assert.match(artifacts.rolePromptArtifactText, /Catalog reviewer role id: architecture-reviewer/u);
+        assert.match(artifacts.rolePromptArtifactText, /Catalog reviewer focus tags: maintainability/u);
+        assert.match(artifacts.promptTemplateArtifactText, /Immutable lane binding sha256: f{64}/u);
+        assert.match(artifacts.outputTemplateArtifactText, /"coverage_ledger"/u);
+        assert.doesNotMatch(artifacts.outputTemplateArtifactText, /ARCHITECTURE BOUNDARY REVIEW (?:PASSED|FAILED)/u);
+    });
+
     it('derives role, template, and manifest paths from canonical review-context output paths', () => {
         const outputPath = path.join(
             'garda-agent-orchestrator',

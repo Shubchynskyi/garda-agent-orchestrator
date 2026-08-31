@@ -1397,7 +1397,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
                 fast: {
                     description: 'Fast',
                     depth: 1,
-                    review_policy: { code: true, test: false, custom_profile_only: 'auto' },
+                    review_policy: { code: true, test: false },
                     review_finding_policy: {
                         schema_version: 1,
                         policy_id: 'custom',
@@ -1449,9 +1449,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(artifact.profile_policy_snapshot_required, true);
         assert.equal(artifact.profile_policy_snapshot.source.effective_profile, 'fast');
         assert.equal(artifact.profile_policy_snapshot.source.runtime_active_profile, 'balanced');
-        assert.equal(artifact.profile_policy_snapshot.review_lane_selection.profile_review_policy.custom_profile_only, 'auto');
         assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
-        assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.custom_profile_only, false);
         assert.equal(artifact.profile_policy_snapshot.review_finding_policy.policy_id, 'custom');
         assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.critical, 'fix_now');
         assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.high, 'create_follow_up');
@@ -1510,9 +1508,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(rerunArtifact.profile_policy_snapshot.lock_timestamp_utc, firstSnapshotLockTimestamp);
         assert.equal(rerunArtifact.profile_policy_snapshot.source.effective_profile, 'fast');
         assert.equal(rerunArtifact.profile_policy_snapshot.source.runtime_active_profile, 'balanced');
-        assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.profile_review_policy.custom_profile_only, 'auto');
         assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
-        assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.custom_profile_only, false);
         assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.policy_id, 'custom');
         assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.findings.high, 'create_follow_up');
         assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.residual_risk, 'ignore');

@@ -11,10 +11,11 @@ import {
     type BlockerEntry,
     type EvidenceArtifact
 } from './task-audit-summary-collectors';
+import { collectEffectiveReviewTypeIds } from './task-audit-summary-review-common';
 import { type TaskAuditEvent } from './task-audit-summary-lifecycle';
 
 // Artifact name patterns relative to reviews root, keyed by kind.
-const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
+const BASE_ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'task-mode', suffix: '-task-mode.json' },
     { kind: 'rule-pack', suffix: '-rule-pack.json' },
     { kind: 'handshake', suffix: '-handshake.json' },
@@ -32,35 +33,20 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'final-closeout-json', suffix: '-final-closeout.json' },
     { kind: 'final-closeout-markdown', suffix: '-final-closeout.md' },
     { kind: 'final-user-report', suffix: '-final-user-report.md' },
-    { kind: 'no-op', suffix: '-no-op.json' },
-    { kind: 'code-review', suffix: '-code.md' },
-    { kind: 'code-review-context', suffix: '-code-review-context.json' },
-    { kind: 'code-receipt', suffix: '-code-receipt.json' },
-    { kind: 'db-review', suffix: '-db.md' },
-    { kind: 'db-review-context', suffix: '-db-review-context.json' },
-    { kind: 'db-receipt', suffix: '-db-receipt.json' },
-    { kind: 'security-review', suffix: '-security.md' },
-    { kind: 'security-review-context', suffix: '-security-review-context.json' },
-    { kind: 'security-receipt', suffix: '-security-receipt.json' },
-    { kind: 'refactor-review', suffix: '-refactor.md' },
-    { kind: 'refactor-review-context', suffix: '-refactor-review-context.json' },
-    { kind: 'refactor-receipt', suffix: '-refactor-receipt.json' },
-    { kind: 'test-review', suffix: '-test.md' },
-    { kind: 'test-review-context', suffix: '-test-review-context.json' },
-    { kind: 'test-receipt', suffix: '-test-receipt.json' },
-    { kind: 'api-review', suffix: '-api.md' },
-    { kind: 'api-review-context', suffix: '-api-review-context.json' },
-    { kind: 'api-receipt', suffix: '-api-receipt.json' },
-    { kind: 'performance-review', suffix: '-performance.md' },
-    { kind: 'performance-review-context', suffix: '-performance-review-context.json' },
-    { kind: 'performance-receipt', suffix: '-performance-receipt.json' },
-    { kind: 'infra-review', suffix: '-infra.md' },
-    { kind: 'infra-review-context', suffix: '-infra-review-context.json' },
-    { kind: 'infra-receipt', suffix: '-infra-receipt.json' },
-    { kind: 'dependency-review', suffix: '-dependency.md' },
-    { kind: 'dependency-review-context', suffix: '-dependency-review-context.json' },
-    { kind: 'dependency-receipt', suffix: '-dependency-receipt.json' }
+    { kind: 'no-op', suffix: '-no-op.json' }
 ];
+
+function buildArtifactPatterns(
+    currentPreflight?: Record<string, unknown> | null
+): ReadonlyArray<{ kind: string; suffix: string }> {
+    const reviewPatterns = collectEffectiveReviewTypeIds(currentPreflight)
+        .flatMap((reviewType) => [
+            { kind: `${reviewType}-review`, suffix: `-${reviewType}.md` },
+            { kind: `${reviewType}-review-context`, suffix: `-${reviewType}-review-context.json` },
+            { kind: `${reviewType}-receipt`, suffix: `-${reviewType}-receipt.json` }
+        ]);
+    return [...BASE_ARTIFACT_PATTERNS, ...reviewPatterns];
+}
 
 function buildRequiredReviewBlocker(reviewType: string, taskId: string, reviewsRoot: string): BlockerEntry | null {
     const gate = `${reviewType}-review`;
@@ -169,10 +155,11 @@ export function collectRequiredReviewBlockers(
     taskId: string,
     reviewsRoot: string,
     events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null
+    currentCycle: TaskCycleBindingSnapshot | null,
+    currentPreflight?: Record<string, unknown> | null
 ): BlockerEntry[] {
     return withReviewArtifactReadBarrier(reviewsRoot, () => (
-        collectKnownRequiredReviewTypes(requiredReviews)
+        collectKnownRequiredReviewTypes(requiredReviews, currentPreflight)
             .flatMap((reviewType) => {
                 if (!shouldValidateRequiredReviewArtifactForCurrentCycle(reviewType, events, currentCycle)) {
                     return [];
@@ -188,10 +175,11 @@ export function collectEvidenceArtifacts(
     reviewsRoot: string,
     taskId: string,
     taskEventFile: string,
-    projectMemoryImpact: ProjectMemoryImpactLifecycleEvidence
+    projectMemoryImpact: ProjectMemoryImpactLifecycleEvidence,
+    currentPreflight?: Record<string, unknown> | null
 ): EvidenceArtifact[] {
     const evidence = withReviewArtifactReadBarrier(reviewsRoot, () => (
-        ARTIFACT_PATTERNS.map(({ kind, suffix }) => {
+        buildArtifactPatterns(currentPreflight).map(({ kind, suffix }) => {
             const artifactPath = path.join(reviewsRoot, `${taskId}${suffix}`);
             const exists = fs.existsSync(artifactPath);
             return {

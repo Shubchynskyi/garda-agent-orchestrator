@@ -26,6 +26,7 @@ import {
     loadReviewExecutionPolicyConfig,
     resolveReviewExecutionPolicyModeFromPreflight
 } from '../../core/review-execution-policy';
+import { resolveCompiledReviewDependencyGraphFromPreflight } from '../../core/review-dependency-graph';
 import { normalizeReviewCycleGuardConfig } from '../../core/review-cycle-guard';
 import { getTaskCycleStatusSnapshot, type TaskCycleStatusSnapshot } from '../../validators';
 import {
@@ -402,6 +403,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const reviewExecutionPolicyMode = preflight
         ? resolveReviewExecutionPolicyModeFromPreflight(preflight)
         : timelineReviewExecutionPolicyMode || liveReviewExecutionPolicyMode;
+    const reviewDependencyGraph = preflight
+        ? resolveCompiledReviewDependencyGraphFromPreflight(preflight, reviewExecutionPolicyMode)
+        : null;
     const preflightSha256 = preflightSummary.sha256;
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
@@ -413,14 +417,16 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             safeTaskId,
             reviewsRoot,
             events,
-            currentCycle
+            currentCycle,
+            preflight
         );
         const evidence = filterNotRequiredEvidenceArtifacts(collectEvidenceArtifacts(
             repoRoot,
             reviewsRoot,
             safeTaskId,
             taskEventFile,
-            projectMemoryImpactEvidence
+            projectMemoryImpactEvidence,
+            preflight
         ), {
             fullSuiteRequired: fullSuiteValidationRequiredForLifecycle,
             completionGatePassed: hasCompletionPass
@@ -441,11 +447,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             requiredReviews,
             safeTaskId,
             scopeCategory,
-            preflightSha256
+            preflightSha256,
+            preflight,
+            reviewsRoot
         );
         const reviewAuthorshipAttestationIssues = collectReviewAuthorshipAttestationIssues(
             reviewGate,
-            requiredReviews
+            requiredReviews,
+            preflight
         );
         const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
         const reviewTrustSummary = reviewGateTrustSummary
@@ -482,7 +491,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             reviewAttemptSummary,
             taskQueueEntries: options.taskQueueEntries
         });
-        const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events, repoRoot);
+        const reviewTimingAudit = buildReviewTimingAuditSummary(
+            reviewsRoot,
+            safeTaskId,
+            events,
+            repoRoot,
+            preflight
+        );
         const reviewCoverageSummary = buildReviewCoverageAuditSummary({
             reviewsRoot,
             taskId: safeTaskId,
@@ -529,7 +544,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         requiredReviews,
         events,
         currentCycle,
-        repoRoot
+        repoRoot,
+        reviewDependencyGraph
     );
     if (completionReviewOrderBlocker) {
         blockers.push(completionReviewOrderBlocker);

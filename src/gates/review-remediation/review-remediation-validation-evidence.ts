@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { isPlainRecord } from '../../core/records';
 import {
@@ -5,7 +7,14 @@ import {
     type ReviewRemediationDeltaCategory
 } from '../../policy/review-remediation-rerun-policy';
 import { normalizePath } from '../shared/helpers';
-import type { ReviewRemediationDeltaClassification } from './review-remediation-delta';
+import {
+    type ReviewRemediationDeltaClassification
+} from './review-remediation-delta';
+import {
+    isReviewRemediationReadableDiffPayloadRedacted,
+    REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES,
+    sha256ReviewRemediationReadableDiffPayload
+} from './review-remediation-readable-diff';
 
 export const REVIEW_REMEDIATION_VALIDATION_EVIDENCE_SCHEMA_VERSION = 1;
 export const REVIEW_REMEDIATION_VALIDATION_EVIDENCE_ARTIFACT_TYPE =
@@ -351,6 +360,194 @@ export function getReviewRemediationDeltaClassificationViolations(
     }
     if (!REVIEW_REMEDIATION_DELTA_CATEGORIES.includes(delta.category)) {
         violations.push(`delta.category '${String(delta.category)}' is unsupported.`);
+    }
+    if (typeof delta.full_review_required !== 'boolean') {
+        violations.push('delta.full_review_required must be boolean.');
+    }
+    if (
+        !Array.isArray(delta.full_review_reasons)
+        || delta.full_review_reasons.some((reason) => typeof reason !== 'string' || !reason.trim())
+    ) {
+        violations.push('delta.full_review_reasons must contain canonical non-empty strings.');
+    } else if (delta.full_review_required !== (delta.full_review_reasons.length > 0)) {
+        violations.push('delta.full_review_required must agree with full_review_reasons.');
+    }
+    if (delta.mode_policy_assessment !== undefined) {
+        const assessment = delta.mode_policy_assessment;
+        if (!isPlainRecord(assessment)) {
+            violations.push('delta.mode_policy_assessment must be a JSON object.');
+        } else {
+            const { assessment_sha256: _, ...assessmentWithoutHash } = assessment;
+            if (
+                !/^[0-9a-f]{64}$/u.test(String(assessment.assessment_sha256 || ''))
+                || assessment.assessment_sha256 !== sha256RedactedJsonPayload(assessmentWithoutHash)
+            ) {
+                violations.push('delta.mode_policy_assessment hash is invalid.');
+            }
+            if (!['FULL', 'DELTA'].includes(String(assessment.mode || ''))) {
+                violations.push('delta.mode_policy_assessment mode must be FULL or DELTA.');
+            }
+            if (
+                assessment.mode === 'FULL'
+                && delta.full_review_required !== true
+            ) {
+                violations.push('delta.mode_policy_assessment FULL requires delta.full_review_required=true.');
+            }
+            if (
+                assessment.mode === 'DELTA'
+                && delta.full_review_required === true
+            ) {
+                violations.push('delta.mode_policy_assessment DELTA cannot accompany a FULL classification.');
+            }
+            if (
+                !Array.isArray(assessment.full_review_reasons)
+                || JSON.stringify(assessment.full_review_reasons) !== JSON.stringify(delta.full_review_reasons)
+            ) {
+                violations.push('delta.mode_policy_assessment reasons must match delta.full_review_reasons.');
+            }
+        }
+    }
+    const normalizePathList = (value: unknown): string[] | null => {
+        if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+            return null;
+        }
+        const normalized = [...new Set(value.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+        return JSON.stringify(normalized) === JSON.stringify(value) ? normalized : null;
+    };
+    const scope = delta.scope;
+    const fullReviewScope = normalizePathList(scope?.full_review_scope);
+    const requiredDeltaTargets = normalizePathList(scope?.required_delta_targets);
+    const optionalContextFiles = normalizePathList(scope?.optional_context_files);
+    if (!fullReviewScope || !requiredDeltaTargets || !optionalContextFiles) {
+        violations.push('delta.scope path lists must be normalized, unique, and sorted.');
+    } else {
+        const combinedScope = [...new Set([...requiredDeltaTargets, ...optionalContextFiles])].sort();
+        if (JSON.stringify(combinedScope) !== JSON.stringify(fullReviewScope)) {
+            violations.push('delta.scope required targets and optional context must partition the full review scope.');
+        }
+        if (JSON.stringify(requiredDeltaTargets) !== JSON.stringify(delta.changed_files)) {
+            violations.push('delta.scope.required_delta_targets must match delta.changed_files.');
+        }
+        if (JSON.stringify(optionalContextFiles) !== JSON.stringify(delta.unchanged_files)) {
+            violations.push('delta.scope.optional_context_files must match delta.unchanged_files.');
+        }
+        const hashList = (value: readonly string[]): string => createHash('sha256').update(value.join('\n')).digest('hex');
+        if (scope.full_review_scope_sha256 !== hashList(fullReviewScope)) {
+            violations.push('delta.scope.full_review_scope_sha256 does not match full_review_scope.');
+        }
+        if (scope.required_delta_targets_sha256 !== hashList(requiredDeltaTargets)) {
+            violations.push('delta.scope.required_delta_targets_sha256 does not match required_delta_targets.');
+        }
+        if (scope.optional_context_files_sha256 !== hashList(optionalContextFiles)) {
+            violations.push('delta.scope.optional_context_files_sha256 does not match optional_context_files.');
+        }
+        if (typeof scope.membership_unchanged !== 'boolean') {
+            violations.push('delta.scope.membership_unchanged must be boolean.');
+        } else if (!scope.membership_unchanged && delta.full_review_required !== true) {
+            violations.push(
+                'delta.scope.membership_unchanged=false requires delta.full_review_required=true.'
+            );
+        }
+    }
+    const readableDiff = delta.readable_diff;
+    if (
+        !readableDiff
+        || readableDiff.schema_version !== 1
+        || readableDiff.format !== 'redacted_line_operations_v1'
+        || readableDiff.page_max_bytes !== REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES
+        || !Array.isArray(readableDiff.pages)
+        || readableDiff.page_count !== readableDiff.pages.length
+    ) {
+        violations.push('delta.readable_diff must be canonical paged redacted-line evidence.');
+    } else {
+        const readableOperationsByPath = new Map<string, Set<string>>();
+        for (const [index, page] of readableDiff.pages.entries()) {
+            const { page_sha256: pageSha256, ...pageWithoutHash } = page;
+            const normalizedPagePath = normalizePath(page.path);
+            if (!normalizedPagePath || normalizedPagePath !== page.path) {
+                violations.push(`delta.readable_diff.pages[${index}].path must be canonical.`);
+            }
+            const operations = readableOperationsByPath.get(normalizedPagePath) ?? new Set<string>();
+            for (const line of page.lines) {
+                if (line.operation === 'addition' || line.operation === 'deletion') {
+                    operations.add([
+                        line.operation,
+                        line.baseline_line,
+                        line.current_line,
+                        line.source_line_sha256
+                    ].join(':'));
+                }
+            }
+            readableOperationsByPath.set(normalizedPagePath, operations);
+            if (page.page_number !== index + 1 || page.page_count !== readableDiff.pages.length) {
+                violations.push(`delta.readable_diff.pages[${index}] has invalid pagination.`);
+            }
+            if (
+                !Number.isInteger(page.utf8_bytes)
+                || page.utf8_bytes < 0
+                || page.utf8_bytes > REVIEW_REMEDIATION_DELTA_DIFF_PAGE_MAX_BYTES
+                || page.utf8_bytes !== page.lines.reduce(
+                    (total, line) => total + Buffer.byteLength(String(line.text || ''), 'utf8'),
+                    0
+                )
+            ) {
+                violations.push(`delta.readable_diff.pages[${index}].utf8_bytes is invalid.`);
+            }
+            if (!isReviewRemediationReadableDiffPayloadRedacted(pageWithoutHash)) {
+                violations.push(`delta.readable_diff.pages[${index}] must contain only redacted text.`);
+            }
+            if (sha256ReviewRemediationReadableDiffPayload(pageWithoutHash) !== pageSha256) {
+                violations.push(`delta.readable_diff.pages[${index}].page_sha256 does not match the page payload.`);
+            }
+        }
+        const { evidence_sha256: evidenceSha256, ...evidenceWithoutHash } = readableDiff;
+        if (!isReviewRemediationReadableDiffPayloadRedacted(evidenceWithoutHash)) {
+            violations.push('delta.readable_diff must contain only redacted text.');
+        }
+        if (sha256ReviewRemediationReadableDiffPayload(evidenceWithoutHash) !== evidenceSha256) {
+            violations.push('delta.readable_diff.evidence_sha256 does not match the readable diff payload.');
+        }
+        const fileDeltaPaths = normalizePathList(delta.file_deltas?.map((entry) => entry.path));
+        if (!fileDeltaPaths || JSON.stringify(fileDeltaPaths) !== JSON.stringify(delta.changed_files)) {
+            violations.push('delta.file_deltas paths must match delta.changed_files.');
+        } else {
+            const changedFileSet = new Set(fileDeltaPaths);
+            for (const pagePath of readableOperationsByPath.keys()) {
+                if (!changedFileSet.has(pagePath)) {
+                    violations.push(`delta.readable_diff path '${pagePath}' must identify a changed file.`);
+                }
+            }
+            for (const fileDelta of delta.file_deltas) {
+                const additions = fileDelta.additions;
+                const deletions = fileDelta.deletions;
+                const changedLines = fileDelta.changed_lines;
+                if (
+                    additions === null
+                    || deletions === null
+                    || changedLines === null
+                    || !Number.isInteger(additions)
+                    || additions < 0
+                    || !Number.isInteger(deletions)
+                    || deletions < 0
+                    || !Number.isInteger(changedLines)
+                    || changedLines < 0
+                    || changedLines !== additions + deletions
+                ) {
+                    if (additions !== null || deletions !== null || changedLines !== null) {
+                        violations.push(`delta.file_deltas '${fileDelta.path}' line totals must be all null or canonical non-negative integers.`);
+                    }
+                    continue;
+                }
+                const operations = readableOperationsByPath.get(fileDelta.path) ?? new Set<string>();
+                const actualAdditions = [...operations].filter((entry) => entry.startsWith('addition:')).length;
+                const actualDeletions = [...operations].filter((entry) => entry.startsWith('deletion:')).length;
+                if (actualAdditions !== additions || actualDeletions !== deletions) {
+                    violations.push(
+                        `delta.readable_diff operations for '${fileDelta.path}' must match delta.file_deltas line totals.`
+                    );
+                }
+            }
+        }
     }
     validateCanonicalPath(delta.baseline?.artifact_path, 'delta.baseline.artifact_path', violations);
     validateHash(delta.baseline?.artifact_sha256, 'delta.baseline.artifact_sha256', violations);

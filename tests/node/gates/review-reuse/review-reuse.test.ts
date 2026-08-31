@@ -8,9 +8,13 @@ import * as path from 'node:path';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
+    computeSchema3ReviewContextReuseCompatibilityHash,
+    computeReviewRuleContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
-    resolveReviewContextReuseContractBindings
+    getReviewContextReuseContractBindingMismatch,
+    resolveReviewContextReuseContractBindings,
+    resolveReviewReceiptReuseContractBindings
 } from '../../../../src/gates/review-reuse';
 import { stringSha256 } from '../../../../src/gate-runtime/hash';
 import {
@@ -33,6 +37,68 @@ function writePathsConfig(repoRoot: string, config: Record<string, unknown>): vo
 }
 
 describe('gates/review-reuse', () => {
+    it('reconstructs the historical schema-3 reuse hash from a current review context', () => {
+        const legacyContext = {
+            schema_version: 3,
+            review_type: 'code',
+            depth: 2,
+            review_execution: {
+                mode: 'FULL',
+                contract_sha256: '1'.repeat(64),
+                full_review_scope_sha256: '2'.repeat(64)
+            }
+        };
+        const currentContext = {
+            ...legacyContext,
+            schema_version: 4
+        };
+
+        assert.equal(
+            computeReviewContextReuseHash(legacyContext),
+            computeSchema3ReviewContextReuseCompatibilityHash(currentContext)
+        );
+        assert.notEqual(
+            computeReviewContextReuseHash(currentContext),
+            computeReviewContextReuseHash(legacyContext)
+        );
+    });
+
+    it('uses the stable instruction contract instead of cycle-specific prompt artifact hashes', () => {
+        const baseContext = {
+            rule_context: {
+                source_file_count: 1,
+                source_files: [{ path: '80-task-workflow.md', sha256: '1'.repeat(64) }],
+                instruction_contract_sha256: '2'.repeat(64),
+                role_prompt_sha256: '3'.repeat(64),
+                prompt_template_sha256: '4'.repeat(64),
+                output_template_sha256: '5'.repeat(64)
+            }
+        };
+        const nextCycleContext = {
+            rule_context: {
+                ...baseContext.rule_context,
+                role_prompt_sha256: '6'.repeat(64),
+                prompt_template_sha256: '7'.repeat(64),
+                output_template_sha256: '8'.repeat(64)
+            }
+        };
+        const changedInstructionContract = {
+            rule_context: {
+                ...nextCycleContext.rule_context,
+                instruction_contract_sha256: '9'.repeat(64)
+            }
+        };
+
+        assert.equal(
+            computeReviewRuleContextReuseHash(nextCycleContext),
+            computeReviewRuleContextReuseHash(baseContext)
+        );
+        assert.notEqual(
+            computeReviewRuleContextReuseHash(changedInstructionContract),
+            computeReviewRuleContextReuseHash(baseContext)
+        );
+    });
+
     it('fingerprints staged scope from the index instead of the dirty working tree', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-staged-scope-'));
         try {
@@ -370,7 +436,7 @@ describe('gates/review-reuse', () => {
     it('ignores volatile scoped-diff paths and preflight hashes in review-context reuse hash', () => {
         const stableHash = 'a'.repeat(64);
         const baseContext = {
-            schema_version: 2,
+            schema_version: 4,
             review_type: 'security',
             depth: 2,
             token_economy_active: true,
@@ -398,6 +464,11 @@ describe('gates/review-reuse', () => {
             },
             coverage_contract: {
                 contract_sha256: '2'.repeat(64)
+            },
+            review_execution: {
+                mode: 'FULL',
+                contract_sha256: '3'.repeat(64),
+                full_review_scope_sha256: '4'.repeat(64)
             },
             scoped_diff: {
                 expected: true,
@@ -482,14 +553,126 @@ describe('gates/review-reuse', () => {
                 contract_sha256: '4'.repeat(64)
             }
         };
+        const changedExecutionMode = {
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                mode: 'DELTA'
+            }
+        };
+        const changedExecutionScope = {
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                full_review_scope_sha256: '5'.repeat(64)
+            }
+        };
+        const changedExecutionDecisionOnly = {
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                contract_sha256: '6'.repeat(64)
+            }
+        };
 
         assert.equal(computeReviewContextReuseHash(refreshedContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedDiffContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedRuleContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedCoverageContract), computeReviewContextReuseHash(baseContext));
+        assert.notEqual(computeReviewContextReuseHash(changedExecutionMode), computeReviewContextReuseHash(baseContext));
+        assert.equal(
+            computeReviewContextReuseHash(changedExecutionScope),
+            computeReviewContextReuseHash(baseContext),
+            'FULL reuse scope is represented by the lane coverage and content fingerprints'
+        );
+        assert.notEqual(
+            computeReviewContextReuseHash({
+                ...changedExecutionMode,
+                review_execution: {
+                    ...changedExecutionMode.review_execution,
+                    full_review_scope_sha256: '5'.repeat(64)
+                }
+            }),
+            computeReviewContextReuseHash(changedExecutionMode),
+            'DELTA reuse keeps the authenticated full-scope lineage binding'
+        );
+        assert.equal(
+            computeReviewContextReuseHash(changedExecutionDecisionOnly),
+            computeReviewContextReuseHash(baseContext),
+            'FULL remediation may carry a new decision hash while preserving the exhaustive scope contract'
+        );
+
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewContextReuseContractBindings(baseContext),
+                resolveReviewContextReuseContractBindings(changedExecutionMode)
+            ) || '',
+            /review execution mode does not match/u
+        );
+        assert.equal(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewContextReuseContractBindings(baseContext),
+                resolveReviewContextReuseContractBindings(changedExecutionScope)
+            ),
+            null,
+            'FULL reuse relies on lane coverage and content fingerprints across source-dependent scope contracts'
+        );
+
+        const currentDeltaBindings = resolveReviewContextReuseContractBindings({
+            ...baseContext,
+            review_execution: {
+                ...baseContext.review_execution,
+                mode: 'DELTA',
+                contract_sha256: '6'.repeat(64)
+            }
+        });
+        const validDeltaReceipt = {
+            review_coverage_contract_sha256: currentDeltaBindings.coverageContractSha256,
+            review_rule_context_sha256: currentDeltaBindings.ruleContextSha256,
+            review_execution_mode: 'DELTA',
+            review_execution_contract_sha256: currentDeltaBindings.reviewExecutionContractSha256,
+            review_execution_full_scope_sha256: currentDeltaBindings.reviewExecutionFullScopeSha256
+        };
+        assert.equal(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings(validDeltaReceipt),
+                currentDeltaBindings
+            ),
+            null
+        );
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings({
+                    ...validDeltaReceipt,
+                    review_execution_contract_sha256: '7'.repeat(64)
+                }),
+                currentDeltaBindings
+            ) || '',
+            /reused DELTA review execution contract does not match/u
+        );
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings({
+                    ...validDeltaReceipt,
+                    review_execution_full_scope_sha256: '8'.repeat(64)
+                }),
+                currentDeltaBindings
+            ) || '',
+            /reused review execution full scope does not match/u
+        );
+        assert.match(
+            getReviewContextReuseContractBindingMismatch(
+                resolveReviewReceiptReuseContractBindings({
+                    ...validDeltaReceipt,
+                    review_execution_mode: undefined
+                }),
+                currentDeltaBindings
+            ) || '',
+            /reused review execution mode is missing for a current DELTA/u
+        );
     });
 
-    it('rejects review-context drift between reuse validation and evidence materialization', () => {
+    it('rejects replaced review-context drift between reuse validation and evidence materialization', () => {
         const initialContext = {
             schema_version: 3,
             review_type: 'code',
@@ -503,6 +686,11 @@ describe('gates/review-reuse', () => {
             },
             coverage_contract: {
                 contract_sha256: 'c'.repeat(64)
+            },
+            review_execution: {
+                mode: 'FULL',
+                contract_sha256: 'e'.repeat(64),
+                full_review_scope_sha256: 'f'.repeat(64)
             }
         };
         const initialContextText = `${JSON.stringify(initialContext, null, 2)}\n`;
@@ -537,6 +725,26 @@ describe('gates/review-reuse', () => {
                 driftedContext
             ) || '',
             /current review context changed before reused evidence materialization/u
+        );
+
+        const forgedExecutionContext = {
+            ...initialContext,
+            review_execution: {
+                ...initialContext.review_execution,
+                contract_sha256: '1'.repeat(64)
+            }
+        };
+        const forgedExecutionContextText = `${JSON.stringify(forgedExecutionContext, null, 2)}\n`;
+        assert.match(
+            validateReviewContextMaterializationSnapshot(
+                {
+                    ...expectations,
+                    currentReviewContextSha256: stringSha256(forgedExecutionContextText)
+                },
+                forgedExecutionContextText,
+                forgedExecutionContext
+            ) || '',
+            /current review context contract bindings changed/u
         );
     });
 });

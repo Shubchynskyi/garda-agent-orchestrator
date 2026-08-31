@@ -5,8 +5,11 @@ import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { getRequiredReviewSkillBridgeHostEntry } from '../../../src/core/provider-registry';
 import {
+    extractManagedBlockFromContent,
+    getTaskQueueRowsFromManagedBlock,
     MANAGED_END,
-    MANAGED_START
+    MANAGED_START,
+    setTaskQueueRowsInManagedBlock
 } from '../../../src/materialization/content-builders';
 import {
     runInstallPrimaryEntrypointStage,
@@ -34,11 +37,11 @@ function findRepoRoot(): string {
     throw new Error('Cannot find repo root');
 }
 
-function createFilesystemStage(targetRoot: string) {
+function createFilesystemStage(targetRoot: string, dryRun = false) {
     return createInstallFilesystemStage({
         targetRoot,
         backupRoot: path.join(targetRoot, 'runtime', 'backups', 'install-stage-test'),
-        dryRun: false,
+        dryRun,
         skipBackups: false,
         deploymentDate: '2026-07-30',
         canonicalEntryFile: 'AGENTS.md'
@@ -89,6 +92,255 @@ describe('install materialization stages', () => {
             assert.equal(filesystem.metrics.deployed, 1);
         } finally {
             fs.rmSync(targetRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('backs up existing TASK.md before task-stage materialization', () => {
+        const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-task-backup-stage-'));
+        const sourceRoot = path.join(targetRoot, 'bundle-template');
+        const existingTaskContent = '# Operator queue\n\n| ID | Status |\n|---|---|\n| T-1 | TODO |\n';
+        try {
+            fs.mkdirSync(sourceRoot, { recursive: true });
+            fs.copyFileSync(
+                path.join(repoRoot, 'template', 'TASK.md'),
+                path.join(sourceRoot, 'TASK.md')
+            );
+            fs.writeFileSync(path.join(targetRoot, 'TASK.md'), existingTaskContent, 'utf8');
+            const filesystem = createFilesystemStage(targetRoot);
+
+            runInstallTaskStage({
+                sourceRoot,
+                targetRoot,
+                dryRun: false,
+                preserveExisting: true,
+                answerDependentOnly: false,
+                filesystem
+            });
+
+            assert.equal(
+                fs.readFileSync(
+                    path.join(targetRoot, 'runtime', 'backups', 'install-stage-test', 'TASK.md'),
+                    'utf8'
+                ),
+                existingTaskContent
+            );
+            assert.equal(filesystem.metrics.backedUp, 1);
+        } finally {
+            fs.rmSync(targetRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects external and dangling TASK.md symlinks before backup in both task-stage branches', (t) => {
+        for (const answerDependentOnly of [false, true]) {
+            for (const targetExists of [true, false]) {
+                const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-task-symlink-stage-'));
+                const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-task-external-'));
+                const sourceRoot = path.join(targetRoot, 'bundle-template');
+                const externalTaskPath = path.join(externalRoot, 'external-TASK.md');
+                const taskPath = path.join(targetRoot, 'TASK.md');
+                try {
+                    fs.mkdirSync(sourceRoot, { recursive: true });
+                    fs.copyFileSync(
+                        path.join(repoRoot, 'template', 'TASK.md'),
+                        path.join(sourceRoot, 'TASK.md')
+                    );
+                    if (targetExists) {
+                        fs.writeFileSync(externalTaskPath, '# External private content\n', 'utf8');
+                    }
+                    try {
+                        fs.symlinkSync(externalTaskPath, taskPath, 'file');
+                    } catch (error) {
+                        if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+                            t.skip('Creating file symlinks requires an unavailable Windows privilege.');
+                            return;
+                        }
+                        throw error;
+                    }
+                    const filesystem = createFilesystemStage(targetRoot);
+
+                    assert.throws(
+                        () => runInstallTaskStage({
+                            sourceRoot,
+                            targetRoot,
+                            dryRun: false,
+                            preserveExisting: true,
+                            answerDependentOnly,
+                            filesystem
+                        }),
+                        /GARDA_INSTALL_BLOCKED: TASK\.md must be a regular file inside target root/
+                    );
+                    assert.equal(
+                        fs.existsSync(
+                            path.join(targetRoot, 'runtime', 'backups', 'install-stage-test', 'TASK.md')
+                        ),
+                        false
+                    );
+                    if (targetExists) {
+                        assert.equal(fs.readFileSync(externalTaskPath, 'utf8'), '# External private content\n');
+                    } else {
+                        assert.equal(fs.existsSync(externalTaskPath), false);
+                    }
+                    assert.equal(filesystem.metrics.backedUp, 0);
+                } finally {
+                    fs.rmSync(targetRoot, { recursive: true, force: true });
+                    fs.rmSync(externalRoot, { recursive: true, force: true });
+                }
+            }
+        }
+    });
+
+    it('preserves an intentionally empty managed queue in both task-stage branches', () => {
+        for (const answerDependentOnly of [false, true]) {
+            const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-task-empty-queue-stage-'));
+            const sourceRoot = path.join(targetRoot, 'bundle-template');
+            const taskPath = path.join(targetRoot, 'TASK.md');
+            try {
+                fs.mkdirSync(sourceRoot, { recursive: true });
+                const templateContent = fs.readFileSync(
+                    path.join(repoRoot, 'template', 'TASK.md'),
+                    'utf8'
+                );
+                fs.writeFileSync(path.join(sourceRoot, 'TASK.md'), templateContent, 'utf8');
+                const operatorSuffix = '\n## Operator Notes\n\nKeep this suffix.\n';
+                const emptyQueueContent = `${setTaskQueueRowsInManagedBlock(templateContent, [])}${operatorSuffix}`;
+                fs.writeFileSync(taskPath, emptyQueueContent, 'utf8');
+                const filesystem = createFilesystemStage(targetRoot);
+
+                runInstallTaskStage({
+                    sourceRoot,
+                    targetRoot,
+                    dryRun: false,
+                    preserveExisting: true,
+                    answerDependentOnly,
+                    filesystem
+                });
+
+                const installedContent = fs.readFileSync(taskPath, 'utf8');
+                const installedBlock = extractManagedBlockFromContent(
+                    installedContent,
+                    MANAGED_START,
+                    MANAGED_END
+                );
+                assert.ok(installedBlock);
+                assert.deepEqual(getTaskQueueRowsFromManagedBlock(installedBlock), []);
+                assert.ok(installedContent.endsWith(operatorSuffix));
+                assert.equal(
+                    fs.readFileSync(
+                        path.join(targetRoot, 'runtime', 'backups', 'install-stage-test', 'TASK.md'),
+                        'utf8'
+                    ),
+                    emptyQueueContent
+                );
+            } finally {
+                fs.rmSync(targetRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('preserves realistic queue rows and operator suffix in both task-stage branches', () => {
+        const operatorRows = [
+            '| T-501 | 🟨 IN_PROGRESS | P0 | lifecycle | Preserve first row | codex | 2026-08-06 | strict | First note stays byte-stable. |',
+            '| T-502-F1 | 🟦 TODO | P2 | review/follow-up | Keep follow-up status | codex | 2026-08-06 | balanced | Notes include commas, hashes, and `inline code`. |',
+            '| T-503 | 🟩 DONE | P3 | docs | Preserve completed row | codex | 2026-08-05 | docs-only | Final row remains last. |'
+        ];
+        const operatorSuffix = '\n## Operator Notes\n\nKeep this suffix across reinitialization.\n';
+
+        for (const answerDependentOnly of [false, true]) {
+            const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-task-realistic-queue-stage-'));
+            const sourceRoot = path.join(targetRoot, 'bundle-template');
+            const taskPath = path.join(targetRoot, 'TASK.md');
+            try {
+                fs.mkdirSync(sourceRoot, { recursive: true });
+                const templateContent = fs.readFileSync(
+                    path.join(repoRoot, 'template', 'TASK.md'),
+                    'utf8'
+                );
+                fs.writeFileSync(path.join(sourceRoot, 'TASK.md'), templateContent, 'utf8');
+                const operatorManagedContent = setTaskQueueRowsInManagedBlock(
+                    templateContent,
+                    operatorRows
+                );
+                const operatorManagedBlock = extractManagedBlockFromContent(
+                    operatorManagedContent,
+                    MANAGED_START,
+                    MANAGED_END
+                );
+                assert.ok(operatorManagedBlock);
+                const originalOperatorRows = getTaskQueueRowsFromManagedBlock(operatorManagedBlock);
+                const operatorTaskContent = `${operatorManagedContent}${operatorSuffix}`;
+                fs.writeFileSync(taskPath, operatorTaskContent, 'utf8');
+                const filesystem = createFilesystemStage(targetRoot);
+
+                runInstallTaskStage({
+                    sourceRoot,
+                    targetRoot,
+                    dryRun: false,
+                    preserveExisting: true,
+                    answerDependentOnly,
+                    filesystem
+                });
+
+                const installedContent = fs.readFileSync(taskPath, 'utf8');
+                const installedBlock = extractManagedBlockFromContent(
+                    installedContent,
+                    MANAGED_START,
+                    MANAGED_END
+                );
+                assert.ok(installedBlock);
+                assert.deepEqual(
+                    getTaskQueueRowsFromManagedBlock(installedBlock),
+                    originalOperatorRows,
+                    `queue rows must remain byte-stable when answerDependentOnly=${answerDependentOnly}`
+                );
+                assert.ok(installedContent.endsWith(operatorSuffix));
+                assert.equal(
+                    fs.readFileSync(
+                        path.join(targetRoot, 'runtime', 'backups', 'install-stage-test', 'TASK.md'),
+                        'utf8'
+                    ),
+                    operatorTaskContent
+                );
+            } finally {
+                fs.rmSync(targetRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('does not create TASK.md backups during dry-run in either task-stage branch', () => {
+        for (const answerDependentOnly of [false, true]) {
+            const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-task-dry-run-stage-'));
+            const sourceRoot = path.join(targetRoot, 'bundle-template');
+            const taskPath = path.join(targetRoot, 'TASK.md');
+            const existingTaskContent = '# Operator queue\n\nDry-run content must remain unchanged.\n';
+            try {
+                fs.mkdirSync(sourceRoot, { recursive: true });
+                fs.copyFileSync(
+                    path.join(repoRoot, 'template', 'TASK.md'),
+                    path.join(sourceRoot, 'TASK.md')
+                );
+                fs.writeFileSync(taskPath, existingTaskContent, 'utf8');
+                const filesystem = createFilesystemStage(targetRoot, true);
+
+                runInstallTaskStage({
+                    sourceRoot,
+                    targetRoot,
+                    dryRun: true,
+                    preserveExisting: true,
+                    answerDependentOnly,
+                    filesystem
+                });
+
+                assert.equal(fs.readFileSync(taskPath, 'utf8'), existingTaskContent);
+                assert.equal(
+                    fs.existsSync(
+                        path.join(targetRoot, 'runtime', 'backups', 'install-stage-test', 'TASK.md')
+                    ),
+                    false
+                );
+                assert.equal(filesystem.metrics.backedUp, 0);
+            } finally {
+                fs.rmSync(targetRoot, { recursive: true, force: true });
+            }
         }
     });
 

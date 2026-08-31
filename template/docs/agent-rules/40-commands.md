@@ -57,6 +57,16 @@ Rules:
   modified evidence remains fail-closed.
 - This command never replaces `compile-gate`, `full-suite-validation`, required
   reviews, or completion evidence.
+- Test-first expected-red is an explicit exception to ordinary passing focused
+  validation: put the exact marker `Test-first: expected-red` in the task's
+  `TASK.md` Notes, then follow the `next-step` command that adds
+  `--expect-failure`. That mode accepts only a current test-only preflight and a
+  concrete changed focused test. A real non-zero test exit is recorded with
+  bounded output; an unexpected pass, timeout, cancellation, unrelated test,
+  foreign task, stale preflight, or modified artifact fails closed. After the
+  evidence is recorded, `next-step` exposes implementation and still requires
+  refreshed preflight, compile, full-suite, reviews, and completion after the
+  production change.
 - If the command is not eligible for `run-intermediate-command`, use the Manual
   Validation Logs pattern below so chat output remains bounded and auditable.
 
@@ -178,6 +188,7 @@ node garda-agent-orchestrator/bin/garda.js workflow set --optional-check-rule-de
 Rules:
 - Optional quality checks are advisory self-check rules that `next-step` routes after implementation changes and before compile/review/full-suite work when current checklist evidence is missing.
 - Default rules cover simplification, project style fit, unnecessary abstraction, growth, hardcoded values or contracts, duplication, and verification scope.
+- When `next-step` materializes an answers template, fill every active `status` and `answer` (plus any rule-specific required fields), then rerun `next-step`. The executable `quality-checklist` command is printed only after those answers are complete and valid; never run a blank scaffold as evidence.
 - `ACTION_REQUIRED` means return to implementation/refactor work and address the listed follow-up before continuing to expensive gates.
 - Disabling the mode skips only `quality-checklist`; it does not replace or weaken compile-gate, full-suite validation, or independent review.
 - Rule edits must go through the audited workflow-setting path or the guarded local UI settings controls, not direct JSON edits.

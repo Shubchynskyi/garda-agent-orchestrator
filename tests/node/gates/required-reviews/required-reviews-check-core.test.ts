@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import {
     detectZeroDiffFromPreflight,
+    checkRequiredReviews,
     parseSkipReviews,
     resolveExpectedReviewVerdicts,
     REVIEW_CONTRACTS,
@@ -16,6 +17,13 @@ import {
 import {
     testReviewArtifacts
 } from '../../../../src/cli/commands/gate-flows/review/review-flow-support';
+import { runRequiredReviewsCheckCommand } from '../../../../src/cli/commands/gates';
+import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
+import { normalizeReviewCatalog } from '../../../../src/core/review-catalog';
+import { compileReviewDependencyGraph } from '../../../../src/core/review-dependency-graph';
+import type { ReviewCapabilitiesConfigMap } from '../../../../src/core/review-capabilities';
+import { buildEffectiveReviewSnapshot } from '../../../../src/policy/effective-review-snapshot';
+import { resolveProfileReviewCatalogPolicy } from '../../../../src/policy/profile-review-catalog-policy';
 import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath
@@ -23,6 +31,10 @@ import {
 import {
     validateReviewFindingsContract
 } from '../../../../src/gates/review/review-findings-artifact-verdict';
+import { buildReviewReceipt } from '../../../../src/gate-runtime/review-context';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../src/gates/review/review-evidence-contract';
+import { REVIEW_FINDINGS_SCHEMA_VERSION } from '../../../../src/gates/review/review-findings-schema';
+import { buildReviewRemediationReviewContract } from '../../../../src/gates/review-remediation/review-remediation-review-contract';
 
 function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -44,15 +56,39 @@ function writeAcceptedFindingsValidationReceipt(options: {
     treeStateSha256: string;
     coverageContract: Record<string, unknown>;
 }): void {
-    const artifactSha256 = sha256File(options.artifactPath);
+    const reviewContext = JSON.parse(fs.readFileSync(options.contextPath, 'utf8')) as Record<string, unknown>;
+    const coverageObligations = Array.isArray(options.coverageContract.obligations)
+        ? options.coverageContract.obligations as Array<Record<string, unknown>>
+        : [];
+    const reviewExecution = buildReviewRemediationReviewContract({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: 'a'.repeat(64),
+        fullReviewScope: coverageObligations.map((entry) => String(entry.target || '')).filter(Boolean)
+    });
+    reviewContext.schema_version = 4;
+    reviewContext.review_execution = reviewExecution;
+    writeJson(options.contextPath, reviewContext);
     const contextSha256 = sha256File(options.contextPath);
+    const report = JSON.parse(fs.readFileSync(options.artifactPath, 'utf8')) as Record<string, unknown>;
+    report.schema_version = REVIEW_FINDINGS_SCHEMA_VERSION;
+    report.review_context_sha256 = contextSha256;
+    report.review_execution = {
+        mode: reviewExecution.mode,
+        contract_sha256: reviewExecution.contract_sha256,
+        covered_delta_targets: [],
+        inspected_prior_finding_ids: []
+    };
+    writeJson(options.artifactPath, report);
+    const artifactSha256 = sha256File(options.artifactPath);
     const validation = validateReviewFindingsContract({
         content: fs.readFileSync(options.artifactPath, 'utf8'),
         expectedTaskId: options.taskId,
         expectedReviewType: options.reviewType,
         expectedReviewContextSha256: contextSha256,
         expectedTreeStateSha256: options.treeStateSha256,
-        coverageContract: options.coverageContract as never
+        coverageContract: options.coverageContract as never,
+        expectedReviewExecutionContract: reviewExecution
     });
     assert.equal(validation.valid, true, validation.violations.join(' '));
     const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
@@ -70,13 +106,26 @@ function writeAcceptedFindingsValidationReceipt(options: {
     });
     writeJson(validationArtifactPath, validationArtifact);
     const validationArtifactSha256 = sha256File(validationArtifactPath);
+    const executionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings!;
+    const receipt = buildReviewReceipt({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightSha256: null,
+        scopeSha256: null,
+        reviewContextSha256: contextSha256,
+        reviewTreeStateSha256: options.treeStateSha256,
+        reviewExecutionMode: executionBindings.review_execution_mode,
+        reviewExecutionContractSha256: executionBindings.review_execution_contract_sha256,
+        reviewExecutionFullScopeSha256: executionBindings.review_execution_full_scope_sha256,
+        reviewExecutionCompleteScopeLineageSha256:
+            executionBindings.review_execution_complete_scope_lineage_sha256,
+        reviewExecutionFindingReconciliationSha256:
+            executionBindings.review_execution_finding_reconciliation_sha256,
+        reviewArtifactSha256: artifactSha256
+    }) as unknown as Record<string, unknown>;
     writeJson(options.artifactPath.replace(/\.md$/u, '-receipt.json'), {
-        task_id: options.taskId,
-        review_type: options.reviewType,
+        ...receipt,
         review_output_sha256: artifactSha256,
-        review_artifact_sha256: artifactSha256,
-        review_context_sha256: contextSha256,
-        review_tree_state_sha256: options.treeStateSha256,
         review_findings_validation: {
             artifact_path: validationArtifactPath.replace(/\\/g, '/'),
             artifact_sha256: validationArtifactSha256,
@@ -86,6 +135,21 @@ function writeAcceptedFindingsValidationReceipt(options: {
             accepted: validationArtifact.validation_result.accepted,
             validation_result_sha256: validationArtifact.validation_result_sha256,
             violation_count: validationArtifact.validation_result.violations.length
+        },
+        review_output_contract: {
+            schema_version: 1,
+            format: 'findings_json',
+            report_sha256: sha256Text(`${JSON.stringify(validation.report, null, 2)}\n`),
+            validation_artifact_sha256: validationArtifactSha256,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            raw_output_sha256: artifactSha256,
+            review_artifact_sha256: artifactSha256,
+            review_context_sha256: contextSha256,
+            review_tree_state_sha256: options.treeStateSha256,
+            coverage_contract_sha256: String(options.coverageContract.contract_sha256 || ''),
+            ...executionBindings,
+            reviewer_identity: null,
+            reviewer_provenance_event_sha256: null
         }
     });
 }
@@ -175,6 +239,86 @@ function buildMissingFocusedValidationReport(options: {
 }
 
 describe('gates/required-reviews-check core helpers', () => {
+    it('rejects a forged tiny-change override when a custom review lane is required', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'required-review-custom-override-'));
+        try {
+            const taskId = 'T-custom-review-override';
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const configDir = path.join(orchestratorRoot, 'live', 'config');
+            const reviewsDir = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const catalogConfig = {
+                version: 1,
+                custom_review_types: [{
+                    id: 'architecture-boundary',
+                    display_label: 'Architecture boundary review',
+                    enabled_by_default: false,
+                    skill_id: 'code-review',
+                    trigger: { mode: 'manual' },
+                    coverage_category_ids: ['maintainability'],
+                    reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['boundaries'] }
+                }]
+            };
+            fs.writeFileSync(
+                path.join(configDir, 'review-catalog.json'),
+                `${JSON.stringify(catalogConfig, null, 2)}\n`,
+                'utf8'
+            );
+
+            const catalog = normalizeReviewCatalog(catalogConfig);
+            const capabilities = Object.fromEntries(
+                catalog.review_types.map(({ id }) => [id, true])
+            ) as ReviewCapabilitiesConfigMap;
+            const profilePolicy = resolveProfileReviewCatalogPolicy(
+                'balanced',
+                { code: true, 'architecture-boundary': true },
+                capabilities,
+                catalog
+            );
+            const profileSnapshotSha256 = 'a'.repeat(64);
+            const snapshot = buildEffectiveReviewSnapshot({
+                catalog,
+                profilePolicy,
+                profileSnapshotSha256,
+                legacyRequiredReviews: Object.fromEntries(
+                    catalog.review_types.map(({ id }) => [id, id === 'code'])
+                ),
+                scopeCategory: 'code',
+                taskIntent: 'Exercise the custom review override guard',
+                changedFiles: ['src/app.ts'],
+                taskTriggers: {}
+            });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeJson(preflightPath, {
+                task_id: taskId,
+                mode: 'FULL_PATH',
+                metrics: { changed_lines_total: 1 },
+                changed_files: ['src/app.ts'],
+                required_reviews: snapshot.required_reviews,
+                profile_policy_snapshot: { snapshot_hash: profileSnapshotSha256 },
+                effective_review_snapshot: snapshot
+            });
+
+            const result = runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                skipReviews: 'code',
+                skipReason: 'Regression coverage for a required custom review lane.',
+                emitMetrics: false
+            });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.ok(result.outputLines.some((line) => line.includes(
+                'Code review override is not allowed for this change scope.'
+            )), result.outputLines.join('\n'));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     describe('parseSkipReviews', () => {
         it('parses comma-separated list', () => {
             assert.deepEqual(parseSkipReviews('code,db,security'), ['code', 'db', 'security']);
@@ -588,6 +732,165 @@ describe('gates/required-reviews-check core helpers', () => {
             };
             assert.equal(detectZeroDiffFromPreflight(preflight), false);
         });
+    });
+
+    it('fails the review gate when a custom downstream lane started before its frozen graph dependency passed', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-graph-order-'));
+        const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+        const eventsRoot = path.join(repoRoot, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(eventsRoot, { recursive: true });
+        const taskId = 'T-729-5C-required-order';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const preflightPayload = {
+            task_id: taskId,
+            required_reviews: { code: true, 'architecture-boundary': true, test: true },
+            review_execution_policy: {
+                mode: 'parallel_all',
+                dependency_graph: reviewDependencyGraph
+            },
+            effective_review_snapshot: {
+                review_dependency_graph: reviewDependencyGraph
+            }
+        };
+        writeJson(preflightPath, preflightPayload);
+        fs.writeFileSync(path.join(eventsRoot, `${taskId}.jsonl`), [
+            { event_type: 'COMPILE_GATE_PASSED', details: {} },
+            { event_type: 'REVIEW_PHASE_STARTED', details: { review_type: 'architecture-boundary' } },
+            { event_type: 'REVIEW_RECORDED', details: { review_type: 'code' } },
+            { event_type: 'REVIEW_PHASE_STARTED', details: { review_type: 'test' } },
+            { event_type: 'REVIEW_RECORDED', details: { review_type: 'architecture-boundary' } }
+        ].map((event) => JSON.stringify(event)).join('\n'), 'utf8');
+
+        const result = checkRequiredReviews({
+            validatedPreflight: {
+                errors: [],
+                resolved_task_id: taskId,
+                required_reviews: preflightPayload.required_reviews,
+                review_contracts: [
+                    ['code', 'CODE REVIEW PASSED'],
+                    ['architecture-boundary', 'ARCHITECTURE BOUNDARY REVIEW PASSED'],
+                    ['test', 'TEST REVIEW PASSED']
+                ],
+                preflight_path: preflightPath,
+                preflight_hash: sha256File(preflightPath)
+            },
+            verdicts: {
+                code: 'CODE REVIEW PASSED',
+                'architecture-boundary': 'ARCHITECTURE BOUNDARY REVIEW PASSED',
+                test: 'TEST REVIEW PASSED'
+            },
+            preflightPayload
+        });
+
+        assert.equal(result.status, 'FAILED');
+        assert.equal(result.review_dependency_graph_sha256, reviewDependencyGraph.graph_sha256);
+        assert.ok(result.violations.some((violation) => (
+            violation.includes("Required review 'architecture-boundary' started before upstream review 'code' completed")
+        )));
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('uses task sequence instead of JSONL line order for custom dependency enforcement', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-task-sequence-'));
+        const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+        const eventsRoot = path.join(repoRoot, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(eventsRoot, { recursive: true });
+        const taskId = 'T-729-5C-required-sequence';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary'],
+            activeLaneIds: ['code', 'architecture-boundary'],
+            requiredReviewIds: ['code', 'architecture-boundary'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary'],
+                dependencies: { 'architecture-boundary': ['code'] }
+            }
+        });
+        const preflightPayload = {
+            task_id: taskId,
+            required_reviews: { code: true, 'architecture-boundary': true },
+            review_execution_policy: {
+                mode: 'parallel_all',
+                dependency_graph: reviewDependencyGraph
+            },
+            effective_review_snapshot: {
+                review_dependency_graph: reviewDependencyGraph
+            }
+        };
+        writeJson(preflightPath, preflightPayload);
+        fs.writeFileSync(path.join(eventsRoot, `${taskId}.jsonl`), [
+            {
+                event_type: 'COMPILE_GATE_PASSED',
+                details: {},
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: 1,
+                    prev_event_sha256: null,
+                    event_sha256: 'a'.repeat(64)
+                }
+            },
+            {
+                event_type: 'REVIEW_RECORDED',
+                details: { review_type: 'code' },
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: 4,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }
+            },
+            {
+                event_type: 'REVIEW_PHASE_STARTED',
+                details: { review_type: 'architecture-boundary' },
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: 3,
+                    prev_event_sha256: 'b'.repeat(64),
+                    event_sha256: 'c'.repeat(64)
+                }
+            }
+        ].map((event) => JSON.stringify(event)).join('\n'), 'utf8');
+
+        const result = checkRequiredReviews({
+            validatedPreflight: {
+                errors: [],
+                resolved_task_id: taskId,
+                required_reviews: preflightPayload.required_reviews,
+                review_contracts: [
+                    ['code', 'CODE REVIEW PASSED'],
+                    ['architecture-boundary', 'ARCHITECTURE BOUNDARY REVIEW PASSED']
+                ],
+                preflight_path: preflightPath,
+                preflight_hash: sha256File(preflightPath)
+            },
+            verdicts: {
+                code: 'CODE REVIEW PASSED',
+                'architecture-boundary': 'ARCHITECTURE BOUNDARY REVIEW PASSED'
+            },
+            preflightPayload
+        });
+
+        assert.equal(result.status, 'FAILED');
+        assert.ok(result.violations.some((violation) => (
+            violation.includes("Required review 'architecture-boundary' started before upstream review 'code' completed")
+        )));
+        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
     describe('validateZeroDiffForReviewGate', () => {

@@ -2,9 +2,11 @@ export * from './types';
 export * from './action-common';
 export * from './workspace-actions';
 export * from './task-actions';
+export * from './task-closure-policy-actions';
 export * from './workflow-setting-actions';
 export * from './backup-actions';
 export * from './cleanup-settings-actions';
+export * from './review-catalog-actions';
 
 import { buildUiBackupActionDefinitions } from './backup-actions';
 import { buildUiWorkspaceActionDefinitions } from './workspace-actions';

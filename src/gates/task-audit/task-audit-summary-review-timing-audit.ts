@@ -21,18 +21,7 @@ import type {
     FinalCloseoutReviewTimingAuditEntry,
     FinalCloseoutReviewTimingAuditSummary
 } from './task-audit-summary-types';
-
-const REVIEW_TIMING_AUDIT_TYPES = [
-    'code',
-    'db',
-    'security',
-    'refactor',
-    'test',
-    'api',
-    'performance',
-    'infra',
-    'dependency'
-] as const;
+import { collectEffectiveReviewTypeIds } from './task-audit-summary-review-common';
 
 function asAuditRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -243,13 +232,14 @@ export function buildReviewTimingAuditSummary(
     reviewsRoot: string,
     taskId: string,
     events: readonly TaskAuditEvent[],
-    _repoRoot: string
+    _repoRoot: string,
+    currentPreflight?: Record<string, unknown> | null
 ): FinalCloseoutReviewTimingAuditSummary | null {
     const compileSequence = latestCompileSequence(events);
     const entries: FinalCloseoutReviewTimingAuditEntry[] = [];
     const seenReceiptHashes = new Set<string>();
 
-    for (const reviewType of REVIEW_TIMING_AUDIT_TYPES) {
+    for (const reviewType of collectEffectiveReviewTypeIds(currentPreflight)) {
         for (const receiptPath of listReviewReceiptPaths(reviewsRoot, taskId, reviewType)) {
             const entry = buildReviewTimingAuditEntry(taskId, reviewType, receiptPath, events, compileSequence);
             if (entry) {

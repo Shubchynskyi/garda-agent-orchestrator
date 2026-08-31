@@ -27,7 +27,10 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         actionsEnabled: true
     });
     try {
-        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const dashboardHtml = await (await fetch(server.url)).text();
+        const actionToken = extractActionToken(dashboardHtml);
+        assert.match(dashboardHtml, /profile-new-task-decomposition/u);
+        assert.match(dashboardHtml, /Guarded task decomposition/u);
         const actionHeaders = {
             'content-type': 'application/json',
             'origin': server.url.slice(0, -1),
@@ -60,7 +63,28 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
                 source: string;
                 protected: boolean;
                 active: boolean;
+                task_decomposition: {
+                    enabled: boolean;
+                    configured: boolean;
+                    provenance: string;
+                };
                 review_policy: Record<string, boolean | 'auto'>;
+                review_follow_up_policy: {
+                    task_profile: { mode: string; fixed_profile: string | null };
+                };
+                review_follow_up_task_profile_assignment: {
+                    parent_profile: string;
+                    profile: string;
+                    source: string;
+                    configured_mode: string;
+                    diagnostics: string[];
+                };
+                review_remediation_mode_policy: {
+                    configured: boolean;
+                    legacy_full_only: boolean;
+                    policy_id: string;
+                    delta_eligible_review_types: string[];
+                };
             }>;
         };
         assert.equal(list.enabled, true);
@@ -70,6 +94,26 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(list.finding_policy_presets.strict.policy_id, 'strict');
         assert.ok(list.review_types.some((reviewType) => reviewType.id === 'test'));
         assert.ok(list.profiles.some((profile) => profile.name === 'balanced' && profile.protected));
+        const balancedProfile = list.profiles.find((profile) => profile.name === 'balanced');
+        assert.ok(balancedProfile);
+        assert.equal(balancedProfile.task_decomposition.enabled, true);
+        assert.equal(balancedProfile.review_remediation_mode_policy.configured, true);
+        assert.equal(balancedProfile.review_remediation_mode_policy.legacy_full_only, false);
+        assert.deepEqual(
+            balancedProfile.review_remediation_mode_policy.delta_eligible_review_types,
+            ['api', 'code', 'db', 'dependency', 'infra', 'performance', 'refactor', 'security', 'test']
+        );
+        assert.ok([
+            'explicit_profile_config',
+            'legacy_balanced_default'
+        ].includes(balancedProfile.task_decomposition.provenance));
+        assert.deepEqual(balancedProfile.review_follow_up_task_profile_assignment, {
+            parent_profile: 'balanced',
+            profile: 'fast',
+            source: 'one_level_lighter',
+            configured_mode: 'one_level_lighter',
+            diagnostics: ["Follow-up task profile lowered from 'balanced' to 'fast'."]
+        });
 
         const createPayload = {
             operation: 'create',
@@ -77,11 +121,23 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             copy_from: 'balanced',
             description: 'Custom profile',
             depth: '3',
+            task_decomposition: { enabled: true },
             review_policy: {
                 code: 'required',
                 test: 'auto',
                 performance: 'disabled',
                 security: true
+            },
+            review_follow_up_policy: {
+                schema_version: 1,
+                materialization_mode: 'grouped_by_parent',
+                task_profile: {
+                    mode: 'fixed_profile',
+                    fixed_profile: 'fast'
+                }
+            },
+            review_remediation_mode_policy: {
+                delta_eligible_review_types: ['code', 'test']
             }
         };
         const createPreviewResponse = await fetch(`${server.url}api/profiles`, {
@@ -210,13 +266,64 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         const create = await createResponse.json() as { status: string; audit_path: string };
         assert.equal(create.status, 'executed');
         const createdData = JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')) as {
-            user_profiles: Record<string, { depth: number; review_policy: Record<string, unknown> }>;
+            user_profiles: Record<string, {
+                depth: number;
+                task_decomposition: { enabled: boolean };
+                review_policy: Record<string, unknown>;
+                review_follow_up_policy: {
+                    task_profile: { mode: string; fixed_profile: string | null };
+                };
+                review_remediation_mode_policy: {
+                    schema_version: number;
+                    delta_eligible_review_types: string[];
+                    force_full_categories: string[];
+                    max_delta_changed_files: number;
+                    max_delta_changed_lines: number;
+                    max_consecutive_delta_reviews: number;
+                };
+            }>;
         };
         assert.equal(createdData.user_profiles['custom-review'].depth, 3);
+        assert.equal(createdData.user_profiles['custom-review'].task_decomposition.enabled, true);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.code, true);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.test, 'auto');
         assert.equal(createdData.user_profiles['custom-review'].review_policy.performance, false);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.security, true);
+        assert.equal(
+            createdData.user_profiles['custom-review'].review_follow_up_policy.task_profile.mode,
+            'fixed_profile'
+        );
+        assert.equal(
+            createdData.user_profiles['custom-review'].review_follow_up_policy.task_profile.fixed_profile,
+            'fast'
+        );
+        assert.equal(createdData.user_profiles['custom-review'].review_remediation_mode_policy.schema_version, 2);
+        assert.deepEqual(
+            createdData.user_profiles['custom-review'].review_remediation_mode_policy.delta_eligible_review_types,
+            ['code', 'test']
+        );
+        assert.deepEqual(
+            createdData.user_profiles['custom-review'].review_remediation_mode_policy.force_full_categories,
+            ['ambiguous', 'generated_churn', 'global']
+        );
+        assert.deepEqual({
+            files: createdData.user_profiles['custom-review'].review_remediation_mode_policy.max_delta_changed_files,
+            lines: createdData.user_profiles['custom-review'].review_remediation_mode_policy.max_delta_changed_lines,
+            consecutive: createdData.user_profiles['custom-review'].review_remediation_mode_policy.max_consecutive_delta_reviews
+        }, { files: 4, lines: 240, consecutive: 3 });
+        const updatedList = await (await fetch(`${server.url}api/profiles`)).json() as {
+            profiles: Array<{
+                name: string;
+                review_follow_up_task_profile_assignment: {
+                    profile: string;
+                    source: string;
+                };
+            }>;
+        };
+        const customProfile = updatedList.profiles.find((profile) => profile.name === 'custom-review');
+        assert.ok(customProfile);
+        assert.equal(customProfile.review_follow_up_task_profile_assignment.profile, 'fast');
+        assert.equal(customProfile.review_follow_up_task_profile_assignment.source, 'fixed_profile');
         assert.match(fs.readFileSync(create.audit_path, 'utf8'), /"action_id":"profile:create:custom-review"/u);
 
         const unsafePolicyResponse = await fetch(`${server.url}api/profiles`, {
@@ -413,8 +520,36 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             profile_name: 'balanced',
             description: 'Locally edited balanced',
             depth: '1',
-            review_policy: { code: true, test: true }
+            task_decomposition: { enabled: false },
+            review_policy: { code: true, test: true },
+            review_remediation_mode_policy: {
+                delta_eligible_review_types: ['code', 'test']
+            }
         };
+        const beforeInvalidRemediationRequests = fs.readFileSync(profilesPath(repoRoot), 'utf8');
+        for (const reviewRemediationModePolicy of [
+            { delta_eligible_review_types: ['unknown-review'] },
+            {
+                delta_eligible_review_types: ['code'],
+                force_full_categories: []
+            }
+        ]) {
+            const invalidRemediationResponse = await fetch(`${server.url}api/profiles`, {
+                method: 'POST',
+                headers: actionHeaders,
+                body: JSON.stringify({
+                    ...saveBuiltInPayload,
+                    mode: 'preview',
+                    review_remediation_mode_policy: reviewRemediationModePolicy
+                })
+            });
+            assert.equal(invalidRemediationResponse.status, 400);
+            assert.equal(
+                (await invalidRemediationResponse.json() as { code: string }).code,
+                'invalid_profile_request'
+            );
+        }
+        assert.equal(fs.readFileSync(profilesPath(repoRoot), 'utf8'), beforeInvalidRemediationRequests);
         const saveBuiltInPreviewSha256 = await previewProfileAction(saveBuiltInPayload);
         const saveBuiltInResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
@@ -434,6 +569,20 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         };
         assert.equal(saveBuiltIn.proposed_value.source, 'built_in');
         assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.depth, 1);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.task_decomposition.enabled,
+            false
+        );
+        const savedBalancedPolicy = JSON.parse(
+            fs.readFileSync(profilesPath(repoRoot), 'utf8')
+        ).built_in_profiles.balanced.review_remediation_mode_policy;
+        assert.deepEqual(savedBalancedPolicy.delta_eligible_review_types, ['code', 'test']);
+        assert.deepEqual(savedBalancedPolicy.force_full_categories, ['ambiguous', 'generated_churn', 'global']);
+        assert.deepEqual({
+            files: savedBalancedPolicy.max_delta_changed_files,
+            lines: savedBalancedPolicy.max_delta_changed_lines,
+            consecutive: savedBalancedPolicy.max_consecutive_delta_reviews
+        }, { files: 4, lines: 240, consecutive: 3 });
 
         const localizedCreatePayload = {
             operation: 'create',

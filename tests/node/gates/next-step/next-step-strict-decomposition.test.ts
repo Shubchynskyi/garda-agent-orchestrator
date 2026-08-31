@@ -10,6 +10,21 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
+import {
+    buildStrictDecompositionDecisionRequirement
+} from '../../../../src/gates/next-step/next-step-strict-decomposition-routing';
+import type { NextStepProfileSummary } from '../../../../src/gates/next-step/next-step';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
+import {
+    listSplitRequiredWip
+} from '../../../../src/gates/split-required/split-required-wip-operations';
+import {
+    initGitRepo,
+    runGitFixtureCommand
+} from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -64,6 +79,27 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced test profile',
+                depth: 2,
+                task_decomposition: { enabled: true },
+                review_policy: { code: true, test: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [
@@ -101,6 +137,13 @@ function eventsRoot(repoRoot: string): string {
 function writeJson(filePath: string, payload: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function writePreflightScope(repoRoot: string, taskId: string, changedFiles: string[]): void {
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`), {
+        task_id: taskId,
+        changed_files: changedFiles
+    });
 }
 
 
@@ -225,6 +268,105 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 }
 
+function seedStartedTaskWithFrozenDecompositionPolicy(
+    repoRoot: string,
+    taskId: string,
+    profile: string,
+    enabled: boolean
+): void {
+    const profilesConfigPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'live',
+        'config',
+        'profiles.json'
+    );
+    const profiles = JSON.parse(fs.readFileSync(profilesConfigPath, 'utf8')) as {
+        built_in_profiles: Record<string, unknown>;
+        user_profiles: Record<string, unknown>;
+    };
+    const profileEntry = {
+        description: `${profile} test profile`,
+        depth: 2,
+        task_decomposition: { enabled },
+        review_policy: { code: true, test: 'auto' },
+        token_economy: {
+            enabled: true,
+            strip_examples: true,
+            strip_code_blocks: true,
+            scoped_diffs: true,
+            compact_reviewer_output: true
+        },
+        skills: { auto_suggest: true }
+    };
+    if (profile === 'custom-review') {
+        profiles.user_profiles[profile] = profileEntry;
+    } else {
+        profiles.built_in_profiles[profile] = profileEntry;
+    }
+    writeJson(profilesConfigPath, profiles);
+
+    const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+        path.join(repoRoot, 'garda-agent-orchestrator'),
+        profile,
+        {
+            reviewExecutionPolicyMode: 'code_first_optional',
+            reviewExecutionPolicyConfigured: true,
+            fullSuiteValidationEnabled: false,
+            fullSuiteValidationPlacement: 'after_compile_before_reviews',
+            lockTimestampUtc: '2026-04-25T00:00:00.000Z'
+        }
+    );
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+    writeJson(taskModePath, buildTaskModeArtifact({
+        taskId,
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Seeded next-step task',
+        startBanner: 'Garda captures my mind',
+        provider: 'Codex',
+        canonicalSourceOfTruth: 'Codex',
+        executionProviderSource: 'explicit_provider',
+        runtimeIdentityStatus: 'resolved',
+        taskProfile: profile,
+        profileSelectionSource: 'task_queue',
+        activeProfile: profile,
+        profileSource: profile === 'custom-review' ? 'user' : 'built_in',
+        runtimeActiveProfile: 'balanced',
+        runtimeProfileSource: 'built_in',
+        profilePolicySnapshot
+    }));
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
+    appendEvent(
+        repoRoot,
+        taskId,
+        'TASK_MODE_ENTERED',
+        'PASS',
+        buildTaskModeTimelineDetails(taskModePath, profilePolicySnapshot)
+    );
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
+    appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+    appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function buildTaskModeTimelineDetails(
+    taskModePath: string,
+    profilePolicySnapshot: TaskProfilePolicySnapshot
+): Record<string, unknown> {
+    return {
+        artifact_path: normalizeForTimeline(taskModePath),
+        start_banner: 'Garda captures my mind',
+        canonical_source_of_truth: 'Codex',
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        runtime_identity_violations: [],
+        profile_policy_snapshot_required: true,
+        profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash
+    };
+}
+
 
 
 function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT', taskModePath = ''): void {
@@ -286,6 +428,112 @@ afterEach(() => {
 });
 
 describe('gates/next-step strict decomposition', () => {
+    function profileSummary(profile: string, enabled: boolean): NextStepProfileSummary {
+        return {
+            task_selected_profile: profile,
+            profile_selection_source: 'task_queue',
+            effective_profile: profile,
+            effective_profile_source: 'built_in',
+            runtime_active_profile: 'balanced',
+            runtime_active_profile_source: 'built_in',
+            task_decomposition_enabled: enabled,
+            task_decomposition_configured: true,
+            task_decomposition_provenance: 'explicit_profile_config',
+            requested_depth: 2,
+            effective_depth: 2,
+            depth_escalation_reason: null,
+            total_forecast_tokens: null,
+            effective_forecast_tokens: null,
+            token_economy_active_for_depth: null
+        };
+    }
+
+    it('uses frozen decomposition capability instead of profile name as routing authority', () => {
+        const taskEntry = {
+            taskId: TASK_ID,
+            status: 'IN_PROGRESS',
+            area: 'workflow/decomposition',
+            title: 'Generalize guarded decomposition routing',
+            profile: 'balanced',
+            notes: 'Crosses profile, UI, routing, and audit boundaries.'
+        };
+        const balancedEnabled = buildStrictDecompositionDecisionRequirement({
+            taskId: TASK_ID,
+            taskEntry,
+            taskMode: { task_summary: 'Seeded next-step task' },
+            preflight: null,
+            profileSummary: profileSummary('balanced', true),
+            requiredReviewTypes: ['code', 'security']
+        });
+        const strictDisabled = buildStrictDecompositionDecisionRequirement({
+            taskId: TASK_ID,
+            taskEntry: { ...taskEntry, profile: 'strict' },
+            taskMode: { task_summary: 'Seeded next-step task' },
+            preflight: null,
+            profileSummary: profileSummary('strict', false),
+            requiredReviewTypes: ['code', 'security']
+        });
+
+        assert.equal(balancedEnabled.required, true);
+        assert.equal(balancedEnabled.taskProfile, 'balanced');
+        assert.equal(strictDisabled.required, false);
+    });
+
+    it('routes from the persisted task-mode decomposition capability instead of the profile name', () => {
+        const scenarios = [
+            { profile: 'balanced', enabled: true, expectedGate: 'record-strict-decomposition-decision' },
+            { profile: 'strict', enabled: false, expectedGate: 'classify-change' },
+            { profile: 'custom-review', enabled: false, expectedGate: 'classify-change' }
+        ] as const;
+
+        for (const scenario of scenarios) {
+            const repoRoot = makeTempRepo();
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                `| ${TASK_ID} | TODO | P1 | workflow/decomposition | Generalize guarded decomposition routing | gpt-5.4 | 2026-05-20 | ${scenario.profile} | Crosses profile, UI, routing, and audit boundaries. |`,
+                ''
+            ].join('\n'), 'utf8');
+            seedStartedTaskWithFrozenDecompositionPolicy(
+                repoRoot,
+                TASK_ID,
+                scenario.profile,
+                scenario.enabled
+            );
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, scenario.expectedGate, scenario.profile);
+            assert.equal(result.profile?.task_decomposition_enabled, scenario.enabled, scenario.profile);
+            assert.equal(
+                result.profile?.task_decomposition_provenance,
+                'explicit_profile_config',
+                scenario.profile
+            );
+        }
+    });
+
+    it('fails closed to persisted disabled strict decomposition instead of the legacy profile default', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/decomposition | Generalize guarded decomposition routing | gpt-5.4 | 2026-05-20 | strict | Crosses profile, UI, routing, and audit boundaries. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTaskWithFrozenDecompositionPolicy(repoRoot, TASK_ID, 'strict', false);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.profile?.task_decomposition_enabled, false);
+        assert.equal(result.profile?.task_decomposition_provenance, 'explicit_profile_config');
+    });
+
     it('routes risky strict tasks to a decomposition decision before classify-change', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -303,10 +551,11 @@ describe('gates/next-step strict decomposition', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'record-strict-decomposition-decision');
-        assert.ok(result.reason.includes('requires a current strict decomposition decision'));
+        assert.ok(result.reason.includes('requires a current decomposition decision'));
         assert.ok(result.reason.includes('EVIDENCE_FILE_MISSING'));
         assert.ok(result.reason.includes('task_text:decomposition'));
         assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
+        assert.ok(result.commands[0].command.includes('--task-profile "strict"'));
         assert.ok(result.commands[0].command.includes('--task-summary "Seeded next-step task"'));
         assert.ok(result.commands[0].command.includes('--expected-review-type "none"'));
         assert.ok(result.commands[0].command.includes(
@@ -516,11 +765,15 @@ describe('gates/next-step strict decomposition', () => {
             taskSummary: 'Seeded next-step task',
             proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
         });
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflightScope(repoRoot, TASK_ID, ['src/app.ts']);
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
         const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+        const wip = listSplitRequiredWip({ repoRoot, taskId: TASK_ID });
 
         assert.equal(result.status, 'DECOMPOSED');
         assert.equal(result.next_gate, 'child-task');
@@ -528,9 +781,49 @@ describe('gates/next-step strict decomposition', () => {
         assert.ok(result.reason.includes('linked parent-derived strict child tasks match the decision artifact'));
         assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
         assert.ok(result.reason.includes('exclude suspended siblings'));
-        assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | 🟪 DECOMPOSED |`));
         assert.ok(events.includes('"event_type":"STRICT_DECOMPOSITION_SPLIT_ROUTED"'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_WIP_CAPTURED"'));
+        assert.equal(wip.status, 'FOUND');
+        assert.equal(wip.manifests.length, 1);
+        assert.equal(wip.manifests[0].guard_kind, 'strict_decomposition');
+        assert.deepEqual(wip.manifests[0].tracked_files, ['src/app.ts']);
+        assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
         assert.ok(text.includes('Status: DECOMPOSED'));
+    });
+
+    it('suspends legacy parent WIP before routing an already decomposed strict parent to a child', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | DECOMPOSED | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-2\`. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | Validate split evidence | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Route child execution | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
+        });
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflightScope(repoRoot, TASK_ID, ['src/app.ts']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const wip = listSplitRequiredWip({ repoRoot, taskId: TASK_ID });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes(`next-step "${TASK_ID}-1"`));
+        assert.equal(wip.status, 'FOUND');
+        assert.equal(wip.manifests[0].guard_kind, 'strict_decomposition');
+        assert.deepEqual(wip.manifests[0].tracked_files, ['src/app.ts']);
+        assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
     });
 
     it('blocks strict split-required routing when a proposed child is not strict', () => {

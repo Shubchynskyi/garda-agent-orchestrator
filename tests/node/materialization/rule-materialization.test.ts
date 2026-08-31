@@ -32,6 +32,39 @@ function findRepoRoot() {
     throw new Error('Cannot resolve repo root.');
 }
 
+describe('review catalog materialization contracts', () => {
+    it('keeps canonical task, skill, and provider guidance compact and legacy-compatible', () => {
+        const repoRoot = findRepoRoot();
+        const taskWorkflow = fs.readFileSync(
+            path.join(repoRoot, 'template', 'docs', 'agent-rules', '80-task-workflow.md'),
+            'utf8'
+        );
+        const skillCatalog = fs.readFileSync(
+            path.join(repoRoot, 'template', 'docs', 'agent-rules', '90-skill-catalog.md'),
+            'utf8'
+        );
+        const providerIndex = fs.readFileSync(
+            path.join(repoRoot, 'template', 'entrypoints', 'canonical-rule-index.md'),
+            'utf8'
+        );
+
+        for (const marker of [
+            '## Review Catalog Context Contract',
+            'Built-in review lanes and their canonical verdict tokens remain compatibility-owned',
+            'Custom review lanes are declarative and disabled by default',
+            'immutable current-task catalog/policy snapshot',
+            'Do not load `live/config/review-catalog.json` into normal task or reviewer context',
+            '`review-catalog list|show|explain|validate`'
+        ]) {
+            assert.ok(taskWorkflow.includes(marker), `task workflow should include ${marker}`);
+        }
+        assert.ok(skillCatalog.includes('absence remains compatible with the built-in review lanes'));
+        assert.ok(skillCatalog.includes('Do not read the complete review catalog'));
+        assert.ok(providerIndex.includes('immutable current-task review snapshot'));
+        assert.ok(providerIndex.includes('must not load the full optional `review-catalog.json`'));
+    });
+});
+
 describe('RULE_FILES', () => {
     it('contains all 12 standard rule files', () => {
         assert.equal(RULE_FILES.length, 12);

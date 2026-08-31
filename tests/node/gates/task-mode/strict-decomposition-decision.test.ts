@@ -422,6 +422,33 @@ describe('gates/strict-decomposition-decision', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('rejects foreign parent profile evidence while supporting balanced parents and strict children', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'strict-decomposition-balanced-profile-'));
+        const taskSummary = 'Decompose a balanced parent whose frozen profile enables guarded decomposition.';
+        const artifact = buildStrictDecompositionDecisionArtifact({
+            taskId: 'T-100',
+            decision: 'single-cycle',
+            taskProfile: 'balanced',
+            taskSummary,
+            reason: 'The frozen balanced capability requires the same explicit lifecycle decision.',
+            scopeRisk: 'The task crosses policy, routing, UI, and evidence boundaries.',
+            expectedReviewTypes: ['code'],
+            atomicityConstraints: ['Keep the frozen capability and routing contract together.']
+        });
+        assert.equal(artifact.task_profile, 'balanced');
+        writeJsonArtifact(resolveStrictDecompositionDecisionArtifactPath(repoRoot, 'T-100'), artifact);
+
+        assert.equal(
+            getStrictDecompositionDecisionEvidence(repoRoot, 'T-100', '', taskSummary, 'balanced').evidence_status,
+            'PASS'
+        );
+        assert.equal(
+            getStrictDecompositionDecisionEvidence(repoRoot, 'T-100', '', taskSummary, 'strict').evidence_status,
+            'EVIDENCE_TASK_PROFILE_MISMATCH'
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('accepts legacy non-split evidence without work package contract fields', () => {
         for (const decision of ['atomic', 'single-cycle'] as const) {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), `strict-decomposition-legacy-${decision}-`));

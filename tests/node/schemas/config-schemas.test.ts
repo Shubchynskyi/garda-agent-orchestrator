@@ -236,6 +236,17 @@ test('template review-capabilities.json validates against schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('review-capabilities schema accepts catalog-backed boolean lanes and rejects non-boolean values', () => {
+    const data = readTemplateConfig('review-capabilities.json') as Record<string, unknown>;
+    data.architecture = false;
+    const accepted = validateAgainstSchema(data, reviewCapabilitiesSchema);
+    assert.equal(accepted.valid, true, `Errors: ${JSON.stringify(accepted.errors)}`);
+
+    data.architecture = 'enabled';
+    const rejected = validateAgainstSchema(data, reviewCapabilitiesSchema);
+    assert.equal(rejected.valid, false);
+});
+
 test('template token-economy.json validates against schema', () => {
     const data = readTemplateConfig('token-economy.json');
     const result = validateAgainstSchema(data, tokenEconomySchema);
@@ -294,6 +305,97 @@ test('template profiles.json validates against schema', () => {
     const data = readTemplateConfig('profiles.json');
     const result = validateAgainstSchema(data, profilesSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('profiles schema requires exact conservative remediation policy when explicitly configured', () => {
+    const template = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const invalid = structuredClone(template);
+    const policy = (
+        invalid.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    policy.force_full_categories = ['ambiguous', 'global'];
+    const invalidResult = validateAgainstSchema(invalid, profilesSchema);
+    assert.equal(invalidResult.valid, false);
+    assert.ok(invalidResult.errors.some((error) => error.message.includes('oneOf schemas')));
+
+    const allDisabled = structuredClone(template);
+    const allDisabledPolicy = (
+        allDisabled.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    allDisabledPolicy.delta_eligible_review_types = [];
+    assert.equal(validateAgainstSchema(allDisabled, profilesSchema).valid, true);
+
+    const customLane = structuredClone(template);
+    const customLanePolicy = (
+        customLane.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    customLanePolicy.delta_eligible_review_types = ['custom-quality'];
+    assert.equal(validateAgainstSchema(customLane, profilesSchema).valid, true);
+
+    const malformedCustomLane = structuredClone(template);
+    const malformedCustomLanePolicy = (
+        malformedCustomLane.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    malformedCustomLanePolicy.delta_eligible_review_types = ['custom_lane'];
+    assert.equal(validateAgainstSchema(malformedCustomLane, profilesSchema).valid, false);
+
+    const legacyWithNewLane = structuredClone(template);
+    const legacyPolicy = (
+        legacyWithNewLane.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy as Record<string, unknown>;
+    legacyPolicy.schema_version = 1;
+    legacyPolicy.delta_eligible_review_types = ['code', 'security'];
+    assert.equal(validateAgainstSchema(legacyWithNewLane, profilesSchema).valid, false);
+
+    const legacy = structuredClone(template);
+    delete (
+        legacy.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_remediation_mode_policy;
+    assert.equal(validateAgainstSchema(legacy, profilesSchema).valid, true);
+});
+
+test('profiles schema enforces follow-up task profile mode and fixed profile combinations', () => {
+    const template = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const buildCandidate = (mode: string, fixedProfile: string | null): Record<string, unknown> => {
+        const candidate = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+        const builtInProfiles = candidate.built_in_profiles as Record<string, Record<string, unknown>>;
+        const followUpPolicy = builtInProfiles.balanced.review_follow_up_policy as Record<string, unknown>;
+        followUpPolicy.task_profile = { mode, fixed_profile: fixedProfile };
+        return candidate;
+    };
+
+    for (const [mode, fixedProfile] of [
+        ['one_level_lighter', null],
+        ['inherit_parent', null],
+        ['fixed_profile', 'fast']
+    ] as const) {
+        const result = validateAgainstSchema(buildCandidate(mode, fixedProfile), profilesSchema);
+        assert.equal(result.valid, true, `Expected ${mode}/${String(fixedProfile)} to be valid: ${JSON.stringify(result.errors)}`);
+    }
+
+    for (const [mode, fixedProfile] of [
+        ['one_level_lighter', 'fast'],
+        ['inherit_parent', 'fast'],
+        ['fixed_profile', null]
+    ] as const) {
+        const result = validateAgainstSchema(buildCandidate(mode, fixedProfile), profilesSchema);
+        assert.equal(result.valid, false, `Expected ${mode}/${String(fixedProfile)} to be rejected.`);
+        assert.ok(result.errors.some((error) => error.path.includes('task_profile')));
+    }
+});
+
+test('profiles schema preserves boolean and auto catalog review state encoding', () => {
+    const data = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const builtInProfiles = clone.built_in_profiles as Record<string, Record<string, unknown>>;
+    const reviewPolicy = builtInProfiles.balanced.review_policy as Record<string, unknown>;
+    reviewPolicy['architecture-boundary'] = false;
+    assert.equal(validateAgainstSchema(clone, profilesSchema).valid, true);
+
+    reviewPolicy['architecture-boundary'] = 'required';
+    const invalid = validateAgainstSchema(clone, profilesSchema);
+    assert.equal(invalid.valid, false);
+    assert.ok(invalid.errors.some((error) => error.path.includes('architecture-boundary')));
 });
 
 test('profiles schema rejects named review_finding_policy preset mismatches', () => {
@@ -628,11 +730,15 @@ test('validateAgainstSchema catches wrong type', () => {
 
 test('validateAgainstSchema catches additional properties when disallowed', () => {
     const data = {
-        code: true, db: true, security: true, refactor: true,
-        api: true, test: true, performance: true, infra: true, dependency: true,
+        known_key: true,
         extra_key: true
     };
-    const result = validateAgainstSchema(data, reviewCapabilitiesSchema);
+    const result = validateAgainstSchema(data, {
+        type: 'object',
+        properties: { known_key: { type: 'boolean' } },
+        required: ['known_key'],
+        additionalProperties: false
+    });
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.message.includes("'extra_key'")));
 });
@@ -681,6 +787,21 @@ test('validateAgainstSchema validates triggers minProperties in paths', () => {
     const result = validateAgainstSchema(data, pathsSchema);
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.message.includes('minimum')));
+});
+
+test('profiles schema accepts only the exact task decomposition policy shape', () => {
+    const profiles = readTemplateConfig('profiles.json') as {
+        built_in_profiles: Record<string, Record<string, unknown>>;
+    };
+    const balanced = profiles.built_in_profiles.balanced;
+
+    assert.equal(validateAgainstSchema(profiles, profilesSchema).valid, true);
+
+    balanced.task_decomposition = { enabled: 'yes' };
+    assert.equal(validateAgainstSchema(profiles, profilesSchema).valid, false);
+
+    balanced.task_decomposition = { enabled: true, unexpected: true };
+    assert.equal(validateAgainstSchema(profiles, profilesSchema).valid, false);
 });
 
 

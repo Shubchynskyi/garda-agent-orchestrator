@@ -2,22 +2,22 @@
   "schemaVersion": 1,
   "package": {
     "name": "garda-agent-orchestrator",
-    "version": "1.3.0"
+    "version": "1.4.0"
   },
   "metrics": {
-    "fileCount": 1333,
-    "unpackedSizeBytes": 15160503,
+    "fileCount": 1377,
+    "unpackedSizeBytes": 16471563,
     "lifecycleScripts": {
       "postpack": "node scripts/package-legacy-entrypoint-compat.cjs remove",
       "prepack": "npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create"
     },
     "riskSignals": {
       "child_process": 22,
-      "exec": 138,
-      "fetch": 34,
-      "fs": 2815,
-      "readFile": 386,
-      "writeFile": 111
+      "exec": 142,
+      "fetch": 39,
+      "fs": 3020,
+      "readFile": 419,
+      "writeFile": 117
     }
   },
   "allowedGrowth": {
@@ -32,5 +32,5 @@
       "writeFile": 0
     }
   },
-  "rationale": "Profile lock release now atomically claims and authenticates owned lock files before unlinking replacement-sensitive cleanup guards."
+  "rationale": "Release 1.4.0 adds the extensible review catalog, authenticated remediation, workflow manifests, operator UI controls, legacy compatibility handling, and audited release fixes without production dependencies or consumer install-time scripts."
 }

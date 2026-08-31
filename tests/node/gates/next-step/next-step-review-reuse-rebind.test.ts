@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fx from './next-step-review-reuse-fixtures';
+import {
+    isFullSuiteSatisfiedBySemanticCycleResume,
+    isReviewSatisfiedBySemanticCycleResume
+} from '../../../../src/gates/next-step/next-step-review-reuse-routing';
 const {
     ALL_REVIEW_FLAGS,
     appendEvent,
@@ -95,6 +99,40 @@ function materializeCurrentStrictReuse(repoRoot: string, taskId: string, reviewT
 }
 
 describe('gates/next-step review reuse rebind routing', () => {
+    it('accepts only review lanes named by a reusable semantic-cycle transaction', () => {
+        assert.equal(isReviewSatisfiedBySemanticCycleResume({
+            reviewType: 'security',
+            ordinarySatisfied: false,
+            semanticResumeReusable: true,
+            acceptedReviewTypes: ['code', 'security']
+        }), true);
+        assert.equal(isReviewSatisfiedBySemanticCycleResume({
+            reviewType: 'api',
+            ordinarySatisfied: false,
+            semanticResumeReusable: true,
+            acceptedReviewTypes: ['code', 'security']
+        }), false);
+        assert.equal(isReviewSatisfiedBySemanticCycleResume({
+            reviewType: 'security',
+            ordinarySatisfied: false,
+            semanticResumeReusable: false,
+            acceptedReviewTypes: ['security']
+        }), false);
+    });
+
+    it('accepts semantic full-suite evidence only while active configuration matches', () => {
+        assert.equal(isFullSuiteSatisfiedBySemanticCycleResume({
+            semanticResumeReusable: true,
+            acceptedFullSuite: true,
+            currentConfigMatches: true
+        }), true);
+        assert.equal(isFullSuiteSatisfiedBySemanticCycleResume({
+            semanticResumeReusable: true,
+            acceptedFullSuite: true,
+            currentConfigMatches: false
+        }), false);
+    });
+
     it('does not treat stale pre-compile review routing as upstream pass evidence', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -759,6 +797,46 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
+    it('advances after current PASS context acceptance resolves the stale upstream gate failure', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        fx.writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            taskProfile: 'balanced',
+            expectedReviewTypes: ['code', 'test']
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_GATE_FAILED', 'FAIL', {
+            violations: [
+                "Review 'code' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle."
+            ]
+        });
+
+        const blocked = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(blocked.next_gate, 'build-review-context', blocked.reason);
+        assert.ok(blocked.commands[0].command.includes('--review-type "code"'));
+
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_CONTEXT_REUSE_ACCEPTED', 'PASS', {
+            review_type: 'code',
+            current_pass_review_evidence: true,
+            output_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`)
+        });
+
+        const recovered = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(recovered.next_gate, 'required-reviews-check', recovered.reason);
+        assert.ok(recovered.commands[0].command.includes('gate required-reviews-check'));
+        assert.ok(!recovered.commands[0].command.includes('build-review-context'));
+    });
+
     it('routes review context hash mismatch failures to upstream recovery instead of fresh reviewer work', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -905,6 +983,19 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.deepEqual(reuseCandidates, [
             'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
             'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
+    });
+
+    it('rejects misleading none diagnostics for historical PASS lanes while authoritative reuse validation is pending', () => {
+        const reuseCandidates = buildReviewReuseCandidatesForDiagnostics(
+            "The existing 'code' PASS evidence is lane-domain current, but its exact review-context/reuse hash " +
+            'eligibility has not been validated for the current preflight. Reuse eligibility validation is still ' +
+            'required before treating that PASS evidence as reusable.',
+            ['code']
+        );
+
+        assert.deepEqual(reuseCandidates, [
+            'code (historical PASS evidence exists; authoritative reuse eligibility is pending build-review-context validation)'
         ]);
     });
 

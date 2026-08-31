@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { isPlainRecord } from '../../core/records';
 import type { ReviewReceipt } from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
 import { fileSha256, normalizePath } from '../shared/helpers';
@@ -9,6 +10,14 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../review-remediation/review-remediation-execution-authority';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
+import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
 import {
     buildUnavailableRequiredReviewTrustSummary,
     readReviewTrustSummary,
@@ -21,7 +30,7 @@ import {
     type TimelineEventEntry
 } from './completion-evidence';
 import {
-    REVIEW_CONTRACTS,
+    resolveCompletionReviewContracts,
     getReviewArtifactFindingsEvidence,
     getReviewFindingsEvidenceFromValidationArtifact
 } from './completion-verdict';
@@ -29,6 +38,7 @@ import { reviewContextRequiresFindingsOnlyArtifact } from '../review/review-find
 import {
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import { getReviewReceiptExecutionEvidenceContractViolations } from '../review/review-evidence-contract';
 import {
     resolveLockedReviewFindingPolicyFromPreflight,
     resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence
@@ -123,9 +133,16 @@ export function collectRequiredReviewEvidence(input: {
         reviewGateTrustSummary
     } = withReviewArtifactReadBarrier(input.reviewsRoot, () => {
         const requiredReviewBooleans = toRequiredReviewBooleanRecord(input.requiredReviews);
+        const repoRoot = path.resolve(input.reviewsRoot, '..', '..', '..');
         const reviewEvidence = readJsonArtifact(input.reviewEvidencePath, 'Review gate', input.errors);
         ensurePassedArtifactStatus(reviewEvidence, 'Review gate', input.errors);
-        for (const [reviewKey] of REVIEW_CONTRACTS) {
+        let reviewContracts: ReturnType<typeof resolveCompletionReviewContracts> = [];
+        try {
+            reviewContracts = resolveCompletionReviewContracts(input.preflight);
+        } catch (error: unknown) {
+            input.errors.push(error instanceof Error ? error.message : String(error));
+        }
+        for (const [reviewKey] of reviewContracts) {
             const required = !!input.requiredReviews[reviewKey];
             if (!required) {
                 continue;
@@ -154,6 +171,20 @@ export function collectRequiredReviewEvidence(input: {
                     const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
                     if (parsedReviewContext && typeof parsedReviewContext === 'object' && !Array.isArray(parsedReviewContext)) {
                         reviewContext = parsedReviewContext as Record<string, unknown>;
+                        const diffExpectations = buildReviewContextPreflightDiffExpectations(input.preflight, reviewKey);
+                        const reviewExecution = isPlainRecord(reviewContext.review_execution)
+                            ? reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+                            : null;
+                        const reviewExecutionValidationAuthority = reviewExecution
+                            ? resolvePersistedRemediationReviewExecutionAuthority({
+                                reviewsRoot: input.reviewsRoot,
+                                taskId: input.taskId,
+                                reviewType: reviewKey,
+                                preflightSha256: input.preflightSha256,
+                                fullReviewScope: diffExpectations.expectedChangedFiles,
+                                reviewExecution
+                            })
+                            : null;
                         input.errors.push(...getReviewContextContractViolations({
                             contextPath: reviewContextPath,
                             reviewContext,
@@ -166,8 +197,9 @@ export function collectRequiredReviewEvidence(input: {
                             requirePreflightPath: true,
                             requirePreflightSha256: true,
                             expectedPreflightPayload: input.preflight,
-                            repoRoot: path.resolve(input.reviewsRoot, '..', '..', '..'),
-                            ...buildReviewContextPreflightDiffExpectations(input.preflight, reviewKey)
+                            repoRoot,
+                            expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
+                            ...diffExpectations
                         }));
                     }
                 } catch {
@@ -181,6 +213,36 @@ export function collectRequiredReviewEvidence(input: {
                     const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
                     if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
                         receipt = parsedReceipt as ReviewReceipt;
+                        const recordedReviewArtifactSha256 = getReceiptString(
+                            receipt,
+                            'review_artifact_sha256'
+                        )?.toLowerCase() ?? null;
+                        const actualReviewArtifactSha256 = fileSha256(artifactPath);
+                        if (
+                            recordedReviewArtifactSha256
+                            && recordedReviewArtifactSha256 !== actualReviewArtifactSha256
+                        ) {
+                            input.errors.push(
+                                `Required review receipt for '${reviewKey}' has review_artifact_sha256 ` +
+                                `that does not match the review artifact hash.`
+                            );
+                        }
+                        input.errors.push(...getReviewReceiptExecutionEvidenceContractViolations({
+                            reviewContext,
+                            receipt: parsedReceipt as Record<string, unknown>
+                        }));
+                        if (isCustomReviewLaneInSnapshot(input.preflight, reviewKey)) {
+                            try {
+                                input.errors.push(...getReviewLaneArtifactEvidenceViolations({
+                                    artifact: parsedReceipt as Record<string, unknown>,
+                                    preflight: input.preflight,
+                                    reviewType: reviewKey,
+                                    label: `Required review receipt for '${reviewKey}'`
+                                }));
+                            } catch (error: unknown) {
+                                input.errors.push(error instanceof Error ? error.message : String(error));
+                            }
+                        }
                     }
                 } catch {
                     input.errors.push(`Required review receipt is invalid JSON: ${normalizePath(receiptPath)}`);
@@ -193,7 +255,6 @@ export function collectRequiredReviewEvidence(input: {
                 if (!receipt) {
                     findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(artifactPath, null);
                 } else {
-                    const repoRoot = path.resolve(input.reviewsRoot, '..', '..', '..');
                     const reusedExistingReview = receipt.reused_existing_review === true;
                     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(input.preflight, repoRoot);
                     const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(reviewKey, input.preflight, repoRoot);
@@ -225,6 +286,7 @@ export function collectRequiredReviewEvidence(input: {
                         expectedCoverageContractSha256: reusedExistingReview
                             ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
                             : getCoverageContractSha256(reviewContext),
+                        expectedReviewContext: reviewContext,
                         requireAccepted: true
                     });
                     input.errors.push(...validationArtifact.violations);
@@ -284,7 +346,9 @@ export function collectRequiredReviewEvidence(input: {
             input.reviewsRoot,
             input.taskId,
             input.scopeCategory,
-            input.preflightSha256
+            input.preflightSha256,
+            input.preflight,
+            repoRoot
         );
         const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
             reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
@@ -293,7 +357,9 @@ export function collectRequiredReviewEvidence(input: {
             requiredReviewBooleans,
             input.taskId,
             input.scopeCategory,
-            input.preflightSha256
+            input.preflightSha256,
+            input.preflight,
+            input.reviewsRoot
         );
         return {
             receiptReviewTrustSummary,

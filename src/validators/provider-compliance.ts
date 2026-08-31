@@ -11,6 +11,7 @@ import { MANAGED_START, MANAGED_END } from '../materialization/content-builders'
 import { getBundlePath } from './workspace-layout';
 import {
     loadIndex,
+    loadTaskIndex,
     entriesByArtifactSuffix,
     type ReviewsIndex,
     type ReviewsIndexEntry
@@ -109,14 +110,19 @@ function checkEntrypoint(
     return item;
 }
 
-function scanHandshakeArtifacts(targetRoot: string): HandshakeArtifactSummary[] {
+function scanHandshakeArtifacts(
+    targetRoot: string,
+    activeTaskId: string | null = null
+): HandshakeArtifactSummary[] {
     const bundlePath = getBundlePath(targetRoot);
     const reviewsDir = path.join(bundlePath, 'runtime', 'reviews');
     if (!pathExists(reviewsDir)) return [];
 
     let index: ReviewsIndex;
     try {
-        const result = loadIndex(reviewsDir, { readOnly: true });
+        const result = activeTaskId
+            ? loadTaskIndex(reviewsDir, activeTaskId)
+            : loadIndex(reviewsDir, { readOnly: true });
         index = result.index;
     } catch {
         return [];
@@ -215,6 +221,8 @@ function scanHandshakeArtifacts(targetRoot: string): HandshakeArtifactSummary[] 
 export interface ProviderComplianceOptions {
     /** When set, only handshake violations for this task affect `passed`. */
     activeTaskId?: string;
+    /** Limit handshake artifact discovery without changing violation severity. */
+    handshakeArtifactTaskId?: string;
 }
 
 function normalizeActiveAgentFilesForCompliance(activeAgentFiles: readonly string[]): {
@@ -312,8 +320,11 @@ export function scanProviderCompliance(
     }
 
     // 5. Scan handshake artifacts
-    const handshakeArtifacts = scanHandshakeArtifacts(resolvedRoot);
     const activeTaskId = options?.activeTaskId;
+    const handshakeArtifacts = scanHandshakeArtifacts(
+        resolvedRoot,
+        options?.handshakeArtifactTaskId || null
+    );
     for (const artifact of handshakeArtifacts) {
         if (artifact.status === 'FAILED' || artifact.status === 'UNREADABLE' || artifact.status === 'MISSING' || artifact.stale) {
             // Only the active task's handshake violations affect workspace

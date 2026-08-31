@@ -12,9 +12,19 @@ export interface ReviewReceipt {
     domain_scope_fingerprints?: DomainScopeFingerprints | null;
     review_context_sha256: string | null;
     review_tree_state_sha256?: string | null;
+    review_execution_mode?: 'FULL' | 'DELTA' | null;
+    review_execution_contract_sha256?: string | null;
+    review_execution_full_scope_sha256?: string | null;
+    review_execution_complete_scope_lineage_sha256?: string | null;
+    review_execution_finding_reconciliation_sha256?: string | null;
     review_context_reuse_sha256?: string | null;
     review_coverage_contract_sha256?: string | null;
     review_rule_context_sha256?: string | null;
+    review_lane_binding_sha256?: string | null;
+    review_lane_definition_sha256?: string | null;
+    effective_review_snapshot_sha256?: string | null;
+    review_catalog_sha256?: string | null;
+    review_verdict_contract_sha256?: string | null;
     review_artifact_sha256: string | null;
     reviewer_execution_mode: string | null;
     reviewer_identity: string | null;
@@ -29,6 +39,11 @@ export interface ReviewReceipt {
     reused_from_review_tree_state_sha256?: string | null;
     reused_from_review_scope_sha256?: string | null;
     reused_from_code_scope_sha256?: string | null;
+    reused_from_review_execution_mode?: 'FULL' | 'DELTA' | null;
+    reused_from_review_execution_contract_sha256?: string | null;
+    reused_from_review_execution_full_scope_sha256?: string | null;
+    reused_from_review_execution_complete_scope_lineage_sha256?: string | null;
+    reused_from_review_execution_finding_reconciliation_sha256?: string | null;
     reused_from_domain_scope_fingerprints?: DomainScopeFingerprints | null;
     recorded_at_utc: string;
     review_result_recorded_at_utc?: string | null;
@@ -62,6 +77,8 @@ export interface ReviewerInvocationAttestationReviewReceiptReviewerProvenance {
     review_context_sha256: string;
     review_tree_state_sha256?: string | null;
     routing_event_sha256: string;
+    reviewer_launch_artifact_path?: string | null;
+    reviewer_launch_artifact_sha256?: string | null;
     launch_prepared_at_utc?: string | null;
     delegation_started_at_utc?: string | null;
     launched_at_utc?: string | null;
@@ -166,6 +183,14 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             ? null
             : normalizeProvenanceSha256(rawReviewTreeStateSha256);
         const routingEventSha256 = normalizeProvenanceSha256(record.routing_event_sha256);
+        const rawReviewerLaunchArtifactPath = record.reviewer_launch_artifact_path
+            ?? record.reviewerLaunchArtifactPath;
+        const reviewerLaunchArtifactPath = normalizeProvenanceText(rawReviewerLaunchArtifactPath);
+        const rawReviewerLaunchArtifactSha256 = record.reviewer_launch_artifact_sha256
+            ?? record.reviewerLaunchArtifactSha256;
+        const reviewerLaunchArtifactSha256 = rawReviewerLaunchArtifactSha256 == null
+            ? null
+            : normalizeProvenanceSha256(rawReviewerLaunchArtifactSha256);
         const rawLaunchPreparedAtUtc = record.launch_prepared_at_utc ?? record.launchPreparedAtUtc;
         const rawDelegationStartedAtUtc = record.delegation_started_at_utc ?? record.delegationStartedAtUtc;
         const rawLaunchedAtUtc = record.launched_at_utc ?? record.launchedAtUtc;
@@ -190,6 +215,8 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             || !reviewContextSha256
             || (rawReviewTreeStateSha256 != null && !reviewTreeStateSha256)
             || !routingEventSha256
+            || (rawReviewerLaunchArtifactPath != null && !reviewerLaunchArtifactPath)
+            || (rawReviewerLaunchArtifactSha256 != null && !reviewerLaunchArtifactSha256)
             || (rawLaunchPreparedAtUtc != null && String(rawLaunchPreparedAtUtc).trim() !== '' && !launchPreparedAtUtc)
             || (rawDelegationStartedAtUtc != null && String(rawDelegationStartedAtUtc).trim() !== '' && !delegationStartedAtUtc)
             || (rawLaunchedAtUtc != null && String(rawLaunchedAtUtc).trim() !== '' && !launchedAtUtc)
@@ -212,6 +239,8 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             review_context_sha256: reviewContextSha256,
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routingEventSha256,
+            reviewer_launch_artifact_path: reviewerLaunchArtifactPath,
+            reviewer_launch_artifact_sha256: reviewerLaunchArtifactSha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
             delegation_started_at_utc: delegationStartedAtUtc,
             launched_at_utc: launchedAtUtc,
@@ -282,6 +311,8 @@ export function buildReviewReceiptReviewerInvocationProvenance(
         review_context_sha256: record.review_context_sha256 ?? record.reviewContextSha256,
         review_tree_state_sha256: record.review_tree_state_sha256 ?? record.reviewTreeStateSha256,
         routing_event_sha256: record.routing_event_sha256 ?? record.routingEventSha256,
+        reviewer_launch_artifact_path: record.reviewer_launch_artifact_path ?? record.reviewerLaunchArtifactPath,
+        reviewer_launch_artifact_sha256: record.reviewer_launch_artifact_sha256 ?? record.reviewerLaunchArtifactSha256,
         launch_prepared_at_utc: record.launch_prepared_at_utc ?? record.launchPreparedAtUtc,
         delegation_started_at_utc: record.delegation_started_at_utc ?? record.delegationStartedAtUtc,
         launched_at_utc: record.launched_at_utc ?? record.launchedAtUtc,
@@ -303,6 +334,11 @@ export function buildReviewReceipt(options: {
     domainScopeFingerprints?: DomainScopeFingerprints | null;
     reviewContextSha256: string | null;
     reviewTreeStateSha256?: string | null;
+    reviewExecutionMode?: 'FULL' | 'DELTA' | null;
+    reviewExecutionContractSha256?: string | null;
+    reviewExecutionFullScopeSha256?: string | null;
+    reviewExecutionCompleteScopeLineageSha256?: string | null;
+    reviewExecutionFindingReconciliationSha256?: string | null;
     reviewContextReuseSha256?: string | null;
     reviewCoverageContractSha256?: string | null;
     reviewRuleContextSha256?: string | null;
@@ -333,6 +369,13 @@ export function buildReviewReceipt(options: {
         domain_scope_fingerprints: options.domainScopeFingerprints ?? null,
         review_context_sha256: options.reviewContextSha256,
         review_tree_state_sha256: options.reviewTreeStateSha256 ?? null,
+        review_execution_mode: options.reviewExecutionMode ?? null,
+        review_execution_contract_sha256: options.reviewExecutionContractSha256 ?? null,
+        review_execution_full_scope_sha256: options.reviewExecutionFullScopeSha256 ?? null,
+        review_execution_complete_scope_lineage_sha256:
+            options.reviewExecutionCompleteScopeLineageSha256 ?? null,
+        review_execution_finding_reconciliation_sha256:
+            options.reviewExecutionFindingReconciliationSha256 ?? null,
         review_context_reuse_sha256: options.reviewContextReuseSha256 ?? null,
         review_artifact_sha256: options.reviewArtifactSha256,
         reviewer_execution_mode: options.reviewerExecutionMode ?? null,

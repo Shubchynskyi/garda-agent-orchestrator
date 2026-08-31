@@ -54,6 +54,8 @@ import {
 import {
     validateReviewFindingsContract
 } from '../../../../../../src/gates/review/review-findings-artifact-verdict';
+import { resolveReviewContextExecutionEvidenceBindings } from '../../../../../../src/gates/review/review-evidence-contract';
+import type { ReviewRemediationReviewContract } from '../../../../../../src/gates/review-remediation/review-remediation-review-contract';
 import {
     materializeReviewFindingsFollowUpTasks
 } from '../../../../../../src/gates/review/review-findings-follow-up-tasks';
@@ -168,6 +170,8 @@ function addBalancedLowFindingToReusableCodeReview(
     const reviewContextSha256 = sha256Text(reviewContextText);
     const reviewTreeStateSha256 = getReviewTreeStateSha256FromFixtureContext(reviewContext);
     const coverageContract = reviewContext.coverage_contract as Record<string, unknown>;
+    const reviewExecution = reviewContext.review_execution as ReviewRemediationReviewContract;
+    const reviewExecutionBindings = resolveReviewContextExecutionEvidenceBindings(reviewContext).bindings!;
     const report = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
     const findings = report.findings as Record<string, unknown[]>;
     const coverageLedger = report.coverage_ledger as Record<string, unknown>;
@@ -197,7 +201,8 @@ function addBalancedLowFindingToReusableCodeReview(
         expectedReviewContextSha256: reviewContextSha256,
         expectedTreeStateSha256: reviewTreeStateSha256 || undefined,
         coverageContract: coverageContract as never,
-        repoRoot
+        repoRoot,
+        expectedReviewExecutionContract: reviewExecution
     });
     assert.equal(validation.valid, true, validation.violations.join('\n'));
     const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
@@ -251,7 +256,7 @@ function addBalancedLowFindingToReusableCodeReview(
         review_artifact_sha256: artifactSha256,
         review_output_sha256: artifactSha256,
         review_output_format: 'findings_json',
-        review_output_schema_version: 1,
+        review_output_schema_version: Number(report.schema_version),
         review_findings_report_sha256: reportSha256,
         review_findings_report: report,
         review_findings_summary: {
@@ -297,6 +302,7 @@ function addBalancedLowFindingToReusableCodeReview(
             review_context_sha256: reviewContextSha256,
             review_tree_state_sha256: reviewTreeStateSha256,
             coverage_contract_sha256: String(coverageContract.contract_sha256 || ''),
+            ...reviewExecutionBindings,
             reviewer_identity: receipt.reviewer_identity,
             reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
         }
@@ -716,6 +722,18 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        const testReviewSkillDir = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'skills',
+            'testing-strategy'
+        );
+        fs.mkdirSync(testReviewSkillDir, { recursive: true });
+        fs.copyFileSync(
+            path.resolve('template/skill-packs/quality-architecture/skills/testing-strategy/SKILL.md'),
+            path.join(testReviewSkillDir, 'SKILL.md')
+        );
         runEnterTaskMode({
             repoRoot,
             taskId,

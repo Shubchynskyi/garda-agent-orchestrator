@@ -27,6 +27,7 @@ export function resolveReviewerResultRecoveryIdentity(options: {
     launchState: DelegatedReviewLaunchArtifactState;
     launchReviewerIdentity: string | null;
     receiptReviewerIdentity: string | null;
+    receiptIdentityCurrent?: boolean;
     contextReviewerIdentity: string | null;
     receivingGateCanResolveCurrentAttempt: boolean;
 }): ReviewerResultRecoveryIdentityResolution {
@@ -39,7 +40,7 @@ export function resolveReviewerResultRecoveryIdentity(options: {
 
     const launchReviewerIdentity = String(options.launchReviewerIdentity || '').trim();
     const supportingIdentityCandidates = [
-        options.receiptReviewerIdentity,
+        options.receiptIdentityCurrent === false ? null : options.receiptReviewerIdentity,
         options.contextReviewerIdentity
     ].map((identity) => String(identity || '').trim()).filter(Boolean);
     if (isPlannedReviewerIdentity(launchReviewerIdentity)) {

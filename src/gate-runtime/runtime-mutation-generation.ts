@@ -455,6 +455,27 @@ function assertValidTransition(previous: RuntimeMutationGenerationState, current
     }
 }
 
+function assertJournalSlotPairConsistency(
+    current: RuntimeMutationGenerationState,
+    other: RuntimeMutationGenerationState
+): void {
+    if (other.transition_sequence === current.transition_sequence - 1) {
+        assertValidTransition(other, current);
+        return;
+    }
+    if (
+        other.transition_sequence === current.transition_sequence + 1
+        && other.transition.type === 'BEGIN'
+    ) {
+        assertValidTransition(current, other);
+        return;
+    }
+    throw new RuntimeMutationGenerationError(
+        'CORRUPT',
+        'Runtime mutation transition sequence is discontinuous or rolled back.'
+    );
+}
+
 function slotForSequence(sequence: number): RuntimeMutationGenerationSlot {
     return sequence % 2 === 0 ? 'a' : 'b';
 }
@@ -475,16 +496,47 @@ function assertCurrentStateMatchesAnchor(
     }
 }
 
+function resolveAnchorCommittedState(
+    paths: RuntimeMutationGenerationPaths,
+    head: RuntimeMutationGenerationHead,
+    headState: RuntimeMutationGenerationState
+): RuntimeMutationGenerationState {
+    try {
+        assertCurrentStateMatchesAnchor(paths, head, headState);
+        return headState;
+    } catch (error: unknown) {
+        const anchor = parseAnchor(paths.anchorPath);
+        const previousSlot: RuntimeMutationGenerationSlot = head.active_slot === 'a' ? 'b' : 'a';
+        const previous = parseState(paths.slotPaths[previousSlot]);
+        const previousHead = createHead(previous);
+        const anchorMatchesPrevious =
+            anchor.transition_sequence === previous.transition_sequence
+            && anchor.generation === previous.generation
+            && anchor.state_sha256 === previous.state_sha256
+            && anchor.head_sha256 === previousHead.head_sha256;
+        if (
+            anchorMatchesPrevious
+            && headState.transition_sequence === previous.transition_sequence + 1
+            && headState.transition.type === 'BEGIN'
+        ) {
+            assertValidTransition(previous, headState);
+            return previous;
+        }
+        throw error;
+    }
+}
+
 function readCurrentState(paths: RuntimeMutationGenerationPaths): RuntimeMutationGenerationState {
     assertJournalDirectory(paths.journalDirectory, false);
     const head = parseHead(paths.headPath);
     if (head.active_slot !== slotForSequence(head.transition_sequence)) {
         throw new RuntimeMutationGenerationError('CORRUPT', 'Runtime mutation generation head slot does not match its sequence.');
     }
-    const current = parseState(paths.slotPaths[head.active_slot]);
-    if (current.transition_sequence !== head.transition_sequence || current.state_sha256 !== head.state_sha256) {
+    const headState = parseState(paths.slotPaths[head.active_slot]);
+    if (headState.transition_sequence !== head.transition_sequence || headState.state_sha256 !== head.state_sha256) {
         throw new RuntimeMutationGenerationError('CORRUPT', 'Runtime mutation generation head does not match the active state.');
     }
+    const current = resolveAnchorCommittedState(paths, head, headState);
     if (current.transition_sequence === 0) {
         if (
             current.generation !== 0
@@ -496,17 +548,17 @@ function readCurrentState(paths: RuntimeMutationGenerationPaths): RuntimeMutatio
         ) {
             throw new RuntimeMutationGenerationError('CORRUPT', 'Initial runtime mutation generation state is invalid.');
         }
-        const otherSlot: RuntimeMutationGenerationSlot = head.active_slot === 'a' ? 'b' : 'a';
+        const currentSlot = slotForSequence(current.transition_sequence);
+        const otherSlot: RuntimeMutationGenerationSlot = currentSlot === 'a' ? 'b' : 'a';
         if (assertRegularJournalFile(paths.slotPaths[otherSlot], true) !== null) {
-            throw new RuntimeMutationGenerationError('CORRUPT', 'Runtime mutation generation contains an unexpected newer or rolled-back slot.');
+            assertJournalSlotPairConsistency(current, parseState(paths.slotPaths[otherSlot]));
         }
-        assertCurrentStateMatchesAnchor(paths, head, current);
         return current;
     }
-    const previousSlot: RuntimeMutationGenerationSlot = head.active_slot === 'a' ? 'b' : 'a';
+    const currentSlot = slotForSequence(current.transition_sequence);
+    const previousSlot: RuntimeMutationGenerationSlot = currentSlot === 'a' ? 'b' : 'a';
     const previous = parseState(paths.slotPaths[previousSlot]);
-    assertValidTransition(previous, current);
-    assertCurrentStateMatchesAnchor(paths, head, current);
+    assertJournalSlotPairConsistency(current, previous);
     return current;
 }
 

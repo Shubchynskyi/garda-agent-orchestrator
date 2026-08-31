@@ -12,6 +12,11 @@ export type ReviewerCapabilityTier = 'delegation_required' | 'delegation_conditi
 export type ProviderBridgeProfileVariant = 'standard' | 'compact_router';
 export type ProviderBridgeSelfReferenceRequirement = 'none' | 'bridge_path';
 
+export interface ReviewOutputCorrectionProviderCapabilities {
+    readonly liveReviewerContinuation: boolean;
+    readonly apiConversationContinuation: boolean;
+}
+
 export interface ProviderEnvironmentDetection {
     /** Environment variables that identify this runtime provider when set. */
     readonly markers: readonly string[];
@@ -32,6 +37,8 @@ export interface ProviderEntry {
     readonly reviewerCapabilityTier: ReviewerCapabilityTier;
     /** Optional provider-specific delegated reviewer launch guidance. */
     readonly delegatedReviewerLaunchInstruction?: string;
+    /** Provider-controller capabilities that remain available through reviewer-output validation. */
+    readonly reviewOutputCorrectionCapabilities?: ReviewOutputCorrectionProviderCapabilities;
     /** Provider orchestrator bridge definition (null when the provider has no dedicated bridge). */
     readonly bridge: ProviderBridgeDefinition | null;
     /** Optional environment-marker based runtime detection metadata. */
@@ -191,6 +198,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         entrypointFile: 'AGENTS.md',
         reviewerCapabilityTier: 'delegation_required',
         delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via multi_agent_v1.spawn_agent with fork_context=false, passing the reviewer-facing CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath (not ReviewerLaunchArtifactPath control metadata).',
+        reviewOutputCorrectionCapabilities: {
+            liveReviewerContinuation: true,
+            apiConversationContinuation: false
+        },
         bridge: null,
         environmentDetection: {
             markers: ['CODEX_THREAD_ID', 'CODEX_HOME'],
@@ -373,6 +384,17 @@ export function getProviderEntryById(providerId: string): ProviderEntry | null {
         return null;
     }
     return PROVIDER_ENTRIES.find((entry) => entry.id.toLowerCase() === normalizedProviderId) || null;
+}
+
+/** Returns provider-controller correction transports available through output validation. */
+export function getReviewOutputCorrectionProviderCapabilities(
+    providerId: string
+): ReviewOutputCorrectionProviderCapabilities {
+    const capabilities = getProviderEntryById(providerId)?.reviewOutputCorrectionCapabilities;
+    return capabilities || {
+        liveReviewerContinuation: false,
+        apiConversationContinuation: false
+    };
 }
 
 /** Normalizes canonical ids, display labels, and explicit aliases to a canonical provider id. */

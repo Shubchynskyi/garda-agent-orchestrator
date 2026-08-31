@@ -137,6 +137,34 @@ test('failed runtime mutation callbacks do not advance generation', () => {
     }
 });
 
+test('runtime mutation generation recovers an interrupted BEGIN before head or anchor publication', () => {
+    for (const interruptionPoint of ['before-head', 'before-anchor'] as const) {
+        const root = createTempRoot(`garda-runtime-generation-${interruptionPoint}-`);
+        try {
+            withRuntimeMutationGeneration(root, 'seed', () => undefined);
+            const committedHead = fs.readFileSync(generationHeadPath(root), 'utf8');
+            const committedAnchor = fs.readFileSync(generationAnchorPath(root), 'utf8');
+
+            beginRuntimeMutationGeneration(root, `interrupted-${interruptionPoint}`);
+            if (interruptionPoint === 'before-head') {
+                fs.writeFileSync(generationHeadPath(root), committedHead, 'utf8');
+            }
+            fs.writeFileSync(generationAnchorPath(root), committedAnchor, 'utf8');
+
+            const recovered = readRuntimeMutationGeneration(root);
+            assert.equal(recovered.generation, 1);
+            assert.equal(recovered.transition_sequence, 2);
+
+            withRuntimeMutationGeneration(root, 'after-recovery', () => undefined);
+            const afterRecovery = readRuntimeMutationGeneration(root);
+            assert.equal(afterRecovery.generation, 2);
+            assert.equal(afterRecovery.transition_sequence, 4);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    }
+});
+
 test('runtime mutation generation fails closed after all journal files are removed', () => {
     const root = createTempRoot('garda-runtime-generation-removed-');
     try {

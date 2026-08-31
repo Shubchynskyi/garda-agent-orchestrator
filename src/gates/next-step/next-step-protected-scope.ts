@@ -137,7 +137,7 @@ function readChangedWorkflowConfigProtectedManifestFiles(
     }
 }
 
-function readGitIgnoredPathSet(repoRoot: string, candidatePaths: readonly string[]): ReadonlySet<string> {
+export function readGitIgnoredPathSet(repoRoot: string, candidatePaths: readonly string[]): ReadonlySet<string> {
     const normalizedCandidates = [...new Set(
         candidatePaths.map((entry) => normalizePath(entry)).filter(Boolean)
     )].sort();

@@ -39,27 +39,278 @@ import {
 } from './gates-review-cycle-fixtures';
 import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
 import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-remediation';
+import {
+    buildReviewEvidenceOnlyRestartPlan,
+    resolveRuntimeDecisionInputs
+} from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-review-cycle';
+import {
+    bindAuthoritativeRemediationDecisionToPreflight,
+    buildAuthenticatedRemediationReviewExecution,
+    resolvePersistedRemediationReusePolicy
+} from '../../../../../../src/cli/commands/gate-flows/review-context/review-context-flow';
+import { sha256RedactedJsonPayload } from '../../../../../../src/core/redaction';
+import type {
+    ReviewFindingsDispositionArtifact
+} from '../../../../../../src/gates/review/review-findings-disposition-artifact';
+import type {
+    ReviewFindingsValidationArtifact
+} from '../../../../../../src/gates/review/review-findings-validation-artifact';
+import {
+    buildReviewRemediationBaselineArtifact
+} from '../../../../../../src/gates/review-remediation/review-remediation-baseline';
+import {
+    classifyReviewRemediationDelta,
+    ReviewRemediationDeltaClassification
+} from '../../../../../../src/gates/review-remediation/review-remediation-delta';
+import {
+    buildReviewRemediationDeltaBase
+} from '../../../../../../src/gates/review-remediation/review-remediation-delta-contract';
+import {
+    resolveAuthoritativeReviewRemediationDecision
+} from '../../../../../../src/gates/review-remediation/review-remediation-recovery-routing';
+import {
+    buildDefaultReviewRemediationRerunPolicy
+} from '../../../../../../src/policy/review-remediation-rerun-policy';
+import {
+    buildDefaultReviewRemediationModePolicy
+} from '../../../../../../src/policy/review-remediation-mode-policy';
+import { compileReviewDependencyGraph } from '../../../../../../src/core/review-dependency-graph';
 
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
 const REMEDIATION_PART_ENV = 'GARDA_REVIEW_CYCLE_REMEDIATION_PART';
 const SHARED_IGNORED_CHANGELOG_TASK_ID = 'T-940-ignored-changelog-shared';
 
-type RemediationPart =
-    | 'reuse-basic'
-    | 'reuse-policy'
-    | 'scope-expansion'
-    | 'ignored-changelog-binding'
-    | 'ignored-changelog-guards';
-
-function describeRemediationPart(
-    part: RemediationPart,
-    name: string,
-    suite: () => void
-): void {
-    if (process.env[REMEDIATION_PART_ENV] === part) {
-        describe(name, suite);
-    }
+function buildLeafTestDeltaClassification(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    changedFile: string;
+    preflightPath: string;
+    preflightSha256: string;
+    profilePolicySnapshot: unknown;
+    modePolicy?: ReturnType<typeof buildDefaultReviewRemediationModePolicy>;
+}): ReviewRemediationDeltaClassification {
+    const reviewsRoot = getReviewsRoot(options.repoRoot);
+    writeRepoFile(options.repoRoot, options.changedFile, 'assert.equal(actual, expected);\n');
+    const reviewArtifactPath = path.join(reviewsRoot, `${options.taskId}-${options.reviewType}.md`);
+    const receiptPath = path.join(reviewsRoot, `${options.taskId}-${options.reviewType}-receipt.json`);
+    const validationArtifactPath = path.join(
+        reviewsRoot,
+        `${options.taskId}-${options.reviewType}-findings-validation.json`
+    );
+    const dispositionArtifactPath = path.join(
+        reviewsRoot,
+        `${options.taskId}-${options.reviewType}-findings-disposition.json`
+    );
+    const baselinePath = path.join(
+        reviewsRoot,
+        `${options.taskId}-${options.reviewType}-remediation-baseline.json`
+    );
+    const treeSha256 = sha256RedactedJsonPayload({ task_id: options.taskId, tree: 'baseline' });
+    const scopeSha256 = sha256RedactedJsonPayload({ changed_files: [options.changedFile] });
+    const reviewScopeSha256 = sha256RedactedJsonPayload({ review_scope: [options.changedFile] });
+    const contextSha256 = sha256RedactedJsonPayload({ review_type: options.reviewType });
+    const finding = {
+        id: 'F-001',
+        severity: 'high' as const,
+        title: 'Leaf-test assertion needs remediation',
+        description: 'The focused assertion must be corrected and reviewed as an exact DELTA.',
+        evidence_locations: [`${options.changedFile}:1`],
+        coverage_obligation_ids: []
+    };
+    const validationResult = {
+        status: 'accepted' as const,
+        accepted: true,
+        detected: true,
+        violations: [],
+        coverage_status: null,
+        normalized_inventory: {
+            finding_count: 1,
+            residual_risk_count: 0,
+            findings_by_severity: {
+                critical: [],
+                high: [finding],
+                medium: [],
+                low: []
+            },
+            residual_risks: []
+        },
+        evidence_diagnostics: {
+            validation_note_evidence_locations: [],
+            coverage_evidence_locations: [finding.evidence_locations[0]],
+            finding_evidence_locations: [finding.evidence_locations[0]],
+            residual_risk_evidence_locations: [],
+            total_evidence_locations: 1
+        },
+        bindings: {
+            input: { review_output_sha256: sha256RedactedJsonPayload('review-output') },
+            output: {
+                review_artifact_path: reviewArtifactPath.replace(/\\/gu, '/'),
+                review_artifact_sha256: ''
+            },
+            context: {
+                review_context_path: path.join(reviewsRoot, `${options.taskId}-${options.reviewType}-context.json`)
+                    .replace(/\\/gu, '/'),
+                review_context_sha256: contextSha256
+            },
+            scope: {
+                preflight_path: options.preflightPath.replace(/\\/gu, '/'),
+                preflight_sha256: options.preflightSha256,
+                scope_sha256: scopeSha256,
+                review_scope_sha256: reviewScopeSha256,
+                code_scope_sha256: null
+            },
+            tree: { review_tree_state_sha256: treeSha256 },
+            coverage_contract_sha256: sha256RedactedJsonPayload('coverage')
+        }
+    };
+    fs.writeFileSync(reviewArtifactPath, 'authenticated failed test review\n', 'utf8');
+    const reviewArtifactSha256 = fileSha256(reviewArtifactPath);
+    assert.ok(reviewArtifactSha256);
+    validationResult.bindings.output.review_artifact_sha256 = reviewArtifactSha256;
+    const validationArtifact: ReviewFindingsValidationArtifact = {
+        schema_version: 1,
+        artifact_type: 'review_findings_validation',
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        validation_result: validationResult,
+        validation_result_sha256: sha256RedactedJsonPayload(validationResult)
+    };
+    fs.writeFileSync(validationArtifactPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
+    const validationArtifactSha256 = fileSha256(validationArtifactPath);
+    assert.ok(validationArtifactSha256);
+    const reviewFindingPolicy = {
+        schema_version: 1 as const,
+        policy_id: 'balanced' as const,
+        findings: {
+            critical: 'fix_now' as const,
+            high: 'fix_now' as const,
+            medium: 'create_follow_up' as const,
+            low: 'create_follow_up' as const
+        },
+        residual_risk: 'create_follow_up' as const
+    };
+    const dispositionResult = {
+        schema_version: 1 as const,
+        policy_id: 'balanced' as const,
+        policy_source: 'preflight_profile_policy_snapshot' as const,
+        policy_diagnostics: [],
+        findings: {
+            critical: { action: 'fix_now' as const, ids: [], count: 0 },
+            high: { action: 'fix_now' as const, ids: [finding.id], count: 1 },
+            medium: { action: 'create_follow_up' as const, ids: [], count: 0 },
+            low: { action: 'create_follow_up' as const, ids: [], count: 0 }
+        },
+        residual_risks: { action: 'create_follow_up' as const, ids: [], count: 0 },
+        counts_by_action: { fix_now: 1, create_follow_up: 0, ignore: 0 },
+        blocking_count: 1,
+        blocking_ids: [finding.id],
+        non_blocking_count: 0,
+        total_count: 1,
+        verdict: 'fail_for_fix_now' as const
+    };
+    const dispositionArtifact: ReviewFindingsDispositionArtifact = {
+        schema_version: 1,
+        artifact_type: 'review_findings_disposition',
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        derivation_source: 'garda_locked_policy_evaluation',
+        source_validation: {
+            artifact_path: validationArtifactPath.replace(/\\/gu, '/'),
+            artifact_sha256: validationArtifactSha256,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            status: 'accepted',
+            accepted: true
+        },
+        policy: {
+            policy_id: 'balanced',
+            policy_source: 'preflight_profile_policy_snapshot',
+            policy_diagnostics: [],
+            review_finding_policy: reviewFindingPolicy
+        },
+        disposition_result: dispositionResult,
+        disposition_result_sha256: sha256RedactedJsonPayload(dispositionResult),
+        items: [{
+            id: finding.id,
+            kind: 'finding',
+            severity: finding.severity,
+            action: 'fix_now',
+            source_rule: 'review_finding_policy.findings.high',
+            policy_source: 'preflight_profile_policy_snapshot',
+            blocking: true,
+            materialization_status: 'requires_fix_now',
+            audit_status: 'retained_in_disposition_artifact'
+        }],
+        summary: {
+            item_count: 1,
+            fix_now_count: 1,
+            follow_up_pending_count: 0,
+            ignored_count: 0,
+            blocking_count: 1,
+            non_blocking_count: 0
+        }
+    };
+    fs.writeFileSync(dispositionArtifactPath, `${JSON.stringify(dispositionArtifact, null, 2)}\n`, 'utf8');
+    const dispositionArtifactSha256 = fileSha256(dispositionArtifactPath);
+    assert.ok(dispositionArtifactSha256);
+    const receipt = {
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_context_sha256: contextSha256,
+        review_tree_state_sha256: treeSha256,
+        review_findings_report_sha256: sha256RedactedJsonPayload('findings-report')
+    };
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+    const receiptSha256 = fileSha256(receiptPath);
+    assert.ok(receiptSha256);
+    const deltaBase = buildReviewRemediationDeltaBase({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewTreeStateSha256: treeSha256,
+        changedFiles: [options.changedFile]
+    });
+    const baseline = buildReviewRemediationBaselineArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewArtifactPath,
+        reviewArtifactSha256,
+        receiptPath,
+        receiptSha256,
+        receipt,
+        validationArtifactPath,
+        validationArtifactSha256,
+        validationArtifact,
+        dispositionArtifactPath,
+        dispositionArtifactSha256,
+        dispositionArtifact,
+        profilePolicySnapshot: options.profilePolicySnapshot,
+        deltaBase
+    });
+    fs.copyFileSync(receiptPath, baseline.bindings.receipt.snapshot_path);
+    fs.copyFileSync(reviewArtifactPath, baseline.bindings.review_artifact.snapshot_path);
+    fs.copyFileSync(validationArtifactPath, baseline.bindings.findings_validation.snapshot_path);
+    fs.copyFileSync(dispositionArtifactPath, baseline.bindings.findings_disposition.snapshot_path);
+    fs.writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8');
+    const baselineSha256 = fileSha256(baselinePath);
+    assert.ok(baselineSha256);
+    writeRepoFile(
+        options.repoRoot,
+        options.changedFile,
+        'assert.equal(actual, expected);\nassert.equal(receipt.mode, "DELTA");\n'
+    );
+    return classifyReviewRemediationDelta({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        baselineArtifactPath: baselinePath,
+        baselineArtifactSha256: baselineSha256,
+        currentChangedFiles: [options.changedFile],
+        structuralTestChangedLinesThreshold: 20,
+        modePolicy: options.modePolicy
+    });
 }
 
 function seedBaselineCompileGatePass(options: {
@@ -103,6 +354,315 @@ function buildIgnoredChangelogImpactAnalysis(changelogPath = IGNORED_CHANGELOG_P
         'Related blockers/follow-up: no separate follow-up is needed for this same failed-review blocker.'
     ].join(' ');
 }
+
+describe('cli/commands/gates – authenticated remediation execution persistence', {
+    skip: Boolean(process.env[REMEDIATION_PART_ENV])
+}, () => {
+    it('reloads origin and non-origin FULL authority and rejects forged persisted remediation authority', () => {
+        const taskId = 'T-992-3-2-persisted-authority';
+        const preflightSha256 = 'a'.repeat(64);
+        const fullReviewScope = ['src/app.ts', 'tests/app.test.ts'];
+        const classification = {
+            source: 'runtime_fix' as const,
+            classification: {
+                category: 'production',
+                reason: 'Production remediation invalidates origin and downstream lanes.',
+                blocked_before_reuse: false,
+                invalidated_review_types: ['code', 'security']
+            }
+        };
+        const decision = bindAuthoritativeRemediationDecisionToPreflight(
+            resolveAuthoritativeReviewRemediationDecision({
+                taskId,
+                currentReviewType: 'code',
+                classification,
+                requiredReviews: { code: true, security: true },
+                reviewExecutionPolicyMode: 'strict_sequential'
+            }),
+            preflightSha256
+        );
+        const persistedDecision = JSON.parse(JSON.stringify(decision)) as typeof decision;
+        const originExecution = buildAuthenticatedRemediationReviewExecution({
+            taskId,
+            reviewType: 'code',
+            preflightSha256,
+            fullReviewScope,
+            authoritativeDecision: persistedDecision,
+            authoritativeClassification: classification
+        });
+        const nonOriginExecution = buildAuthenticatedRemediationReviewExecution({
+            taskId,
+            reviewType: 'security',
+            preflightSha256,
+            fullReviewScope,
+            authoritativeDecision: persistedDecision,
+            authoritativeClassification: classification
+        });
+
+        assert.equal(originExecution.contract.mode, 'FULL');
+        assert.equal(nonOriginExecution.contract.mode, 'FULL');
+        assert.equal(originExecution.contract.authoritative_decision_sha256, decision.decision_sha256);
+        assert.equal(nonOriginExecution.contract.authoritative_decision_sha256, decision.decision_sha256);
+
+        const forgedDecision = JSON.parse(JSON.stringify(persistedDecision)) as typeof persistedDecision;
+        forgedDecision.lane_decisions[1].mode = 'REUSE';
+        assert.throws(
+            () => buildAuthenticatedRemediationReviewExecution({
+                taskId,
+                reviewType: 'security',
+                preflightSha256,
+                fullReviewScope,
+                authoritativeDecision: forgedDecision,
+                authoritativeClassification: classification
+            }),
+            /persisted authoritative remediation decision is invalid.*hash is invalid/iu
+        );
+    });
+
+    it('reloads a persisted DELTA restart and rejects stale or forged DELTA authority', () => {
+        const repoRoot = createTempRepo();
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskId = 'T-992-3-2-persisted-delta-authority';
+        const reviewType = 'test';
+        const changedFile = 'tests/node/example.test.ts';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const preflightPayload = { changed_files: [changedFile] };
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(preflightPath, `${JSON.stringify(preflightPayload)}\n`, 'utf8');
+        const preflightSha256 = fileSha256(preflightPath);
+        assert.ok(preflightSha256);
+        const legacyProfilePolicySnapshot = {
+            review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
+            review_remediation_rerun_policy_diagnostics: ['persisted DELTA fixture policy']
+        };
+        const legacyClassification = {
+            source: 'delta' as const,
+            delta: buildLeafTestDeltaClassification({
+                repoRoot,
+                taskId,
+                reviewType,
+                changedFile,
+                preflightPath,
+                preflightSha256,
+                profilePolicySnapshot: legacyProfilePolicySnapshot
+            }),
+            profilePolicySnapshot: legacyProfilePolicySnapshot,
+            baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(legacyProfilePolicySnapshot)
+        };
+        const legacyDecision = bindAuthoritativeRemediationDecisionToPreflight(
+            resolveAuthoritativeReviewRemediationDecision({
+                taskId,
+                currentReviewType: reviewType,
+                classification: legacyClassification,
+                requiredReviews: { test: true },
+                reviewExecutionPolicyMode: 'strict_sequential'
+            }),
+            preflightSha256
+        );
+
+        try {
+            appendTaskEvent(bundleRoot, taskId, 'REVIEW_CYCLE_RESTARTED', 'PASS', 'Review cycle restarted.', {
+                task_id: taskId,
+                event_type: 'REVIEW_CYCLE_RESTARTED',
+                status: 'PASSED',
+                preflight_sha256: preflightSha256,
+                authoritative_review_decision: legacyDecision,
+                authoritative_review_classification: legacyClassification
+            });
+            const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
+            const legacyPersisted = resolvePersistedRemediationReusePolicy({
+                events: readTaskTimelineEvents(repoRoot, taskId),
+                taskId,
+                reviewType,
+                preflightPath,
+                timelinePath,
+                preflightPayload
+            });
+            assert.match(legacyPersisted.blockedReason, /FULL review.*legacy remediation evidence/iu);
+            assert.equal(legacyPersisted.reviewExecutionContract?.mode, 'FULL');
+            assert.equal(legacyPersisted.reviewExecutionContract?.source, 'remediation_full');
+
+            const modePolicy = buildDefaultReviewRemediationModePolicy();
+            const profilePolicySnapshot = {
+                ...legacyProfilePolicySnapshot,
+                review_remediation_mode_policy: modePolicy,
+                review_remediation_mode_policy_diagnostics: ['persisted DELTA fixture mode policy']
+            };
+            const classification = {
+                source: 'delta' as const,
+                delta: buildLeafTestDeltaClassification({
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    changedFile,
+                    preflightPath,
+                    preflightSha256,
+                    profilePolicySnapshot,
+                    modePolicy
+                }),
+                profilePolicySnapshot,
+                baselineProfilePolicySnapshotSha256: sha256RedactedJsonPayload(profilePolicySnapshot)
+            };
+            const decision = bindAuthoritativeRemediationDecisionToPreflight(
+                resolveAuthoritativeReviewRemediationDecision({
+                    taskId,
+                    currentReviewType: reviewType,
+                    classification,
+                    modePolicyValidationInputs: {
+                        consecutiveDeltaReviews: 0,
+                        protectedBoundarySignals: [],
+                        taskCriteriaChanged: false,
+                        policyChanged: false,
+                        uncertainCrossFileImpact: false
+                    },
+                    requiredReviews: { test: true },
+                    reviewExecutionPolicyMode: 'strict_sequential'
+                }),
+                preflightSha256
+            );
+            appendTaskEvent(bundleRoot, taskId, 'REVIEW_CYCLE_RESTARTED', 'PASS', 'Authenticated review cycle restarted.', {
+                task_id: taskId,
+                event_type: 'REVIEW_CYCLE_RESTARTED',
+                status: 'PASSED',
+                preflight_sha256: preflightSha256,
+                authoritative_review_decision: decision,
+                authoritative_review_classification: classification
+            });
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            const persisted = resolvePersistedRemediationReusePolicy({
+                events,
+                taskId,
+                reviewType,
+                preflightPath,
+                timelinePath,
+                preflightPayload
+            });
+            assert.match(persisted.blockedReason, /bounded DELTA review is required/iu);
+            assert.equal(persisted.reviewExecutionContract?.mode, 'DELTA');
+            assert.equal(persisted.reviewExecutionContract?.source, 'remediation_delta');
+            assert.equal(
+                persisted.reviewExecutionValidationAuthority?.authoritativeDecisionSha256,
+                decision.decision_sha256
+            );
+
+            fs.writeFileSync(preflightPath, `${JSON.stringify({ changed_files: [changedFile], stale: true })}\n`, 'utf8');
+            const stale = resolvePersistedRemediationReusePolicy({
+                events,
+                taskId,
+                reviewType,
+                preflightPath,
+                timelinePath,
+                preflightPayload
+            });
+            assert.equal(stale.reviewExecutionContract, undefined);
+
+            fs.writeFileSync(preflightPath, `${JSON.stringify(preflightPayload)}\n`, 'utf8');
+            const forgedDecision = JSON.parse(JSON.stringify(decision)) as typeof decision;
+            forgedDecision.lane_decisions[0].mode = 'FULL';
+            appendTaskEvent(bundleRoot, taskId, 'REVIEW_CYCLE_RESTARTED', 'PASS', 'Forged restart.', {
+                task_id: taskId,
+                event_type: 'REVIEW_CYCLE_RESTARTED',
+                status: 'PASSED',
+                preflight_sha256: preflightSha256,
+                authoritative_review_decision: forgedDecision,
+                authoritative_review_classification: classification
+            });
+            const forged = resolvePersistedRemediationReusePolicy({
+                events: readTaskTimelineEvents(repoRoot, taskId),
+                taskId,
+                reviewType,
+                preflightPath,
+                timelinePath,
+                preflightPayload
+            });
+            assert.equal(forged.failClosed, true);
+            assert.match(forged.blockedReason, /persisted authoritative remediation decision failed validation/iu);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('forces a lane-local FULL fallback for unsupported authenticated review execution telemetry', () => {
+        const repoRoot = createTempRepo();
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskId = 'T-1013-4-2-unsupported-review-mode';
+        const reviewType = 'test';
+        const changedFile = 'tests/node/example.test.ts';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const preflightPayload = { changed_files: [changedFile] };
+        const profilePolicySnapshot = {
+            review_remediation_rerun_policy: buildDefaultReviewRemediationRerunPolicy(),
+            review_remediation_rerun_policy_diagnostics: ['fixture rerun policy'],
+            review_remediation_mode_policy: buildDefaultReviewRemediationModePolicy(),
+            review_remediation_mode_policy_diagnostics: ['fixture mode policy']
+        };
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(preflightPath, `${JSON.stringify(preflightPayload)}\n`, 'utf8');
+        const preflightSha256 = fileSha256(preflightPath);
+        assert.ok(preflightSha256);
+        buildLeafTestDeltaClassification({
+            repoRoot,
+            taskId,
+            reviewType,
+            changedFile,
+            preflightPath,
+            preflightSha256,
+            profilePolicySnapshot
+        });
+        const mutableBaselinePath = path.join(
+            reviewsRoot,
+            `${taskId}-${reviewType}-remediation-baseline.json`
+        );
+        const baselineSha256 = fileSha256(mutableBaselinePath);
+        assert.ok(baselineSha256);
+        const immutableBaselinePath = path.join(
+            reviewsRoot,
+            `${taskId}-${reviewType}-remediation-baseline-${baselineSha256}.json`
+        );
+        fs.copyFileSync(mutableBaselinePath, immutableBaselinePath);
+        appendTaskEvent(bundleRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'Unsupported mode fixture.', {
+            review_type: reviewType,
+            review_execution_mode: 'UNKNOWN',
+            remediation_baseline_snapshot_path: immutableBaselinePath,
+            remediation_baseline_snapshot_sha256: baselineSha256
+        });
+
+        try {
+            const result = resolveRuntimeDecisionInputs({
+                repoRoot,
+                taskId,
+                remediationReviewType: reviewType,
+                requiredReviewTypes: ['code', 'test'],
+                remediationFixClassification: {
+                    category: 'leaf_test',
+                    reason: 'fixture leaf-test remediation',
+                    blocked_before_reuse: false,
+                    invalidated_review_types: [reviewType]
+                },
+                profilePolicySnapshot,
+                currentChangedFiles: [changedFile],
+                reviewTriggerPolicy: {
+                    test_path_regexes: ['(^|/)tests?/'],
+                    test_refactor_structural_path_regexes: ['(^|/)tests?/helpers?/'],
+                    test_refactor_changed_lines_threshold: 20
+                },
+                allowAuthenticatedDelta: true,
+                preflightPayload
+            });
+            const classification = result.classification as {
+                source: 'runtime_fix';
+                classification: { reason: string; invalidated_review_types: string[] };
+            };
+            assert.equal(classification.source, 'runtime_fix');
+            assert.deepEqual(classification.classification.invalidated_review_types, [reviewType]);
+            assert.match(classification.classification.reason, /unsupported review execution mode.*FULL/iu);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+});
 
 interface IgnoredChangelogTemplate {
     readonly repoRoot: string;
@@ -390,8 +950,10 @@ async function resumeReviewReuseAfterChecklist(
     return { reusedReviewTypes, launchRequiredReviewTypes };
 }
 
-describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle remediation reuse basics', () => {
-    it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
+describe('cli/commands/gates – review-cycle remediation reuse basics', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'reuse-basic'
+}, () => {
+    it('restart-review-cycle reuses unaffected lanes and rejects forged persisted remediation authority', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
         seedRemediationRepoBase(repoRoot);
@@ -490,7 +1052,7 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /RemediationFixClassification: test_hook_isolation; invalidated_review_types=code; preserved_review_types=refactor, security, test/);
+        assert.match(output, /RemediationFixClassification: test_hook_isolation; invalidated_review_types=code, test; preserved_review_types=security, refactor/);
         assert.match(output, /PreparedReviewTypes: none/);
         assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
         assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
@@ -509,6 +1071,29 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
             false
+        );
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const authoritativeDecision = remediationArtifact.authoritative_review_decision as Record<string, unknown>;
+        const authoritativeClassification = remediationArtifact.authoritative_review_classification as Record<string, unknown>;
+        assert.equal(authoritativeClassification.source, 'runtime_fix');
+        assert.equal(
+            (authoritativeClassification.classification as Record<string, unknown>).category,
+            'test_hook_isolation'
+        );
+        const codeReviewContext = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const codeReviewExecution = codeReviewContext.review_execution as Record<string, unknown>;
+        assert.equal(codeReviewExecution.mode, 'FULL');
+        assert.equal(codeReviewExecution.source, 'remediation_full');
+        assert.equal(
+            codeReviewExecution.authoritative_decision_sha256,
+            authoritativeDecision.decision_sha256
         );
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
@@ -532,6 +1117,11 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         ));
         const lastHandshakeIndex = handshakeIndexes.at(-1) ?? -1;
         const lastShellSmokeIndex = shellSmokeIndexes.at(-1) ?? -1;
+        const restartEvent = events.find((event) => event.event_type === 'REVIEW_CYCLE_RESTARTED');
+        assert.deepEqual(
+            (restartEvent?.details as Record<string, unknown>)?.authoritative_review_classification,
+            authoritativeClassification
+        );
         assert.ok(lastCompileIndex >= 0);
         assert.equal(handshakeIndexes.length, 2);
         assert.equal(shellSmokeIndexes.length, 2);
@@ -588,7 +1178,11 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         assert.ok(restartLineIndex >= 0);
         const tamperedRestartEvent = JSON.parse(timelineLines[restartLineIndex]) as Record<string, unknown>;
         const tamperedRestartDetails = tamperedRestartEvent.details as Record<string, unknown>;
-        tamperedRestartDetails.remediation_category = 'forged_preserved_scope';
+        const tamperedAuthoritativeClassification =
+            tamperedRestartDetails.authoritative_review_classification as Record<string, unknown>;
+        const tamperedRuntimeClassification =
+            tamperedAuthoritativeClassification.classification as Record<string, unknown>;
+        tamperedRuntimeClassification.category = 'forged_preserved_scope';
         timelineLines[restartLineIndex] = JSON.stringify(tamperedRestartEvent);
         fs.writeFileSync(timelinePath, `${timelineLines.join('\n')}\n`, 'utf8');
 
@@ -601,7 +1195,7 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
                 preflightPath,
                 outputPath: path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)
             }),
-            /timeline integrity is not current: FAILED/
+            /persisted remediation timeline failed hash-chain integrity validation/
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -703,7 +1297,7 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
 
         const output = restartResult.outputLines.join('\n');
-        assert.match(output, /RemediationFixClassification: unknown; invalidated_review_types=code, refactor, security; preserved_review_types=none/);
+        assert.match(output, /RemediationFixClassification: unknown; invalidated_review_types=code, security, refactor; preserved_review_types=none/);
         assert.match(output, /PreparedReviewTypes: none/);
         assert.match(output, /PendingReviewTypes: code, security, refactor/);
         const resumedReuse = await resumeReviewReuseAfterChecklist(
@@ -798,7 +1392,7 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
         assert.equal(remediationArtifact.status, 'BLOCKED');
         assert.equal(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).category,
-            'unknown'
+            'runtime_behavior'
         );
         assert.equal(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).scope_category,
@@ -1219,7 +1813,185 @@ describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle reme
 
 });
 
-describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle remediation reuse policy', () => {
+describe('cli/commands/gates – review-cycle remediation reuse policy', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'reuse-policy'
+}, () => {
+    it('review-evidence-only restart ignores an unchanged dirty-workspace baseline file', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-review-evidence-only-dirty-baseline';
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'review-evidence-only-dirty-baseline'
+        );
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'user-change.test.ts'), 'it("belongs to the user", () => {});\n', 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart only invalid delegated review evidence with an unchanged dirty baseline',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart only invalid delegated review evidence with an unchanged dirty baseline',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await seedBaselineCompileGatePass({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            reviewEvidenceOnly: true,
+            reviewType: 'code',
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: review_evidence_only/u);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(remediationArtifact.status, 'PASSED');
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).previous_changed_files,
+            ['src/app.ts']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('review-evidence-only restart compares resumed task scope after symmetric dirty-baseline exclusion', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-review-evidence-only-resumed-dirty-scope';
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'review-evidence-only-resumed-dirty-scope'
+        );
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const resumedValue = 1;\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Resume invalid delegated review evidence with task scope already present in the dirty baseline',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Resume invalid delegated review evidence with task scope already present in the dirty baseline',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await seedBaselineCompileGatePass({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            reviewEvidenceOnly: true,
+            reviewType: 'code',
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: review_evidence_only/u);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('schedules every graph-invalidated descendant after evidence-only reviewer failure', () => {
+        const dependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const classification = classifyReviewRemediationFix(
+            {
+                status: 'OK',
+                previousChangedFiles: ['src/app.ts'],
+                currentChangedFiles: [],
+                expandedFiles: [],
+                expandedNonTestFiles: [],
+                allowedTestOnlyExpansionFiles: []
+            },
+            ['code', 'architecture-boundary', 'test'],
+            undefined,
+            ['(^|/)tests?/'],
+            undefined,
+            {
+                reviewEvidenceOnly: true,
+                remediationReviewType: 'code',
+                reviewDependencyGraph: dependencyGraph
+            }
+        );
+
+        assert.deepEqual(classification.invalidated_review_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(buildReviewEvidenceOnlyRestartPlan(
+            classification.invalidated_review_types,
+            'code'
+        ), {
+            launchRequiredReviewTypes: ['code', 'architecture-boundary', 'test'],
+            pendingReviewTypes: ['code', 'architecture-boundary', 'test'],
+            pendingReason: 'failed delegated reviewer evidence invalidated the failed lane and every frozen-graph downstream lane',
+            nextStep: 'Rerun next-step to materialize preserved review evidence and prepare fresh reviewer launches for invalidated lanes: code, architecture-boundary, test.'
+        });
+    });
+
     it('restart-review-cycle preserves upstream lanes when failed test remediation edits an existing test file', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902-existing-test-remediation-reuse';
@@ -1318,6 +2090,11 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
             'utf8'
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+        const authoritativeDecision = remediationArtifact.authoritative_review_decision as Record<string, unknown>;
+        const authoritativeLaneDecisions = authoritativeDecision.lane_decisions as Array<Record<string, unknown>>;
+        const authoritativeLaneByType = new Map(
+            authoritativeLaneDecisions.map((lane) => [String(lane.review_type), lane])
+        );
         const evidence = classification.evidence as Record<string, unknown>;
         const expectedPreservedReviews = ['api', 'code', 'performance', 'refactor', 'security'];
         assert.equal(classification.category, 'test_coverage_only');
@@ -1329,6 +2106,26 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
         );
         assert.deepEqual(evidence.semantic_changed_files, [testFile]);
         assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
+        assert.equal(authoritativeDecision.status, 'READY');
+        assert.equal(authoritativeDecision.classification_source, 'runtime_fix');
+        assert.deepEqual(authoritativeDecision.invalidated_review_types, ['test']);
+        assert.equal(authoritativeLaneByType.get('test')?.mode, 'FULL');
+        assert.equal(authoritativeLaneByType.get('test')?.reuse_eligible, false);
+        assert.ok(expectedPreservedReviews.every((reviewType) => (
+            authoritativeLaneByType.get(reviewType)?.reuse_eligible === true
+        )));
+        assert.match(String(authoritativeDecision.decision_sha256), /^[0-9a-f]{64}$/u);
+        const timelineEvents = readTaskTimelineEvents(repoRoot, taskId);
+        const restartEventIndex = findLastTimelineEventIndex(
+            timelineEvents,
+            (event) => event.event_type === 'REVIEW_CYCLE_RESTARTED'
+        );
+        const restartEvent = timelineEvents[restartEventIndex];
+        assert.equal(
+            ((restartEvent?.details as Record<string, unknown>)
+                ?.authoritative_review_decision as Record<string, unknown>)?.decision_sha256,
+            authoritativeDecision.decision_sha256
+        );
         assert.deepEqual(
             [...resumedReuse.reusedReviewTypes].sort(),
             expectedPreservedReviews,
@@ -1756,7 +2553,57 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
         assert.equal(classification.evidence.test_refactor_changed_lines_threshold, 100);
     });
 
-    it('restart-review-cycle uses the frozen test-trigger policy after live paths config changes', { concurrency: false }, async () => {
+    it('expands an upstream remediation classification through custom graph descendants only', () => {
+        const reviewDependencyGraph = compileReviewDependencyGraph({
+            catalogLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+            activeLaneIds: ['code', 'security', 'architecture-boundary', 'test'],
+            requiredReviewIds: ['code', 'security', 'architecture-boundary', 'test'],
+            mode: 'parallel_all',
+            declaration: {
+                preparation_order: ['code', 'security', 'architecture-boundary', 'test'],
+                dependencies: {
+                    'architecture-boundary': ['code'],
+                    test: ['architecture-boundary']
+                }
+            }
+        });
+        const classification = classifyReviewRemediationFix(
+            {
+                status: 'OK',
+                previousChangedFiles: ['src/app.ts'],
+                currentChangedFiles: ['src/app.ts'],
+                expandedFiles: [],
+                expandedNonTestFiles: [],
+                allowedTestOnlyExpansionFiles: []
+            },
+            ['code', 'security', 'architecture-boundary', 'test'],
+            {
+                status: 'RECORDED',
+                source: 'inline',
+                summary: [
+                    'Reviewer finding: isolate the _testHooks helper in src/app.ts.',
+                    'Intended fix: constrain only test hook exposure without runtime behavior changes.',
+                    'Affected files/contracts: src/app.ts changes while public contracts stay stable.',
+                    'API/runtime/artifact/test impact: test hook isolation only.',
+                    'Possible side effects: downstream graph lanes must refresh.',
+                    'Required targeted checks: graph remediation classification.',
+                    'Scope or review-type changes: code and its dependent lanes are affected.',
+                    'Related blockers/follow-up: none.'
+                ].join(' '),
+                required_topics: [],
+                affected_files: ['src/app.ts']
+            },
+            ['(^|/)tests?/'],
+            undefined,
+            { reviewDependencyGraph }
+        );
+
+        assert.equal(classification.category, 'test_hook_isolation');
+        assert.deepEqual(classification.invalidated_review_types, ['code', 'architecture-boundary', 'test']);
+        assert.deepEqual(classification.preserved_review_types, ['security']);
+    });
+
+    it('restart-review-cycle fails closed when live test-trigger policy drifts after task entry', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-frozen-recovery-trigger-policy';
         const sourceFile = 'src/app.ts';
@@ -1863,32 +2710,11 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
             ].join(' '),
             emitMetrics: false
         });
-        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-        const resumedReuse = await resumeReviewReuseAfterChecklist(
-            repoRoot,
-            taskId,
-            preflightPath,
-            ['code', 'security', 'refactor']
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, restartResult.outputLines.join('\n'));
+        assert.match(
+            restartResult.outputLines.join('\n'),
+            /Task profile policy inputs changed after preflight \(paths\).*Re-enter task mode/isu
         );
-
-        const remediationArtifact = JSON.parse(fs.readFileSync(
-            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
-            'utf8'
-        )) as Record<string, unknown>;
-        const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
-        const evidence = classification.evidence as Record<string, unknown>;
-        assert.equal(classification.category, 'test_coverage_only');
-        assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
-        assert.deepEqual(classification.preserved_review_types, ['code', 'security']);
-        assert.equal(evidence.test_refactor_trigger_reason, 'structural_test_domain_file');
-        assert.deepEqual(evidence.test_refactor_trigger_files, [testFile]);
-        assert.equal(evidence.test_refactor_changed_lines_threshold, 100);
-        assert.deepEqual(
-            [...resumedReuse.reusedReviewTypes].sort(),
-            ['code', 'security'],
-            restartResult.outputLines.join('\n')
-        );
-        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, ['refactor']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2127,6 +2953,23 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
                 expectedPreservedReviewTypes: []
             },
             {
+                suffix: 'source-fallback-runtime',
+                impactAnalysis: [
+                    'Reviewer finding: the final human report can grow with every non-blocking finding in src/app.ts.',
+                    'Intended fix: cap the human preview at ten entries and append the exact remaining count.',
+                    'Affected files/contracts: src/app.ts changes while complete machine-readable evidence remains available.',
+                    'API/runtime/artifact/test impact: human presentation becomes bounded; schemas and gate APIs remain unchanged.',
+                    'Possible side effects: only the first ten entries appear in the concise report.',
+                    'Required targeted checks: a high-cardinality bounded-size regression covers the fix.',
+                    'Scope or review-type changes: the source and test scope remain unchanged.',
+                    'Related blockers/follow-up: the finding is fixed now without a follow-up.'
+                ].join(' '),
+                expectedCategory: 'runtime_behavior',
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
+            },
+            {
                 suffix: 'structure-only',
                 impactAnalysis: [
                     'Reviewer finding: failed review blocker requires refactor structure cleanup in src/app.ts.',
@@ -2206,7 +3049,9 @@ describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle rem
 
 });
 
-describeRemediationPart('scope-expansion', 'cli/commands/gates – review-cycle remediation scope expansion', () => {
+describe('cli/commands/gates – review-cycle remediation scope expansion', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'scope-expansion'
+}, () => {
     it('restart-review-cycle preserves previous source scope when explicit refresh lists only test remediation', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-explicit-subset';
@@ -2538,7 +3383,9 @@ describeRemediationPart('scope-expansion', 'cli/commands/gates – review-cycle 
 
 });
 
-describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ignored changelog remediation binding', () => {
+describe('cli/commands/gates – ignored changelog remediation binding', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'ignored-changelog-binding'
+}, () => {
     it('restart-review-cycle accepts an explicit ignored changelog remediation target named by the blocker', { concurrency: false }, async () => {
         const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
@@ -2917,7 +3764,9 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
 
 });
 
-describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – ignored changelog remediation guards', () => {
+describe('cli/commands/gates – ignored changelog remediation guards', {
+    skip: process.env[REMEDIATION_PART_ENV] !== 'ignored-changelog-guards'
+}, () => {
     it('restart-review-cycle rejects ignored paths mentioned only as failed-review diagnostics', { concurrency: false }, async () => {
         const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {

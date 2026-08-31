@@ -1,4 +1,7 @@
 // Extracted from required-reviews-check.ts; keep behavior changes in the facade tests.
+import * as path from 'node:path';
+
+import { isPlainRecord } from '../../core/records';
 import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../core/orchestration-constants';
 import {
     auditReviewArtifactCompaction,
@@ -15,6 +18,14 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
+import {
+    resolvePersistedRemediationReviewExecutionAuthority
+} from '../review-remediation/review-remediation-execution-authority';
+import type { ReviewRemediationReviewContract } from '../review-remediation/review-remediation-review-contract';
+import {
+    getReviewLaneArtifactEvidenceViolations,
+    isCustomReviewLaneInSnapshot
+} from '../review-context/review-context-lane';
 import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { resolveReviewContextRoutingIdentity } from '../review-context/review-context-routing';
 import { resolveReviewerPromptArtifactBinding } from '../review/review-prompt-artifact';
@@ -26,6 +37,7 @@ import { type ReviewDependencyTimelineEvent } from '../review/review-dependencie
 import { validateStrictReusedReviewEvidence } from '../review-reuse/review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from '../review/review-trust-policy';
 import {
+    getReviewReceiptExecutionEvidenceContractViolations,
     normalizeReviewReceiptEvidenceFields,
     type ReviewEvidenceReviewerProvenance
 } from '../review/review-evidence-contract';
@@ -203,8 +215,25 @@ export function validateReviewArtifactGateEligibility(options: {
             const diffExpectations = buildReviewContextPreflightDiffExpectations(preflightPayload, reviewKey);
             laneDomainPreflightBindingAllowed = options.allowLaneDomainPreflightBinding === true
                 && reviewContextLaneScopeMatchesCurrentPreflight(reviewKey, reviewContext || null, preflightPayload);
+            const reviewContextPath = reviewArtifact.reviewContextPath
+                || artifactPath.replace(/\.md$/, '-review-context.json');
+            const reviewExecution = isPlainRecord(reviewContext?.review_execution)
+                ? reviewContext.review_execution as unknown as ReviewRemediationReviewContract
+                : null;
+            const reviewExecutionValidationAuthority = reviewExecution
+                && resolvedTaskId
+                && options.preflightSha256
+                ? resolvePersistedRemediationReviewExecutionAuthority({
+                    reviewsRoot: path.dirname(reviewContextPath),
+                    taskId: resolvedTaskId,
+                    reviewType: reviewKey,
+                    preflightSha256: options.preflightSha256,
+                    fullReviewScope: diffExpectations.expectedChangedFiles,
+                    reviewExecution
+                })
+                : null;
             errors.push(...getReviewContextContractViolations({
-                contextPath: reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json'),
+                contextPath: reviewContextPath,
                 reviewContext: reviewContext || null,
                 expectedTaskId: resolvedTaskId,
                 expectedReviewType: reviewKey,
@@ -218,6 +247,7 @@ export function validateReviewArtifactGateEligibility(options: {
                 expectedChangedFiles: laneDomainPreflightBindingAllowed ? [] : diffExpectations.expectedChangedFiles,
                 expectedPreflightPayload: preflightPayload,
                 repoRoot: options.repoRoot || null,
+                expectedReviewExecutionValidationAuthority: reviewExecutionValidationAuthority ?? undefined,
                 expectedChangedFilesSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedChangedFilesSha256,
                 expectedScopeContentSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeContentSha256,
                 expectedScopeSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeSha256,
@@ -236,7 +266,7 @@ export function validateReviewArtifactGateEligibility(options: {
                 );
             }
             if (repoRoot && reviewContext) {
-                const contextPath = reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json');
+                const contextPath = reviewContextPath;
                 try {
                     assertReviewTreeStateFresh({
                         repoRoot,
@@ -329,8 +359,27 @@ export function validateReviewArtifactGateEligibility(options: {
                     const receipt = receiptSnapshot.receipt;
                     const evidenceFields = normalizeReviewReceiptEvidenceFields(receipt as unknown as Record<string, unknown>);
                     validatedReceipt = receipt;
+                    if (preflightPayload && isCustomReviewLaneInSnapshot(preflightPayload, reviewKey)) {
+                        try {
+                            errors.push(...getReviewLaneArtifactEvidenceViolations({
+                                artifact: receipt as unknown as Record<string, unknown>,
+                                preflight: preflightPayload,
+                                reviewType: reviewKey,
+                                label: `Review receipt for '${reviewKey}'`
+                            }));
+                        } catch (error: unknown) {
+                            errors.push(error instanceof Error ? error.message : String(error));
+                        }
+                    }
                     const currentArtifactHash = receiptSnapshot.artifactSha256 ?? fileSha256(artifactPath);
                     currentArtifactSha256 = currentArtifactHash;
+                    const executionEvidenceViolations = getReviewReceiptExecutionEvidenceContractViolations({
+                        reviewContext: reviewContext || null,
+                        receipt: receipt as unknown as Record<string, unknown>
+                    });
+                    errors.push(...executionEvidenceViolations.map((violation) =>
+                        `Review receipt for '${reviewKey}' execution evidence violation: ${violation}.`
+                    ));
                     if (receipt.task_id !== resolvedTaskId) {
                         errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
                     } else if (receipt.review_type !== reviewKey) {
@@ -355,7 +404,7 @@ export function validateReviewArtifactGateEligibility(options: {
                             'Review-context tree_state does not match the receipt binding.'
                         );
                     } else {
-                        receiptValid = true;
+                        receiptValid = executionEvidenceViolations.length === 0;
                     }
                     if (receipt.reviewer_execution_mode) {
                         reviewerExecutionMode = evidenceFields.reviewerExecutionMode;
@@ -433,6 +482,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                 ? typeof receipt.reused_from_review_tree_state_sha256 === 'string' ? receipt.reused_from_review_tree_state_sha256 : null
                                 : reviewContextTreeStateSha256,
                             expectedCoverageContractSha256: findingsCoverageContractSha256,
+                            expectedReviewContext: reviewContext,
                             requireAccepted: true
                         });
                         errors.push(...validationArtifact.violations);

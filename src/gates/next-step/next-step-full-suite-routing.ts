@@ -158,11 +158,11 @@ function resolveAfterCompileBeforeReviewsRoute(
             reason:
                 `Full-suite validation is configured for placement '${options.placement}' and already failed for the current compiled scope. ` +
                 `Do not launch independent reviewers until the configured full-suite command passes; ` +
-                `fix the failures, rerun compile-gate if implementation changed, then rerun full-suite-validation.`,
+                `fix the failures, rerun compile-gate if implementation changed, then execute the printed full-suite-validation command.`,
             commands: [
                 buildCommand(
-                    'Rerun navigator after fixing implementation',
-                    options.navigatorCommand
+                    'Rerun full-suite validation after fixing implementation',
+                    options.command
                 )
             ]
         };
@@ -239,11 +239,11 @@ function resolveBeforeTestReviewRoute(
             reason:
                 `Full-suite validation is enabled and already failed for the current compiled scope. ` +
                 `Do not launch the mandatory test reviewer until the configured full-suite command passes; ` +
-                `fix the failures, rerun compile-gate if implementation changed, then rerun full-suite-validation.`,
+                `fix the failures, rerun compile-gate if implementation changed, then execute the printed full-suite-validation command.`,
             commands: [
                 buildCommand(
-                    'Rerun navigator after fixing implementation',
-                    options.navigatorCommand
+                    'Rerun full-suite validation after fixing implementation',
+                    options.command
                 )
             ]
         };

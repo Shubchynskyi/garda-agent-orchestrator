@@ -13,9 +13,9 @@ This document captures the current Node-only runtime surface.
 
 ## Compatibility Matrix
 
-Garda 1.3.x uses Node 24 LTS as the primary runtime line and supports Node 22.13+ as a compatibility runtime line. Node 22 support is official only at 22.13.0 and newer because repository dependencies and CI coverage are pinned to that lower bound. Other Node versions are outside the tested support matrix: doctor should warn about them, not block solely because of the version number.
+Garda 1.4.x uses Node 24 LTS as the primary runtime line and supports Node 22.13+ as a compatibility runtime line. Node 22 support is official only at 22.13.0 and newer because repository dependencies and CI coverage are pinned to that lower bound. Other Node versions are outside the tested support matrix: doctor should warn about them, not block solely because of the version number.
 
-| Node.js line | Garda 1.3.x status | Contract |
+| Node.js line | Garda 1.4.x status | Contract |
 |---|---|---|
 | Node 24 LTS | Supported primary runtime | Public CLI, lifecycle commands, gate commands, release validation, and cross-platform smoke are covered by CI and `package.json` engines. |
 | Node 22.13+ LTS | Supported compatibility runtime | Public CLI, lifecycle commands, gate commands, typecheck, test, release validation, and cross-platform smoke are covered by CI and runtime diagnostics. The SQLite projection remains capability-gated; runtimes without embedded FTS5 use canonical-file fallback. |

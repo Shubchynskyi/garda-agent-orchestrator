@@ -109,6 +109,12 @@ function appendReviewFindingsAuditLines(
         return;
     }
     lines.push(`${indent}${summary.visible_summary_line}`);
+    if (summary.review_follow_up_task_closure_policy) {
+        lines.push(`${indent}${summary.review_follow_up_task_closure_policy.visible_summary_line}`);
+        for (const diagnostic of summary.review_follow_up_task_closure_policy.diagnostics) {
+            lines.push(`${indent}  F-task closure policy diagnostic: ${diagnostic}`);
+        }
+    }
     for (const lane of summary.lanes) {
         lines.push(
             `${indent}Review findings ${lane.review_type}: source=${lane.source_mode}; validation=${lane.validation_status}; ` +
@@ -124,6 +130,7 @@ function appendReviewFindingsAuditLines(
                 `${indent}  Finding ${lane.review_type}/${item.id}: kind=${item.kind}; severity=${item.severity}; ` +
                 `title=${item.title || 'none'}; ` +
                 `action=${item.action || 'evidence_only'}; blocking=${item.blocking}; ` +
+                `source_rule=${item.source_rule || 'none'}; ` +
                 `materialization=${item.follow_up_task_id ? `task:${item.follow_up_task_id}` : item.materialization_status || 'none'}; ` +
                 `evidence=${item.evidence_locations.join(',') || 'none'}; description=${item.description}`
             );
@@ -301,6 +308,7 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         for (const entry of closeout.review_coverage_summary.entries) {
             lines.push(
                 `Review coverage ${entry.review_type}: status=${entry.status}; ` +
+                `mode=${entry.review_execution_mode || 'legacy_unknown'}; ` +
                 `obligations=${entry.completed_obligation_count}/${entry.obligation_count}; ` +
                 `omitted=${entry.omitted_obligation_ids.join(',') || 'none'}; ` +
                 `violations=${entry.violations.join(',') || 'none'}.`
@@ -451,6 +459,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         for (const entry of summary.review_coverage_summary.entries) {
             lines.push(
                 `  - ${entry.review_type}: status=${entry.status}; ` +
+                `mode=${entry.review_execution_mode || 'legacy_unknown'}; ` +
                 `obligations=${entry.completed_obligation_count}/${entry.obligation_count}; ` +
                 `omitted=${entry.omitted_obligation_ids.join(',') || 'none'}; ` +
                 `duplicate=${entry.duplicate_obligation_ids.join(',') || 'none'}; ` +

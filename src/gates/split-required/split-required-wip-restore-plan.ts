@@ -325,15 +325,108 @@ function unauthorizedIndexChanges(
     return [...unauthorized].sort();
 }
 
-export function ensureCleanTrackedWorkspace(repoRoot: string): string[] {
-    const violations: string[] = [];
-    const unstaged = runGit(repoRoot, ['diff', '--name-only']).trim();
-    const staged = runGit(repoRoot, ['diff', '--name-only', '--cached']).trim();
-    if (unstaged) {
-        violations.push(`unstaged tracked changes exist: ${unstaged.replace(/\r?\n/gu, ', ')}`);
+function trackedDiffPaths(repoRoot: string, cached: boolean): string[] {
+    const args = ['diff', '--name-only', '--no-renames', '-z', ...(cached ? ['--cached'] : [])];
+    const result = runGitStatus(repoRoot, args);
+    if (result.status !== 0) {
+        throw new Error(gitFailureMessage(args, result));
     }
-    if (staged) {
-        violations.push(`staged changes exist: ${staged.replace(/\r?\n/gu, ', ')}`);
+    return result.stdout
+        .split('\0')
+        .map(normalizeGitPath)
+        .filter(Boolean);
+}
+
+function indexEntriesEqual(
+    left: GitTreeEntry | undefined,
+    right: GitTreeEntry | undefined
+): boolean {
+    return JSON.stringify(left || null) === JSON.stringify(right || null);
+}
+
+export function validateSequentialRestoreWorkspace(
+    repoRoot: string,
+    manifest: SplitRequiredWipManifest
+): string[] {
+    const violations: string[] = [];
+    let unstagedPaths: string[];
+    let stagedPaths: string[];
+    try {
+        unstagedPaths = trackedDiffPaths(repoRoot, false);
+        stagedPaths = trackedDiffPaths(repoRoot, true);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return [`failed to inspect tracked workspace changes: ${message}`];
+    }
+
+    const manifestEntries = new Map(manifest.tracked_files.map((entry) => [
+        normalizeGitPath(entry.path),
+        entry
+    ]));
+    const unauthorizedUnstaged = unstagedPaths.filter((relativePath) => !manifestEntries.has(relativePath));
+    const unauthorizedStaged = stagedPaths.filter((relativePath) => !manifestEntries.has(relativePath));
+    if (unauthorizedUnstaged.length > 0) {
+        violations.push(`unstaged tracked changes exist: ${unauthorizedUnstaged.join(', ')}`);
+    }
+    if (unauthorizedStaged.length > 0) {
+        violations.push(`staged changes exist: ${unauthorizedStaged.join(', ')}`);
+    }
+
+    const restoredPaths = new Set([...unstagedPaths, ...stagedPaths]
+        .filter((relativePath) => manifestEntries.has(relativePath)));
+    if (restoredPaths.size === 0) {
+        return violations;
+    }
+
+    for (const relativePath of [...restoredPaths].sort()) {
+        const expected = manifestEntries.get(relativePath);
+        const actualSha256 = fileStateSha256(resolveRepoPath(repoRoot, relativePath));
+        if (actualSha256 !== expected?.worktree_sha256) {
+            violations.push(`previously restored tracked file differs from captured WIP: ${relativePath}`);
+        }
+    }
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-sequential-restore-'));
+    const expectedIndexPath = path.join(tempRoot, 'index');
+    try {
+        const readTreeArgs = ['read-tree', manifest.base_commit];
+        const readTree = runGitStatus(repoRoot, readTreeArgs, gitEnvironment(expectedIndexPath));
+        if (readTree.status !== 0) {
+            throw new Error(gitFailureMessage(readTreeArgs, readTree));
+        }
+        if (hasPatchContent(manifest.patches.staged)) {
+            const stagedPatchPath = resolveInputPathInsideRepo(
+                repoRoot,
+                manifest.patches.staged.path,
+                'staged patch'
+            );
+            const applyArgs = [
+                'apply',
+                '--cached',
+                ...buildGitApplyIncludeArgs(restoredPaths),
+                stagedPatchPath
+            ];
+            const applied = runGitStatus(repoRoot, applyArgs, gitEnvironment(expectedIndexPath));
+            if (applied.status !== 0) {
+                throw new Error(gitFailureMessage(applyArgs, applied));
+            }
+        }
+        const currentState = selectedIndexState(repoRoot, currentIndexPath(repoRoot), restoredPaths);
+        const expectedState = selectedIndexState(repoRoot, expectedIndexPath, restoredPaths);
+        for (const relativePath of [...restoredPaths].sort()) {
+            if (currentState.unmergedPaths.has(relativePath)
+                || !indexEntriesEqual(
+                    currentState.entries.get(relativePath),
+                    expectedState.entries.get(relativePath)
+                )) {
+                violations.push(`previously restored tracked file index differs from captured WIP: ${relativePath}`);
+            }
+        }
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        violations.push(`failed to validate previously restored tracked files: ${message}`);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
     return violations;
 }

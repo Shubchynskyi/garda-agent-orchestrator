@@ -4,6 +4,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
 
@@ -13,6 +14,8 @@ const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstal
 const FORBIDDEN_PUBLISHED_ROOTS = ['.node-build', '.scripts-build', 'src', 'tests'];
 const NPM_PACK_TIMEOUT_MS = 120_000;
 const NPM_INSTALL_TARBALL_TIMEOUT_MS = process.platform === 'win32' ? 300_000 : 120_000;
+const LOCAL_TARBALL_INSTALL_BUDGET_MS = 60_000;
+const CLI_COLD_START_BUDGET_MS = 10_000;
 
 function getErrorCode(error: unknown): string {
     return error && typeof error === 'object' && 'code' in error
@@ -277,7 +280,7 @@ function npmPack(repoRoot: string): string {
     return lines[lines.length - 1].trim();
 }
 
-function npmInstallTarball(tarballPath: string, installDir: string): void {
+function npmInstallTarball(tarballPath: string, installDir: string): number {
     fs.mkdirSync(installDir, { recursive: true });
     fs.writeFileSync(
         path.join(installDir, 'package.json'),
@@ -285,6 +288,7 @@ function npmInstallTarball(tarballPath: string, installDir: string): void {
         'utf8'
     );
 
+    const startedAt = performance.now();
     const result = spawnNpm([
         'install',
         '--ignore-scripts',
@@ -296,10 +300,12 @@ function npmInstallTarball(tarballPath: string, installDir: string): void {
         '--package-lock=false',
         tarballPath
     ], installDir, NPM_INSTALL_TARBALL_TIMEOUT_MS);
+    const durationMs = Math.round(performance.now() - startedAt);
 
     if (result.status !== 0) {
         throw new Error(formatSpawnFailure(`npm install (timeout ${NPM_INSTALL_TARBALL_TIMEOUT_MS}ms)`, result));
     }
+    return durationMs;
 }
 
 function runCli(cliScriptPath: string, args: string[], cwd: string): childProcess.SpawnSyncReturns<string> {
@@ -334,7 +340,11 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
 
         assert.ok(fs.existsSync(tarballPath), `Tarball not found at ${tarballPath}`);
 
-        npmInstallTarball(tarballPath, installRoot);
+        const installDurationMs = npmInstallTarball(tarballPath, installRoot);
+        assert.ok(
+            installDurationMs <= LOCAL_TARBALL_INSTALL_BUDGET_MS,
+            `local tarball install exceeded budget: observed=${installDurationMs}ms budget=${LOCAL_TARBALL_INSTALL_BUDGET_MS}ms`
+        );
 
         const installedPackageRoot = path.join(installRoot, 'node_modules', 'garda-agent-orchestrator');
         assert.ok(fs.existsSync(installedPackageRoot), 'Installed package root must exist');
@@ -369,9 +379,19 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
         );
 
         // 2. --version prints the correct version
+        const versionStartedAt = performance.now();
         const versionResult = runCli(cliScript, ['--version'], installRoot);
+        const versionDurationMs = Math.round(performance.now() - versionStartedAt);
         assert.equal(versionResult.status, 0, `--version failed: ${versionResult.stderr}`);
         assert.match(versionResult.stdout.trim(), new RegExp(`^${expectedVersion.replace(/\./g, '\\.')}$`));
+        assert.ok(
+            versionDurationMs <= CLI_COLD_START_BUDGET_MS,
+            `cold packaged CLI startup exceeded budget: observed=${versionDurationMs}ms budget=${CLI_COLD_START_BUDGET_MS}ms`
+        );
+        console.log(
+            `PACK_SMOKE_PERFORMANCE install_ms=${installDurationMs} install_budget_ms=${LOCAL_TARBALL_INSTALL_BUDGET_MS} `
+            + `cli_version_start_ms=${versionDurationMs} cli_start_budget_ms=${CLI_COLD_START_BUDGET_MS}`
+        );
 
         // 3. --help prints usage information
         const helpResult = runCli(cliScript, ['--help'], installRoot);

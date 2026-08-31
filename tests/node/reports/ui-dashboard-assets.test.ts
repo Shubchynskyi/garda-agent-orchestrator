@@ -15,6 +15,7 @@ import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 import {
     LOCAL_UI_LANGUAGES,
     LOCAL_UI_SETTING_TEXT,
+    LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
     LOCAL_UI_TEXT
 } from '../../../src/reports/ui/ui-i18n';
 
@@ -95,7 +96,8 @@ function renderQualityGateHtml(
 
 function renderTaskDetailHtml(
     detail: Record<string, unknown>,
-    initialLanguage = 'ru'
+    initialLanguage = 'ru',
+    actionsEnabled = false
 ): string {
     const detailNode = {
         innerHTML: '',
@@ -113,10 +115,11 @@ function renderTaskDetailHtml(
         languageMetadata: LOCAL_UI_LANGUAGES,
         languagePacks: LOCAL_UI_TEXT,
         settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        taskClosurePolicyTextPacks: LOCAL_UI_TASK_CLOSURE_POLICY_TEXT,
         fallbackLanguage: 'en',
         initialLanguage,
         detailNode,
-        actionsEnabled: false,
+        actionsEnabled,
         actionToken: 'asset-test-token',
         currentTaskDetail: null,
         loadedTaskDetails: {},
@@ -135,6 +138,79 @@ function renderTaskDetailHtml(
     return detailNode.innerHTML;
 }
 
+test('task detail renders independent guarded F-task closure controls and effective diagnostics', () => {
+    const html = renderTaskDetailHtml({
+        task_id: 'T-1014-F1',
+        stats: {},
+        audit: {
+            blockers: [],
+            review_attempt_summary: { by_type: [] },
+            review_findings_audit: {
+                review_follow_up_task_closure_policy: {
+                    ignored_low_findings_count: 2,
+                    retained_current_task_count: 1,
+                    prohibited_descendant_creation_count: 1,
+                    remaining_blocker_count: 1
+                }
+            }
+        },
+        review_follow_up_task_closure_policy: {
+            stored: { skip_low_findings: true, forbid_child_tasks: false },
+            effective: { skip_low_findings: false, forbid_child_tasks: true },
+            effective_source: 'task_mode_profile_policy_snapshot',
+            state: 'pending_next_cycle',
+            editable: true,
+            editable_reason: null,
+            drift_detected: true,
+            diagnostics: ['Stored values apply on the next task-mode entry.']
+        },
+        full_suite_validation: {},
+        quality_checklist: { latest: null, action_required_history: [] },
+        latest_cycle_events: {},
+        artifact_links: []
+    }, 'ru', true);
+
+    assert.match(html, /Политика закрытия F-задачи/u);
+    assert.match(html, /Сохранённые значения/u);
+    assert.match(html, /Эффективные значения/u);
+    assert.match(html, /ignored_low=2/u);
+    assert.match(html, /retained_current_task=1/u);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'task-closure-skip-low')), true);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'task-closure-forbid-children')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'task-closure-skip-low')), false);
+    assert.match(UI_DASHBOARD_CLIENT_TASK_DETAIL, /expected_notes_sha256/u);
+    assert.match(UI_DASHBOARD_CLIENT_TASK_DETAIL, /currentTaskClosurePolicyPreview = null/u);
+    assert.match(UI_DASHBOARD_CLIENT_TASK_DETAIL, /UPDATE F-TASK POLICY/u);
+});
+
+test('task detail disables F-task closure controls for inapplicable ordinary tasks', () => {
+    const html = renderTaskDetailHtml({
+        task_id: 'T-1014',
+        stats: {},
+        audit: {},
+        review_follow_up_task_closure_policy: {
+            stored: { skip_low_findings: false, forbid_child_tasks: false },
+            effective: { skip_low_findings: false, forbid_child_tasks: false },
+            effective_source: 'task_metadata',
+            state: 'inapplicable',
+            editable: false,
+            editable_reason: 'Closure controls apply only to review-generated follow-up tasks.',
+            drift_detected: false,
+            diagnostics: []
+        },
+        full_suite_validation: {},
+        quality_checklist: { latest: null, action_required_history: [] },
+        latest_cycle_events: {},
+        artifact_links: []
+    }, 'en', true);
+
+    assert.match(html, /Available only for review-generated follow-up tasks/u);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'task-closure-skip-low')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'task-closure-forbid-children')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'button', 'task-closure-policy-preview')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'button', 'task-closure-policy-apply')), true);
+});
+
 function renderProfilesHtml(
     profilesTab: Record<string, unknown>,
     actionsEnabled: boolean,
@@ -142,6 +218,7 @@ function renderProfilesHtml(
 ): string {
     const profilesNode = {
         innerHTML: '',
+        querySelector: () => null,
         querySelectorAll: () => []
     };
     const context = {
@@ -1057,6 +1134,11 @@ test('profiles tab renders required auto disabled policy controls without trigge
                 active: true,
                 description: 'Custom profile',
                 depth: 2,
+                task_decomposition: {
+                    enabled: false,
+                    configured: true,
+                    provenance: 'explicit_profile_config'
+                },
                 review_policy: {
                     code: true,
                     test: 'auto',
@@ -1067,6 +1149,29 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     policy_id: 'custom',
                     findings: { critical: 'fix_now', high: 'fix_now', medium: 'create_follow_up', low: 'ignore' },
                     residual_risk: 'create_follow_up'
+                },
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'grouped_by_parent',
+                    task_profile: { mode: 'one_level_lighter', fixed_profile: null }
+                },
+                review_follow_up_task_profile_assignment: {
+                    parent_profile: 'custom-review',
+                    profile: 'custom-review',
+                    source: 'safe_inherit_parent',
+                    configured_mode: 'one_level_lighter',
+                    diagnostics: ['Custom profiles safely inherit the parent.']
+                },
+                review_remediation_mode_policy: {
+                    configured: true,
+                    legacy_full_only: false,
+                    policy_id: 'conservative_review_remediation_mode_v1',
+                    initial_review_mode: 'FULL',
+                    delta_eligible_review_types: ['code', 'test'],
+                    max_delta_changed_files: 4,
+                    max_delta_changed_lines: 240,
+                    max_consecutive_delta_reviews: 3,
+                    diagnostics: ['Explicit DELTA policy.']
                 }
             },
             {
@@ -1086,12 +1191,43 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     policy_id: 'balanced',
                     findings: { critical: 'fix_now', high: 'fix_now', medium: 'fix_now', low: 'create_follow_up' },
                     residual_risk: 'create_follow_up'
+                },
+                review_remediation_mode_policy: {
+                    configured: false,
+                    legacy_full_only: true,
+                    policy_id: 'conservative_review_remediation_mode_v1',
+                    initial_review_mode: 'FULL',
+                    delta_eligible_review_types: [],
+                    max_delta_changed_files: 4,
+                    max_delta_changed_lines: 240,
+                    max_consecutive_delta_reviews: 3,
+                    diagnostics: ['Legacy profile remains FULL-only.']
                 }
             }
         ]
     };
     const html = renderProfilesHtml(profilesTab, true);
     const russianHtml = renderProfilesHtml(profilesTab, true, 'ru');
+    const legacyHtml = renderProfilesHtml({
+        ...profilesTab,
+        active_profile: 'balanced',
+        profiles: profilesTab.profiles.map(profile => ({
+            ...profile,
+            active: profile.name === 'balanced'
+        }))
+    }, true);
+    const configuredFullOnlyHtml = renderProfilesHtml({
+        ...profilesTab,
+        profiles: profilesTab.profiles.map(profile => profile.name === 'custom-review'
+            ? {
+                ...profile,
+                review_remediation_mode_policy: {
+                    ...profile.review_remediation_mode_policy,
+                    delta_eligible_review_types: []
+                }
+            }
+            : profile)
+    }, true);
 
     const addProfileIndex = html.indexOf('class="profile-add-row"');
     const userProfileTabIndex = html.indexOf('data-profile-tab="custom-review"');
@@ -1134,12 +1270,172 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(russianHtml, /<option value="ignore">Принять без отдельной задачи<\/option>/u);
     assert.match(russianHtml, /<option value="custom" selected>Пользовательский<\/option>/u);
     assert.match(russianHtml, /Замечание сохраняется, но не блокирует задачу/u);
+    assert.match(html, /<span>Guarded task decomposition<\/span>/u);
+    assert.match(html, /<strong>Effective source:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(russianHtml, /<span>Контролируемая декомпозиция задач<\/span>/u);
+    assert.match(russianHtml, /<strong>Фактический источник:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(html, /class="empty profile-follow-up-task-profile-effective"><strong>Current value:<\/strong> <code>custom-review<\/code> \(Same as parent\)/u);
+    assert.match(russianHtml, /class="empty profile-follow-up-task-profile-effective"><strong>Текущее значение:<\/strong> <code>custom-review<\/code> \(Как у родителя\)/u);
+    assert.match(html, /<fieldset class="profile-delta-review"><legend>DELTA · Reviews<\/legend>/u);
+    assert.match(html, /<strong>Effective source:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(html, /id="profile-custom-review-delta-review-code" type="checkbox" checked/u);
+    assert.match(html, /id="profile-custom-review-delta-review-test" type="checkbox" checked/u);
+    assert.match(html, /id="profile-custom-review-delta-review-performance" type="checkbox">/u);
+    assert.match(html, /<summary>Runtime diagnostics<\/summary>[\s\S]*Explicit DELTA policy\./u);
+    assert.match(russianHtml, /<fieldset class="profile-delta-review"><legend>DELTA · Ревью<\/legend>/u);
+    assert.match(russianHtml, /<strong>Фактический источник:<\/strong> <code>explicit_profile_config<\/code>/u);
+    assert.match(configuredFullOnlyHtml, /<fieldset class="profile-delta-review">[\s\S]*?<strong>Current value:<\/strong> <code>FULL<\/code><\/p>/u);
+    assert.match(legacyHtml, /<strong>Effective source:<\/strong> <code>legacy_full_only<\/code>[\s\S]*<strong>Current value:<\/strong> <code>FULL<\/code>/u);
+    assert.doesNotMatch(legacyHtml, /id="profile-balanced-delta-review-(?:code|test|performance)"[^>]* checked/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-delta-review-grid label\.profile-delta-enabled/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-delta-review-grid label\.profile-delta-disabled/u);
     assert.match(html, /data-profile-policy-action="copy" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="reset" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="apply" data-profile-name="custom-review"/u);
     assert.match(UI_DASHBOARD_CLIENT_PROFILES, /presetInput\.value = 'custom'/u);
     assert.match(UI_DASHBOARD_STYLES, /\.profile-finding-policy-grid \.profile-finding-critical/u);
     assert.doesNotMatch(html, /data-profile-trigger|profileTrigger|review_trigger/u);
+});
+
+test('follow-up task profile controls toggle fixed selection and serialize the selected mode', () => {
+    type BrowserElement = {
+        value: string;
+        checked: boolean;
+        disabled: boolean;
+        dataset: Record<string, string>;
+        listeners: Record<string, () => void>;
+        addEventListener: (event: string, listener: () => void) => void;
+        closest: () => { dataset: { profileName: string } };
+    };
+    const profileName = 'balanced';
+    const createElement = (value = ''): BrowserElement => ({
+        value,
+        checked: false,
+        disabled: false,
+        dataset: {},
+        listeners: {},
+        addEventListener(event: string, listener: () => void) {
+            this.listeners[event] = listener;
+        },
+        closest: () => ({ dataset: { profileName } })
+    });
+    const description = createElement('Balanced profile');
+    const depth = createElement('2');
+    const taskDecomposition = createElement();
+    const mode = createElement('one_level_lighter');
+    const fixedProfile = createElement('fast');
+    fixedProfile.disabled = true;
+    const elementsById: Record<string, BrowserElement> = {
+        [`profile-${profileName}-description`]: description,
+        [`profile-${profileName}-depth`]: depth,
+        [`profile-${profileName}-task-decomposition`]: taskDecomposition,
+        [`profile-${profileName}-follow-up-mode`]: mode,
+        [`profile-${profileName}-follow-up-fixed-profile`]: fixedProfile
+    };
+    const context: Record<string, unknown> = {
+        currentProfilesPayload: {
+            review_types: [],
+            profiles: [{
+                name: profileName,
+                review_follow_up_policy: { materialization_mode: 'grouped_by_parent' }
+            }]
+        },
+        profilesNode: {
+            querySelector: (selector: string) => selector.includes('follow-up-mode') ? mode : null
+        },
+        document: {
+            getElementById: (id: string) => elementsById[id] || null
+        },
+        serialized: [] as string[]
+    };
+
+    vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nattachProfileFollowUpTaskProfileHandlers();`,
+        context
+    );
+
+    mode.value = 'fixed_profile';
+    mode.listeners.change();
+    assert.equal(fixedProfile.disabled, false);
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+
+    mode.value = 'inherit_parent';
+    mode.listeners.change();
+    assert.equal(fixedProfile.disabled, true);
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+
+    const [fixedPayload, inheritedPayload] = (context.serialized as string[]).map((value) => JSON.parse(value));
+    assert.deepEqual(fixedPayload.review_follow_up_policy.task_profile, {
+        mode: 'fixed_profile',
+        fixed_profile: 'fast'
+    });
+    assert.deepEqual(fixedPayload.task_decomposition, { enabled: false });
+    assert.deepEqual(inheritedPayload.review_follow_up_policy.task_profile, {
+        mode: 'inherit_parent',
+        fixed_profile: null
+    });
+    assert.deepEqual(inheritedPayload.task_decomposition, { enabled: false });
+});
+
+test('profile DELTA controls serialize each review lane and preserve legacy FULL-only state until enabled', () => {
+    const profileName = 'balanced';
+    const element = (value = '', checked = false) => ({ value, checked });
+    const elementsById: Record<string, { value: string; checked: boolean }> = {
+        [`profile-${profileName}-description`]: element('Balanced'),
+        [`profile-${profileName}-depth`]: element('2'),
+        [`profile-${profileName}-task-decomposition`]: element('', true),
+        [`profile-${profileName}-follow-up-mode`]: element('one_level_lighter'),
+        [`profile-${profileName}-follow-up-fixed-profile`]: element(''),
+        [`profile-${profileName}-review-code`]: element('auto'),
+        [`profile-${profileName}-review-test`]: element('required'),
+        [`profile-${profileName}-review-performance`]: element('disabled'),
+        [`profile-${profileName}-delta-review-code`]: element('', true),
+        [`profile-${profileName}-delta-review-test`]: element('', false),
+        [`profile-${profileName}-delta-review-performance`]: element('', true)
+    };
+    const remediationSummary = {
+        configured: true,
+        legacy_full_only: false,
+        delta_eligible_review_types: ['code', 'performance']
+    };
+    const context: Record<string, unknown> = {
+        currentProfilesPayload: {
+            review_types: [{ id: 'code' }, { id: 'test' }, { id: 'performance' }],
+            profiles: [{
+                name: profileName,
+                review_follow_up_policy: { materialization_mode: 'grouped_by_parent' },
+                review_remediation_mode_policy: remediationSummary
+            }]
+        },
+        document: {
+            getElementById: (id: string) => elementsById[id] || null
+        },
+        serialized: [] as string[]
+    };
+
+    vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nserialized.push(JSON.stringify(readProfileForm('${profileName}')));`,
+        context
+    );
+    const configuredPayload = JSON.parse((context.serialized as string[])[0]);
+    assert.deepEqual(configuredPayload.review_remediation_mode_policy, {
+        delta_eligible_review_types: ['code', 'performance']
+    });
+
+    remediationSummary.configured = false;
+    remediationSummary.legacy_full_only = true;
+    elementsById[`profile-${profileName}-delta-review-code`].checked = false;
+    elementsById[`profile-${profileName}-delta-review-performance`].checked = false;
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+    const legacyPayload = JSON.parse((context.serialized as string[])[1]);
+    assert.equal(Object.hasOwn(legacyPayload, 'review_remediation_mode_policy'), false);
+
+    elementsById[`profile-${profileName}-delta-review-test`].checked = true;
+    vm.runInNewContext(`serialized.push(JSON.stringify(readProfileForm('${profileName}')));`, context);
+    const enabledLegacyPayload = JSON.parse((context.serialized as string[])[2]);
+    assert.deepEqual(enabledLegacyPayload.review_remediation_mode_policy, {
+        delta_eligible_review_types: ['test']
+    });
 });
 
 test('task detail renders skipped quality-check cadence as a neutral localized state', () => {
@@ -1332,6 +1628,154 @@ test('profile browser action previews before confirmation and binds execute to t
         'request:execute',
         'render:confirmation_required'
     ]);
+});
+
+test('profiles UI renders compact review catalog state and disables guarded controls without actions', () => {
+    const reviewCatalog = {
+        status: 'present',
+        catalog_path: 'garda-agent-orchestrator/live/config/review-catalog.json',
+        capabilities_path: 'garda-agent-orchestrator/live/config/review-capabilities.json',
+        profiles_path: 'garda-agent-orchestrator/live/config/profiles.json',
+        catalog_exists: true,
+        catalog_sha256: 'a'.repeat(64),
+        state_sha256: 'b'.repeat(64),
+        active_profile: 'balanced',
+        selected_profile: 'balanced',
+        profile_names: ['balanced'],
+        known_skill_ids: ['architecture-review', 'code-review'],
+        validation: { status: 'PASS', issues: [] },
+        migration: { status: 'current', required: false, reason: 'Catalog is current.' },
+        lanes: [
+            {
+                id: 'code',
+                display_label: 'Code review',
+                source: 'built_in',
+                built_in: true,
+                enabled_by_default: true,
+                capability_enabled: true,
+                skill_ids: ['code-review'],
+                trigger: { mode: 'compatibility', signal_ids: [] },
+                coverage_category_ids: ['code-quality'],
+                reviewer_role: { role_id: 'code-reviewer', focus_tags: ['code-quality'] },
+                verdict_tokens: { pass: 'REVIEW PASSED', fail: 'REVIEW FAILED' },
+                profile: {
+                    name: 'balanced',
+                    state: 'required',
+                    state_source: 'profile',
+                    active: true,
+                    inactive_reason: null,
+                    dependencies: [],
+                    explanation: ['code uses built-in compatibility triggers']
+                }
+            },
+            {
+                id: 'architecture',
+                display_label: 'Architecture review',
+                source: 'custom',
+                built_in: false,
+                enabled_by_default: false,
+                capability_enabled: false,
+                skill_ids: ['architecture-review'],
+                trigger: { mode: 'signals', signal_ids: ['architecture'] },
+                coverage_category_ids: ['maintainability'],
+                reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['maintainability'] },
+                verdict_tokens: { pass: 'ARCHITECTURE REVIEW PASSED', fail: 'ARCHITECTURE REVIEW FAILED' },
+                profile: {
+                    name: 'balanced',
+                    state: 'disabled',
+                    state_source: 'profile',
+                    active: false,
+                    inactive_reason: 'profile_disabled',
+                    dependencies: ['code'],
+                    explanation: ['architecture trigger uses signals: architecture']
+                }
+            }
+        ]
+    };
+    const payload = {
+        status: 'present',
+        config_path: 'garda-agent-orchestrator/live/config/profiles.json',
+        active_profile: 'balanced',
+        unavailable: [],
+        finding_policy_actions: [],
+        finding_policy_presets: {},
+        review_types: [],
+        profiles: [],
+        review_catalog: reviewCatalog
+    };
+    const html = renderProfilesHtml(payload, true);
+    const disabledHtml = renderProfilesHtml(payload, false);
+    const russianHtml = renderProfilesHtml(payload, true, 'ru');
+
+    assert.match(html, /data-review-catalog-id="architecture"/u);
+    assert.match(html, /disabled_by_default/u);
+    assert.match(html, /immutable.*verdict_tokens/u);
+    assert.match(html, /future_tasks_only/u);
+    assert.match(html, /review_dependency_graph/u);
+    assert.match(html, /signals: architecture/u);
+    assert.match(html, /<strong>dependencies<\/strong><code>code<\/code>/u);
+    assert.match(html, /data-review-catalog-action="enable"/u);
+    assert.doesNotMatch(html, /data-review-catalog-id="code"[^>]*data-review-catalog-action/u);
+    assert.doesNotMatch(html, /prompt_body|reviewer_prompt|secret/u);
+    assert.match(disabledHtml, /data-review-catalog-action="enable"[^>]* disabled/u);
+    assert.match(russianHtml, /Пользовательское/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.review-catalog-lane-grid/u);
+});
+
+test('review catalog browser action shows semantic diff before bound confirmation', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: string[] = [];
+    const stateSha256 = 'a'.repeat(64);
+    const planSha256 = 'b'.repeat(64);
+    const profilesStatusNode = { innerHTML: '' };
+    const context = {
+        actionToken: 'test-token',
+        currentProfileActionResult: null,
+        currentProfilesPayload: null,
+        profilesStatusNode,
+        safe: (value: unknown) => String(value),
+        badge: (value: unknown) => `<span>${String(value)}</span>`,
+        t: (key: string) => key,
+        window: {
+            prompt: () => {
+                events.push('prompt');
+                return 'APPLY REVIEW CATALOG CHANGE';
+            }
+        },
+        fetch: async (_url: string, options: { body: string }) => {
+            const payload = JSON.parse(options.body) as Record<string, unknown>;
+            requests.push(payload);
+            events.push(`request:${payload.mode}`);
+            return {
+                ok: true,
+                json: async () => requests.length === 1
+                    ? {
+                        status: 'previewed',
+                        mode: 'preview',
+                        review_id: 'architecture',
+                        before_state_sha256: stateSha256,
+                        plan_sha256: planSha256,
+                        confirmation_phrase: 'APPLY REVIEW CATALOG CHANGE',
+                        diff: [{ path: 'review-capabilities.architecture', before: false, after: true }]
+                    }
+                    : { status: 'confirmation_required', mode: 'execute', review_id: 'architecture', diff: [] }
+            };
+        }
+    };
+
+    await vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nsubmitReviewCatalogAction({ operation: 'enable', review_id: 'architecture' });`,
+        context
+    );
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].mode, 'preview');
+    assert.equal(requests[1].mode, 'execute');
+    assert.equal(requests[1].confirmation, 'APPLY REVIEW CATALOG CHANGE');
+    assert.equal(requests[1].expected_state_sha256, stateSha256);
+    assert.equal(requests[1].expected_plan_sha256, planSha256);
+    assert.match(profilesStatusNode.innerHTML, /review-catalog-result/u);
+    assert.deepEqual(events, ['request:preview', 'prompt', 'request:execute']);
 });
 
 test('profile browser action stops before confirmation when preview hash is invalid', async () => {

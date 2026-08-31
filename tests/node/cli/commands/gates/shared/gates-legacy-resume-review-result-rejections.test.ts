@@ -17,6 +17,7 @@ import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-
 import { writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
 import * as childProcess from 'node:child_process';
 import {
+    bindFixtureEffectiveReviewSnapshot,
     initializeGitRepoWithMaterializedScope
 } from '../../gate-test-helpers';
 import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
@@ -192,6 +193,13 @@ function writePreflight(
         ...overrides
     };
     fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
+    bindFixtureEffectiveReviewSnapshot(
+        repoRoot,
+        taskId,
+        'code',
+        preflightPath,
+        path.join(reviewsRoot, `${taskId}-task-mode.json`)
+    );
     return preflightPath;
 }
 

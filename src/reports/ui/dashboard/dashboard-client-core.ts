@@ -53,6 +53,11 @@ let currentLanguage = normalizeLanguage(readStoredLanguage() || detectBrowserLan
 function t(key) {
   return (languagePacks[currentLanguage] && languagePacks[currentLanguage][key]) || languagePacks[fallbackLanguage][key] || key;
 }
+function taskClosurePolicyText(key) {
+  return (taskClosurePolicyTextPacks[currentLanguage] && taskClosurePolicyTextPacks[currentLanguage][key])
+    || taskClosurePolicyTextPacks[fallbackLanguage][key]
+    || key;
+}
 function localizedEntry(pack, id) {
   return (pack[currentLanguage] && pack[currentLanguage][id]) || (pack[fallbackLanguage] && pack[fallbackLanguage][id]) || null;
 }

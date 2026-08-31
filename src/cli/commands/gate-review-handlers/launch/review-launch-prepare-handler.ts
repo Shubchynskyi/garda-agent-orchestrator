@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
     buildReviewReceiptReviewerProvenance,
     assertReviewLifecycleGuard,
+    assertRequiredUpstreamReviewDependencies,
     assertReviewTreeStateFresh,
     assertValidTaskId,
     emitReviewerLaunchInputPinnedEventAsync,
@@ -44,12 +45,29 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import {
+    assertArtifactReviewLaneEvidence,
+    assertCanonicalReviewTypeId,
+    resolveAuthenticatedReviewLaneContract
+} from '../review-lane-contract';
+import {
     isCompletedReviewerLaunchAttemptConsumed,
     isReviewerLaunchAttemptSupersededByAuthenticatedRestart
 } from './reviewer-handoff-support';
+import {
+    resolveReviewExecutionRuntimeBindings
+} from '../context/review-context-runtime-validation';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
 export type PrepareReviewerLaunchHandler = (gateArgv: string[]) => Promise<void>;
+export type PrepareReviewerLaunchDependencyOptions = Parameters<
+    typeof assertRequiredUpstreamReviewDependencies
+>[0];
+
+export function assertPrepareReviewerLaunchDependencyReadiness(
+    options: PrepareReviewerLaunchDependencyOptions
+): void {
+    assertRequiredUpstreamReviewDependencies(options);
+}
 
 // Keep prepare-reviewer-launch dependency injection explicit while shared launch command rendering stays in reviewer-launch-command-templates.
 export interface PrepareReviewerLaunchHandlerDependencies {
@@ -182,8 +200,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
     const options = rawOptions as ParsedOptionsRecord;
     const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+    const reviewType = assertCanonicalReviewTypeId(options.reviewType);
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'prepare-reviewer-launch', 'review_phase');
@@ -224,6 +241,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    assertPrepareReviewerLaunchDependencyReadiness({
+        taskId,
+        preflightPath,
+        preflightPayload,
+        reviewType,
+        timelineEvents,
+        taskModePath: String(options.taskModePath || '').trim()
+    });
     assertReviewContextContractOrThrow({
         taskId,
         reviewType,
@@ -235,6 +262,13 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         requireStrictBindingMetadata: !!options.reviewContextPath,
         repoRoot
     });
+    const reviewExecutionBindings = resolveReviewExecutionRuntimeBindings(parsedReviewContext);
+    const reviewLaneContract = resolveAuthenticatedReviewLaneContract({
+        preflight: preflightPayload,
+        reviewContext: parsedReviewContext,
+        reviewType
+    });
+    const reviewLaneArtifactEvidence = reviewLaneContract.artifactEvidence;
     assertReviewTreeStateFresh({
         repoRoot,
         reviewContext: parsedReviewContext,
@@ -275,8 +309,6 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     }
 
     const launchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(launchArtifactPath);
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    const timelineEvents = readDependencyTimelineEvents(timelinePath);
     const routingEvent = findMatchingRoutingEvent(
         timelineEvents,
         reviewType,
@@ -303,6 +335,13 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const laneReservationPath = getReviewerLaunchLaneReservationPath(canonicalLaunchArtifactPath);
     const laneReservationExists = fs.existsSync(laneReservationPath);
     const laneReservation = readJsonObjectIfPresent(laneReservationPath);
+    if (laneReservation) {
+        assertArtifactReviewLaneEvidence(
+            laneReservation,
+            reviewLaneContract,
+            'Reviewer launch lane reservation'
+        );
+    }
     if (laneReservationExists && !laneReservation) {
         throw new Error(
             `Reviewer launch lane reservation must contain valid JSON object metadata: ` +
@@ -375,6 +414,13 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         }
     }
     const existingArtifact = readJsonObjectIfPresent(launchArtifactPath);
+    if (existingArtifact) {
+        assertArtifactReviewLaneEvidence(
+            existingArtifact,
+            reviewLaneContract,
+            'Reviewer launch artifact'
+        );
+    }
     if (fs.existsSync(launchArtifactPath) && !existingArtifact) {
         throw new Error(
             `Reviewer launch artifact must contain valid JSON object metadata: ${normalizePath(launchArtifactPath)}.`
@@ -609,6 +655,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
                 evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
                 copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
+                ...reviewLaneArtifactEvidence,
                 launch_tool: providerLaunch.launchTool,
                 launch_prepared_at_utc: launchPreparedAtUtc,
                 attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
@@ -630,7 +677,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         output_template_sha256: handoffBindings.outputTemplateSha256,
         evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
-        launch_binding_sha256: launchBindingSha256
+        launch_binding_sha256: launchBindingSha256,
+        ...reviewLaneArtifactEvidence
     }));
     let supersededLaunchArtifact: SupersededReviewerLaunchArtifactSnapshot | null = null;
     if (existingArtifact) {
@@ -655,7 +703,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             outputTemplateSha256: handoffBindings.outputTemplateSha256,
             evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
-            reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
+            reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
+            reviewExecutionBindings
         });
         const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
         const launchPreparedAtUtc = getStringField(
@@ -865,9 +914,11 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
             reviewOutputAttemptSha256,
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
+            reviewExecutionBindings,
             copyPasteReviewerLaunchPromptSha256,
             preparedLaunchEventSha256,
             preparedLaunchEventTaskSequence,
+            reviewLaneArtifactEvidence,
             localTrustBoundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY
         });
         const expectedLaunchInputArtifactSha256 = stringSha256(`${JSON.stringify(expectedReviewerLaunchInputArtifact, null, 2)}\n`);
@@ -1222,7 +1273,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
-        reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
+        reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
+        reviewExecutionBindings
     });
     const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
     const launchPreparedAtUtc = new Date().toISOString();
@@ -1238,12 +1290,14 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         'copy_paste_reviewer_launch_prompt_sha256',
         'review_output_attempt_sha256',
         'review_tree_state_sha256',
+        ...Object.keys(reviewExecutionBindings),
         'launch_binding_sha256',
         'prepared_launch_event_sha256',
         'prepared_launch_event_task_sequence',
         'reviewer_launch_input_artifact_sha256',
         'reviewer_launch_input_pinned_event_sha256',
-        'reviewer_launch_input_pinned_event_task_sequence'
+        'reviewer_launch_input_pinned_event_task_sequence',
+        ...Object.keys(reviewLaneArtifactEvidence)
     ];
     const handoffArtifactNames = handoffBindings.rolePromptPath
         ? 'role_prompt_path, prompt_template_path, reviewer_prompt_path, output_template_path, and evidence_manifest_path'
@@ -1284,7 +1338,9 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
+        ...reviewExecutionBindings,
         launch_binding_sha256: launchBindingSha256,
+        ...reviewLaneArtifactEvidence,
         launch_prepared_at_utc: launchPreparedAtUtc,
         provider: providerLaunch.provider,
         launch_tool: providerLaunch.launchTool,
@@ -1327,7 +1383,9 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
         review_context_sha256: contextSha256,
         routing_event_sha256: routingEventProvenance.event_sha256,
+        ...reviewExecutionBindings,
         launch_binding_sha256: launchBindingSha256,
+        ...reviewLaneArtifactEvidence,
         reserved_at_utc: launchPreparedAtUtc,
         generated_by: 'garda prepare-reviewer-launch'
     });
@@ -1379,9 +1437,11 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
         reviewOutputAttemptSha256,
         reviewTreeStateSha256: reviewTreeStateSha256 || null,
+        reviewExecutionBindings,
         copyPasteReviewerLaunchPromptSha256,
         preparedLaunchEventSha256,
         preparedLaunchEventTaskSequence,
+        reviewLaneArtifactEvidence,
         localTrustBoundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY
     });
     writeReviewArtifactJson(launchInputArtifactPath, reviewerLaunchInputArtifact);
