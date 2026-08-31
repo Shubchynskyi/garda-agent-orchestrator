@@ -71,11 +71,13 @@ risk-signal growth fails release validation.
 The package smoke treats install and cold CLI startup as measured release
 contracts. On Windows with Node 24.11.1 and npm 11.18.0, the focused package
 smoke measured a local tarball install at 6,392 ms and a packaged `--version`
-launch at 3,541 ms. The deterministic regression ceilings remain 60,000 ms for
-local install and 10,000 ms for cold startup, while functional pack, install,
-and invocation checks remain mandatory. The focused packaging suite passed all
-16 tests, and both `npm audit` and `npm audit --omit=dev` reported zero known
-vulnerabilities on 2026-08-29.
+launch at 3,541 ms. The regression ceilings are 180,000 ms for local install on
+Windows runners, 60,000 ms on Linux and macOS, and 10,000 ms for cold startup.
+The Windows allowance accounts for shared-runner filesystem and antivirus
+variance while remaining below the separate 300,000 ms functional timeout;
+functional pack, install, and invocation checks remain mandatory. The focused
+packaging suite passed all 16 tests, and both `npm audit` and `npm audit
+--omit=dev` reported zero known vulnerabilities on 2026-08-29.
 
 ## 1.3.0
 

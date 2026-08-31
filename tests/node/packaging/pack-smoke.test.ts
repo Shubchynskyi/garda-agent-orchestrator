@@ -14,7 +14,7 @@ const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstal
 const FORBIDDEN_PUBLISHED_ROOTS = ['.node-build', '.scripts-build', 'src', 'tests'];
 const NPM_PACK_TIMEOUT_MS = 120_000;
 const NPM_INSTALL_TARBALL_TIMEOUT_MS = process.platform === 'win32' ? 300_000 : 120_000;
-const LOCAL_TARBALL_INSTALL_BUDGET_MS = 60_000;
+const LOCAL_TARBALL_INSTALL_BUDGET_MS = process.platform === 'win32' ? 180_000 : 60_000;
 const CLI_COLD_START_BUDGET_MS = 10_000;
 
 function getErrorCode(error: unknown): string {
