@@ -16,6 +16,7 @@ import { resolveReviewCatalogRoots } from '../../../../src/cli/commands/review-c
 import {
     commitReviewCatalogManagementPlan,
     issueReviewCatalogConfirmationReceipt,
+    sameManagedReviewCatalogFileIdentity,
     type ReviewCatalogManagementPlan
 } from '../../../../src/cli/commands/review-catalog/review-catalog-transaction';
 
@@ -200,6 +201,36 @@ function createTransactionPlanFixture(workspace: TestWorkspace): {
     } as unknown as ReviewCatalogManagementPlan;
     return { catalogPath, capabilitiesPath, beforeCapabilities, beforeStateSha256, plan };
 }
+
+test('review-catalog file identity accepts the Node 22 Windows zero-device stat only for the same inode', () => {
+    const descriptorIdentity = { dev: 543659348n, ino: 105834591244330142n };
+    const node22PathIdentity = { dev: 0n, ino: descriptorIdentity.ino };
+
+    assert.equal(
+        sameManagedReviewCatalogFileIdentity(descriptorIdentity, node22PathIdentity, 'win32'),
+        true
+    );
+    assert.equal(
+        sameManagedReviewCatalogFileIdentity(descriptorIdentity, node22PathIdentity, 'linux'),
+        false
+    );
+    assert.equal(
+        sameManagedReviewCatalogFileIdentity(
+            descriptorIdentity,
+            { dev: 0n, ino: descriptorIdentity.ino + 1n },
+            'win32'
+        ),
+        false
+    );
+    assert.equal(
+        sameManagedReviewCatalogFileIdentity(
+            descriptorIdentity,
+            { dev: descriptorIdentity.dev + 1n, ino: descriptorIdentity.ino },
+            'win32'
+        ),
+        false
+    );
+});
 
 function addTransactionLockAlias(bundleRoot: string): void {
     const lockPath = path.join(bundleRoot, 'runtime', 'review-catalog-management.lock');
